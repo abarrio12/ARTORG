@@ -1,0 +1,21 @@
+# Data
+CSV/
+output/
+*.pkl
+*.vtp
+
+# Python
+__pycache__/
+*.pyc
+
+# Temp / misc
+*.log
+
+
+
+
+
+
+
+
+
