@@ -5,6 +5,7 @@ import pandas as pd
 import igraph as ig
 import pickle
 import numpy as np
+import os
 
 # import sys
 # graph_number = sys.argv[1]
@@ -12,7 +13,12 @@ import numpy as np
 graph_number = 18
 
 # Load CSV files
-folder = "/Volumes/home/RenierDatasets/HalfBrain/082025-datasets/graph_" + str(graph_number) + "/CSV/"
+
+
+folder = "/home/admin/Ana/MicroBrain/CSV/"
+
+
+print("=== START CSV → PKL (FULL GEOM) ===")
 
 vertices_df = pd.read_csv(folder + "vertices.csv", header=None)  # Nodes
 coordinates_df = pd.read_csv(folder + "coordinates_atlas.csv", header=None)  # Coordinates nodes atlas verison
@@ -31,6 +37,8 @@ distance_to_surface_df = pd.read_csv(folder + "distance_to_surface.csv", header=
 # Geometry CSVs
 geom_index_df = pd.read_csv(folder + "edge_geometry_indices.csv", header=None)  # geometry indices per edge
 edge_geometry_df = pd.read_csv(folder + "edge_geometry_coordinates.csv", header=None)  # geometry coordinates
+print("despues DE LEER CSVs")
+
 
 print(np.mean([np.mean(radii_vertex_df[0]), np.mean(radii_df)]))
 
@@ -84,36 +92,65 @@ G.es["diameter"] = [r * 2 for r in radius]
 G.es["length"] = lengths
 
 # ============================
-# 3) POINTS
+# 3) Geometry (POINTS per edge) — MEMORY SAFE VERSION
 # ============================
 
-# 3a) Curve ids to list
-edge_to_curve = geom_index_df[0].tolist()  # len = num_edges, edge_to_curve[i] = curve_id de la arista i
+edge_geometry_df.columns = ["x", "y", "z"]
 
-# 3b) rename colums
-# Asumo formato: col0 = curve_id, col1 = x, col2 = y, col3 = z
-edge_geometry_df.columns = ["curve_id", "x", "y", "z"]
+# Use numpy arrays  (more compact than lists of tuples) 
+x = edge_geometry_df["x"].to_numpy(dtype=np.float32)
+y = edge_geometry_df["y"].to_numpy(dtype=np.float32)
+z = edge_geometry_df["z"].to_numpy(dtype=np.float32)
 
-# 3c) agrupar: curve_id -> lista de (x,y,z)
-geometry_dict = (
-    edge_geometry_df
-    .groupby("curve_id")
-    .apply(lambda df: [tuple(p) for p in df[["x", "y", "z"]].values])
-    .to_dict()
-)
+starts = geom_index_df[0].to_numpy(dtype=np.int64)
+ends   = geom_index_df[1].to_numpy(dtype=np.int64)
 
-# 3d) construir lista de geometrías por arista (en el mismo orden que edges_df)
+# Check
+assert int(ends[-1]) <= len(edge_geometry_df), "Last end index exceeds points length"
+
 edge_geometries = []
-for i in range(len(edges_df)):
-    curve_id = edge_to_curve[i]          # qué curva le toca a esa arista
-    points_edge = geometry_dict[curve_id]  # lista de (x,y,z) = POINTS
-    edge_geometries.append(points_edge)
+edge_geometries_append = edge_geometries.append
 
-# Asignar al grafo >>>>>>> POINTS
+for s, e in zip(starts, ends):
+    # Save as Nx3 array float32 (compact)
+    geom = np.column_stack((x[s:e], y[s:e], z[s:e])).astype(np.float32, copy=False)
+    edge_geometries_append(geom)
+
 G.es["geometry"] = edge_geometries
 
-print(G.es[0].attributes())
-print(G.es[1].attributes())
+# ============================
+# 3b) Compute tortuous length and tortuosity
+# ============================
+
+coords_v = np.array(G.vs["coords"])
+
+length_tortuous = []
+straight_dist = []
+
+for edge_id, geom in enumerate(G.es["geometry"]):
+    # --- tortuous length from geometry ---
+    L = 0.0
+    for i in range(len(geom) - 1):
+        L += np.linalg.norm(geom[i+1] - geom[i])
+    length_tortuous.append(L)
+
+    # --- straight-line distance between endpoints ---
+    v0, v1 = G.es[edge_id].tuple
+    straight_dist.append(
+        np.linalg.norm(coords_v[v0] - coords_v[v1])
+    )
+
+length_tortuous = np.array(length_tortuous)
+straight_dist   = np.array(straight_dist)
+
+tortuosity = length_tortuous / straight_dist
+tortuosity[straight_dist == 0] = np.nan
+
+G.es["length_tortuous"] = length_tortuous.tolist()
+G.es["tortuosity"]      = tortuosity.tolist()
+
+
+
 
 # ============================
 # 4) Comprobaciones de tipos
@@ -139,8 +176,12 @@ check_column_types(vertices_df[0], "vertices_df")
 # 5) Guardar en pickle
 # ============================
 
-out_path = r"C:\Users\Ana\OneDrive\Escritorio\ARTORG\igraph\my test codes" + str(graph_number) + f"/add_coord_{graph_number}_igraph.pkl"
+out_path = r"/home/admin/Ana/MicroBrain" + str(graph_number) + f"/add_coord_{graph_number}_igraph.pkl"
+os.makedirs(os.path.dirname(out_path), exist_ok=True)
+
 with open(out_path, "wb") as f:
-    pickle.dump(G, f)
+    pickle.dump(G, f, protocol=pickle.HIGHEST_PROTOCOL)
+
 
 print('Graph saved in pickle format at:', out_path)
+print("=== DONE ===")

@@ -88,7 +88,7 @@ polydata.GetCellData().SetActiveScalars("nkind")
 # ============================
 
 writer = vtk.vtkXMLPolyDataWriter()
-writer.SetFileName("/home/admin/Ana/MicroBrain/output/vascular_network.vtp")
+writer.SetFileName("/home/admin/Ana/MicroBrain/output/graph_18_full.vtp")
 writer.SetInputData(polydata)
 writer.SetDataModeToAppended()
 writer.EncodeAppendedDataOff()
