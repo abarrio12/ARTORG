@@ -3,17 +3,12 @@ import vtk
 import numpy as np
 
 # ============================
-# Load FULL pkl
+# Load FULLGEOM graph
 # ============================
 
-data = pickle.load(open(
-    "/home/admin/Ana/MicroBrain/output/graph_18_full.pkl", "rb"
+G = pickle.load(open(
+    "/home/admin/Ana/MicroBrain/output18/graph_18_FULLGEOM.pkl", "rb"
 ))
-
-G = data["graph"]
-coords = data["coords"]
-
-x, y, z = coords["x"], coords["y"], coords["z"]
 
 # ============================
 # VTK structures
@@ -41,21 +36,22 @@ point_id = 0
 # ============================
 
 for e in range(G.ecount()):
-    s = int(G.es[e]["geom_start"])
-    e_ = int(G.es[e]["geom_end"])
-    npts = e_ - s
+    geom = G.es[e]["points"]  
+    geom = np.asarray(geom, dtype=np.float32) # secure (N,3) 
 
-    if npts < 2:
+    if geom.shape[0] < 2:
         continue
+
+    npts = geom.shape[0]
 
     polyline = vtk.vtkPolyLine()
     polyline.GetPointIds().SetNumberOfIds(npts)
 
     for i in range(npts):
         points.InsertNextPoint(
-            float(x[s + i]),
-            float(y[s + i]),
-            float(z[s + i])
+            float(geom[i, 0]),
+            float(geom[i, 1]),
+            float(geom[i, 2])
         )
         polyline.GetPointIds().SetId(i, point_id)
         point_id += 1
@@ -65,7 +61,8 @@ for e in range(G.ecount()):
     nkind_array.InsertNextValue(int(G.es[e]["nkind"]))
     radius_array.InsertNextValue(float(G.es[e]["radius"]))
     length_array.InsertNextValue(float(G.es[e]["length"]))
-    tortuosity_array.InsertNextValue(float(G.es[e]["tortuosity"]))
+    t = G.es[e]["tortuosity"]
+    tortuosity_array.InsertNextValue(float(t) if t == t else 0.0)  # nan -> 0
 
 # ============================
 # Create PolyData
@@ -80,7 +77,6 @@ polydata.GetCellData().AddArray(radius_array)
 polydata.GetCellData().AddArray(length_array)
 polydata.GetCellData().AddArray(tortuosity_array)
 
-# Default coloring
 polydata.GetCellData().SetActiveScalars("nkind")
 
 # ============================
@@ -88,11 +84,10 @@ polydata.GetCellData().SetActiveScalars("nkind")
 # ============================
 
 writer = vtk.vtkXMLPolyDataWriter()
-writer.SetFileName("/home/admin/Ana/MicroBrain/output/graph_18_full.vtp")
+writer.SetFileName(
+    "/home/admin/Ana/MicroBrain/output18/graph_18_FULLGEOM.vtp"
+)
 writer.SetInputData(polydata)
-writer.SetDataModeToAppended()
-writer.EncodeAppendedDataOff()
 writer.Write()
 
-print("Saved vascular_network.vtp")
-
+print("Saved vascular_network FULLGEOM")
