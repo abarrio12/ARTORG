@@ -1,0 +1,19 @@
+# ===== Python =====
+__pycache__/
+*.pyc
+
+# ===== Large data files =====
+*.pkl
+*.gt
+*.vtp
+
+# ===== Paraview / VTK =====
+*.vtk
+*.vtu
+
+# ===== Images/Files =====
+*.png
+*.jpg
+*.pdf
+
+
