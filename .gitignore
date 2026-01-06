@@ -11,13 +11,6 @@ output/
 # ===== Ignore all PKL by default =====
 *.pkl
 
-# ===== Ignore everything inside half brain =====
-half brain files (pkl-vtp)/**
-
-# ===== EXCEPTIONS =====
-!half brain files (pkl-vtp)/
-!half brain files (pkl-vtp)/18_igraph.pkl
-
 # ===== ParaView / VTK =====
 *.vtk
 *.vtu
