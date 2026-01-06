@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 # ===== Python =====
 __pycache__/
 *.pyc
@@ -15,5 +16,26 @@ __pycache__/
 *.png
 *.jpg
 *.pdf
+=======
+# Data
+CSV/
+output/
+*.pkl
+*.vtp
+
+# Python
+__pycache__/
+*.pyc
+
+# Temp / misc
+*.log
+
+
+
+
+
+
+
+>>>>>>> 81c4df4d881b4e612274c23a867364c35d26b0a8
 
 
