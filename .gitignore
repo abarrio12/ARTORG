@@ -1,41 +1,25 @@
-<<<<<<< HEAD
 # ===== Python =====
 __pycache__/
 *.pyc
 
-# ===== Large data files =====
+# ===== Data / outputs =====
+CSV/
+output/
 *.pkl
 *.gt
 *.vtp
 
-# ===== Paraview / VTK =====
+# ===== ParaView / VTK =====
 *.vtk
 *.vtu
 
-# ===== Images/Files =====
+# ===== Temp / misc =====
+*.log
+
+# ===== Images / documents =====
 *.png
 *.jpg
 *.pdf
-=======
-# Data
-CSV/
-output/
-*.pkl
-*.vtp
 
-# Python
-__pycache__/
-*.pyc
-
-# Temp / misc
-*.log
-
-
-
-
-
-
-
->>>>>>> 81c4df4d881b4e612274c23a867364c35d26b0a8
 
 
