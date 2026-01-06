@@ -16,11 +16,11 @@ import igraph as ig
 # -----------------------------
 graph_number = 18
 folder = "/home/admin/Ana/MicroBrain/CSV/"
-out_path = f"/home/admin/Ana/MicroBrain/output{graph_number}/{graph_number}_igraph_FULLGEOM.pkl"
+out_path = f"/home/admin/Ana/MicroBrain/output{graph_number}/{graph_number}_igraph_FULLGEOM_SUB.pkl"
 
 # If you're testing, you can cap edges to avoid killing the process:
 # set to None for full (WARNING: huge)
-MAX_EDGES = None  # e.g. 200000  (for a test)
+MAX_EDGES = 200000  # e.g. 200000  (for a test)
 
 print("=== START CSV → PKL (FULLGEOM) ===")
 
@@ -46,6 +46,9 @@ distance_to_surface_df = pd.read_csv(folder + "distance_to_surface.csv", header=
 
 geom_index_df = pd.read_csv(folder + "edge_geometry_indices.csv", header=None, dtype=np.int64)
 edge_geometry_df = pd.read_csv(folder + "edge_geometry_coordinates.csv", header=None, dtype=np.float32)
+
+edge_geometry_radii_df = pd.read_csv(folder + "edge_geometry_radii.csv", header=None, dtype=np.float32)
+
 
 print("END reading CSVs")
 
@@ -124,13 +127,13 @@ nkind = np.full(n_edges, 4, dtype=np.int8)  # capillary default
 nkind[artery_df[0].to_numpy(np.int8) == 1] = 2
 nkind[vein_df[0].to_numpy(np.int8) == 1] = 3
 
-radius = radii_df[0].to_numpy(np.float32, copy=False)
-lengths = length_df[0].to_numpy(np.float32, copy=False)
+radius_edge = radii_df[0].to_numpy(np.float32, copy=False)
+lengths_edge = length_df[0].to_numpy(np.float32, copy=False)
 
 G.es["nkind"] = nkind.tolist()
-G.es["radius"] = radius.tolist()
-G.es["diameter"] = (2.0 * radius).tolist()
-G.es["length"] = lengths.tolist()
+G.es["radius"] = radius_edge.tolist()
+G.es["diameter"] = (2.0 * radius_edge).tolist()
+G.es["length"] = lengths_edge.tolist()
 
 
 # -----------------------------
@@ -145,18 +148,51 @@ z = edge_geometry_df["z"].to_numpy(dtype=np.float32, copy=False)
 starts = geom_index_df[0].to_numpy(dtype=np.int64, copy=False)
 ends   = geom_index_df[1].to_numpy(dtype=np.int64, copy=False)
 
+r_global = edge_geometry_radii_df[0].to_numpy(dtype=np.float32, copy=False)
+
 assert int(ends[-1]) <= len(edge_geometry_df), "Last end index exceeds points length"
+assert int(ends[-1]) <= len(r_global), "Last end index exceeds radii length"
 
 # Build points list (Gaia expects e['points'])
 points_list = []
+diameters_list = []
+lengths2_list = []
+lengths_list = []
+
 append_points = points_list.append
+append_diams = diameters_list.append
+append_l2 = lengths2_list.append
+append_l = lengths_list.append
 
 for s, e in zip(starts, ends):
     # Nx3 float32 array
     pts = np.column_stack((x[s:e], y[s:e], z[s:e])).astype(np.float32, copy=False)
-    append_points(pts)
 
+    # N radii -> N diameters
+    r_pts = r_global[s:e].astype(np.float32, copy=False)
+    diams = (2.0 * r_pts).astype(np.float32, copy=False)
+
+    # lengths2: (N-1) segment lengths
+    if pts.shape[0] >= 2:
+        l2 = np.linalg.norm(np.diff(pts, axis=0), axis=1).astype(np.float32)  # (N-1,)
+        l = np.empty(pts.shape[0], dtype=np.float32)  # (N,)
+        l[:-1] = l2
+        l[-1]  = l2[-1] # point 0 --> seg 0-1, point 1 --> seg 1-2. If not [-1], point 0 --> "fictional", point 1 --> seg 0-1 
+
+    else:
+        l2 = np.zeros(0, dtype=np.float32)
+        l = np.zeros(pts.shape[0], dtype=np.float32)
+
+    append_points(pts)
+    append_diams(diams)
+    append_l2(l2)
+    append_l(l)
+
+# Complies with Gaias cut the graph code attributes names
 G.es["points"] = points_list
+G.es["diameters"] = diameters_list
+G.es["lengths2"] = lengths2_list
+G.es["lengths"] = lengths_list
 
 # -----------------------------
 # Tortuosity (from points)
@@ -186,6 +222,31 @@ print("  N edges:", n_edges)
 print("  N straight_dist == 0:", int(np.sum(~mask)))
 if np.any(mask):
     print("  Max tortuosity (finite):", float(np.nanmax(tortuosity)))
+
+
+# CHECKS
+
+# Data structure
+k = 0
+print(points_list[k].shape, diameters_list[k].shape, lengths_list[k].shape, lengths2_list[k].shape)
+# Esperado: (N,3) (N,) (N,) (N-1,)
+
+# Edge info (Should be 0 or really close)
+bad = 0
+for e in range(G.ecount()):
+    pts = G.es[e]["points"]
+    d   = G.es[e]["diameters"]
+    l   = G.es[e]["lengths"]
+    l2  = G.es[e]["lengths2"]
+    n = pts.shape[0]
+    if len(d)!=n or len(l)!=n or len(l2)!=max(n-1,0):
+        bad += 1
+
+print("Edges with inconsistent per-point arrays:", bad)
+
+# Leghths (should be very similar)
+e = 0
+print(np.sum(G.es[e]["lengths2"]), G.es[e]["length_tortuous"])
 
 
 # -----------------------------

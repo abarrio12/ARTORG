@@ -29,7 +29,7 @@ def distance(v1, v2):
 # BOUNDING BOX - OPTION 1
 # --------------------------------------------------------------------------------------------------------------------------
 
-def get_edges_in_boundingBox_vertex_based(xCoordsBox=[1300,1700],yCoordsBox=[1400,1800],zCoordsBox=[0, 400]):
+def get_edges_in_boundingBox_vertex_based(xCoordsBox=[2500,3500], yCoordsBox=[1500,2500],zCoordsBox=[200, 1200]):
     """ Outputs edges belonging to a given box.
     INPUT: xCoords = xmin,xmax
            yCoords = ymin,ymax
@@ -84,12 +84,17 @@ def get_edges_in_boundingBox_vertex_based(xCoordsBox=[1300,1700],yCoordsBox=[140
     print("zCoordsBox: ", zCoordsBox)
     for e in G.es:
         points = e['points']
-        if G.vs[e.source]['coords'].all() != points[0].all():
-            node_0 = e.target
-            node_1 = e.source
-        else:
+        #if G.vs[e.source]['coords'].all() != points[0].all(): coords is a tuple in my graph, points np array (N,3) can't use .all or == for float32
+        coords_source = np.asarray(G.vs[e.source]["coords"], dtype=np.float32)
+        p0 = np.asarray(e["points"][0], dtype=np.float32)
+
+        if np.allclose(coords_source, p0, atol=1e-6):
             node_0 = e.source
             node_1 = e.target
+        else:
+            node_0 = e.target
+            node_1 = e.source
+
         vertices = [node_0, node_1] #indices of the two vertices that are connected by the edge e
         vertices_in_box = [0, 0]
 
@@ -155,10 +160,13 @@ def get_edges_in_boundingBox_vertex_based(xCoordsBox=[1300,1700],yCoordsBox=[140
                         G.vs[-1]['coords'] = intersection_point
                         G.vs[-1]['degree'] = 1
                         G.vs[-1]['index'] = node_index
+
+                        '''
                         step_pr = (G.vs[vertices[1]]['pressure'] - G.vs[vertices[0]]['pressure']) / (len(points)-1)
                         #linear distribution of the pressure along the vessel
                         G.vs[-1]['pBC'] = G.vs[vertices[0]]['pressure'] + step_pr * len(internal_points)
                         G.vs[-1]['pressure'] = G.vs[vertices[0]]['pressure'] + step_pr * len(internal_points)
+                        '''
 
 
                     if vertices_in_box[0] == 0:  #first node (node_0) outside
@@ -301,13 +309,19 @@ def get_edges_in_boundingBox_vertex_based_2(xCoordsBox=[1300,1700],yCoordsBox=[1
 # --------------------------------------------------------------------------------------------------------------------------
 # BOUNDING BOX - OPTION 2 - END
 # --------------------------------------------------------------------------------------------------------------------------
-with open("18_igraph.pkl", "rb") as f:
-    data = pickle.load(f)
 
-G = data["graph"]
-x = data["coords"]["x"]
-y = data["coords"]["y"]
-z = data["coords"]["z"]
+
+
+# ============= CODE EXECUTION ============
+
+
+with open("/home/admin/Ana/MicroBrain/output18/18_igraph_FULLGEOM_SUB.pkl", "rb") as f:
+    G = pickle.load(f)
+
+#G = data["graph"] # when graph as diccionary ~ outgeom
+#x = data["coords"]["x"]
+#y = data["coords"]["y"]
+#z = data["coords"]["z"]
 
 vertices_data = {attr: G.vs[attr] for attr in G.vs.attributes()}
 edges_data = {attr: G.es[attr] for attr in G.es.attributes()}
@@ -353,8 +367,14 @@ print("Original yCoordsBox: [", y_min, ",", y_max, "]")
 print("Original zCoordsBox: [", z_min, ",", z_max, "]")
 
 # get_edges_in_boundingBox_vertex_based
-edges_in_box, edges_across_border, edges_outside_box, border_vertices, new_edges_on_border = get_edges_in_boundingBox_vertex_based(xCoordsBox=[1000, 1400], yCoordsBox=[1600, 2000], zCoordsBox=[400, 800])
+
+# Execute option 1
+
+edges_in_box, edges_across_border, edges_outside_box, border_vertices, new_edges_on_border = get_edges_in_boundingBox_vertex_based(xCoordsBox=[50, 150], yCoordsBox=[150, 300], zCoordsBox=[50, 150])
+
+# Execute option 2
 #edges_in_box, edges_across_border, edges_outside_box, border_vertices = get_edges_in_boundingBox_vertex_based_2(xCoordsBox=[1300, 1700], yCoordsBox=[1400, 1800], zCoordsBox=[0, 400])
+
 #all_edges = np.concatenate([edges_in_box])
 all_edges = np.concatenate([edges_in_box, new_edges_on_border])
 print("Number of edges in the box: ", len(edges_in_box))
