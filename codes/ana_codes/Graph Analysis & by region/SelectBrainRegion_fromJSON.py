@@ -1,7 +1,7 @@
 """
 Code for visualizing annotated regions in Paraview (JSON version)
 Updated to use ABA_annotation_last.json instead of deprecated CSV
-Ana 2025
+Ana Barrio 2025
 """
 
 '''
