@@ -29,7 +29,7 @@ def distance(v1, v2):
 # BOUNDING BOX - OPTION 1
 # --------------------------------------------------------------------------------------------------------------------------
 
-def get_edges_in_boundingBox_vertex_based(xCoordsBox=[2500,3500], yCoordsBox=[1500,2500],zCoordsBox=[200, 1200]):
+def get_edges_in_boundingBox_vertex_based(xCoordsBox, yCoordsBox,zCoordsBox):
     """ Outputs edges belonging to a given box.
     INPUT: xCoords = xmin,xmax
            yCoords = ymin,ymax
@@ -315,7 +315,7 @@ def get_edges_in_boundingBox_vertex_based_2(xCoordsBox=[1300,1700],yCoordsBox=[1
 # ============= CODE EXECUTION ============
 
 
-with open("/home/admin/Ana/MicroBrain/output18/18_igraph_FULLGEOM_SUB.pkl", "rb") as f:
+with open("/home/admin/Ana/MicroBrain/output18/18_igraph_FULLGEOM.pkl", "rb") as f:
     G = pickle.load(f)
 
 #G = data["graph"] # when graph as diccionary ~ outgeom
@@ -366,13 +366,26 @@ print("Original xCoordsBox: [", x_min, ",", x_max, "]")
 print("Original yCoordsBox: [", y_min, ",", y_max, "]")
 print("Original zCoordsBox: [", z_min, ",", z_max, "]")
 
+
+coords = np.array(G.vs['coords'])
+coords_img = np.array(G.vs['coords_image'])
+
+# tamaño de voxel en µm
+voxel_size = (coords.max(axis=0) - coords.min(axis=0)) / \
+             (coords_img.max(axis=0) - coords_img.min(axis=0))
+
+print("Voxel size [µm]:", voxel_size)
+
+
 # get_edges_in_boundingBox_vertex_based
 
-# Execute option 1
+# =========================                     Execute option 1                =============================================
 
-edges_in_box, edges_across_border, edges_outside_box, border_vertices, new_edges_on_border = get_edges_in_boundingBox_vertex_based(xCoordsBox=[50, 150], yCoordsBox=[150, 300], zCoordsBox=[50, 150])
+edges_in_box, edges_across_border, edges_outside_box, border_vertices, new_edges_on_border = get_edges_in_boundingBox_vertex_based(xCoordsBox=[1000, 2000], yCoordsBox=[0, 1000], zCoordsBox=[1500, 2500])
 
-# Execute option 2
+# =========================                     Execute option 2                =============================================
+
+
 #edges_in_box, edges_across_border, edges_outside_box, border_vertices = get_edges_in_boundingBox_vertex_based_2(xCoordsBox=[1300, 1700], yCoordsBox=[1400, 1800], zCoordsBox=[0, 400])
 
 #all_edges = np.concatenate([edges_in_box])
@@ -461,3 +474,5 @@ with open("vertices_18_graph.pkl", "wb") as f:
 
 with open("edges_18_graph.pkl", "wb") as f:
     pickle.dump(edges_data, f)
+
+
