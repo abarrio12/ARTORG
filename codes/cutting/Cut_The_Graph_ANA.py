@@ -49,7 +49,7 @@ def get_edges_in_boundingBox_vertex_based(xCoordsBox, yCoordsBox, zCoordsBox):
       - e["points"] for ORIGINAL edges are in voxels (image voxels), so we scale ON THE FLY here
       - NEW border edges created here will be stored in µm and tagged with e["points_um"]=True
     """
-
+    
     edges_in_box = []
     edges_outside_box = []
     edges_across_border = []
@@ -59,6 +59,16 @@ def get_edges_in_boundingBox_vertex_based(xCoordsBox, yCoordsBox, zCoordsBox):
     print("xCoordsBox:", xCoordsBox)
     print("yCoordsBox:", yCoordsBox)
     print("zCoordsBox:", zCoordsBox)
+    
+    # ---- DEBUG: how many vertices are inside the box? (done once) ----
+    V = np.array(G.vs["coords"], dtype=np.float64)   # shape (N,3)
+    inside_v = (
+        (xCoordsBox[0] <= V[:, 0]) & (V[:, 0] <= xCoordsBox[1]) &
+        (yCoordsBox[0] <= V[:, 1]) & (V[:, 1] <= yCoordsBox[1]) &
+        (zCoordsBox[0] <= V[:, 2]) & (V[:, 2] <= zCoordsBox[1])
+    )
+    print("Vertices inside box:", int(inside_v.sum()), "out of", V.shape[0])
+    # ---------------------------------------------------------------
 
     for e in G.es:
         # ORIGINAL edges are voxels -> scale to µm ON THE FLY
@@ -79,17 +89,9 @@ def get_edges_in_boundingBox_vertex_based(xCoordsBox, yCoordsBox, zCoordsBox):
 
         for i, v in enumerate(vertices):
             coords = np.asarray(G.vs[v]["coords"], dtype=np.float64)
-            inside_v = (
-                (xCoordsBox_um[0] <= coords[:,0]) & (coords[:,0] <= xCoordsBox_um[1]) &
-                (yCoordsBox_um[0] <= coords[:,1]) & (coords[:,1] <= yCoordsBox_um[1]) &
-                (zCoordsBox_um[0] <= coords[:,2]) & (coords[:,2] <= zCoordsBox_um[1])
-            )
             if is_inside_box(coords, xCoordsBox, yCoordsBox, zCoordsBox):
                 vertices_in_box[i] = 1
     
-
-print("Vertices inside box:", int(inside_v.sum()), "out of", len(coords))
-
         s = int(np.sum(vertices_in_box))
         if s == 2:
             edges_in_box.append(e.index)
@@ -271,7 +273,7 @@ print("Number of edges to delete:", len(edges_to_delete))
 print("Number of border vertices:", len(border_vertices))
 
 G.delete_edges(edges_to_delete)
-G.delete_vertices(border_vertices)
+#G.delete_vertices(border_vertices)
 
 # Remove isolated vertices
 disconnected_vertices = [v.index for v in G.vs if G.degree(v) == 0]
