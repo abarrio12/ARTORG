@@ -157,46 +157,43 @@ def get_edges_in_boundingBox_vertex_based(xCoordsBox, yCoordsBox, zCoordsBox):
 
                 # Mark: this new edge already has points in µm
                 new_edge["points_um"] = True
-
-                # compute per-segment lengths in µm
-                lengths2 = np.linalg.norm(np.diff(new_points, axis=0), axis=1)
-                new_edge["lengths2"] = lengths2.tolist()
-
-                # per-point "lengths" vector in Gaia-style (N), last repeats last segment
+                
+                # Points (µm)
+                new_edge["points"] = new_points.tolist()
+                
+                # Recompute lengths in µm from new_points
                 if new_points.shape[0] >= 2:
-                    lengths_vec = np.empty(new_points.shape[0], dtype=np.float64)
-                    lengths_vec[:-1] = lengths2
-                    lengths_vec[-1]  = lengths2[-1]
+                    lengths2_um = np.linalg.norm(np.diff(new_points, axis=0), axis=1)
+                    new_edge["lengths2"] = lengths2_um.tolist()
+                
+                    lengths_um = np.empty(new_points.shape[0], dtype=np.float64)
+                    lengths_um[:-1] = lengths2_um
+                    lengths_um[-1]  = lengths2_um[-1]
+                    new_edge["lengths"] = lengths_um.tolist()
+                
+                    new_edge["length"] = float(lengths2_um.sum())
                 else:
-                    lengths_vec = np.zeros(new_points.shape[0], dtype=np.float64)
-
-                new_edge["lengths"] = lengths_vec.tolist()
-                new_edge["length"]  = float(lengths2.sum())
-
-                # diameters/lengths per-point based on original indexing
+                    new_edge["lengths2"] = []
+                    new_edge["lengths"]  = [0.0] * int(new_points.shape[0])
+                    new_edge["length"]   = 0.0
+                
+                # Diameters: copy from original by indices, and add one for the intersection
                 diameters = []
-                lengths_old = []  # if you still want to preserve original per-point lengths from input
-
+                
                 if vertices_in_box[0] == 0:
+                    # intersection at start -> use first internal point’s diameter
                     diameters.append(e["diameters"][save_index[0]])
-                    lengths_old.append(e["lengths"][save_index[0]])
-
                 for i_idx in save_index:
                     diameters.append(e["diameters"][i_idx])
-                    lengths_old.append(e["lengths"][i_idx])
-
                 if vertices_in_box[0] == 1:
+                    # intersection at end -> use last internal point’s diameter
                     diameters.append(e["diameters"][save_index[-1]])
-                    lengths_old.append(e["lengths"][save_index[-1]])
-
-                new_edge["diameter"]  = e["diameter"]
-                new_edge["nkind"]     = e["nkind"]
-                new_edge["points"]    = new_points.tolist()  # µm
+                
                 new_edge["diameters"] = diameters
-
-                # keep original "lengths" if you want, but it's in original units.
-                # better to NOT keep it to avoid confusion. If you do, rename:
-                new_edge["lengths_input"] = lengths_old
+                
+                # Scalar attrs copied
+                new_edge["diameter"] = e["diameter"]
+                new_edge["nkind"]    = e["nkind"]
 
                 # optional attributes
                 for k in ("hd", "htt", "flow", "flow_rate", "rbc_velocity", "v"):
@@ -217,7 +214,7 @@ def get_edges_in_boundingBox_vertex_based(xCoordsBox, yCoordsBox, zCoordsBox):
 # EXECUTION
 # ---------------------------
 
-with open("/home/admin/Ana/MicroBrain/output18/18_igraph_FULLGEOM.pkl", "rb") as f:
+with open("/home/admin/Ana/MicroBrain/output18/18_igraph_FULLGEOM_SUB.pkl", "rb") as f:
     G = pickle.load(f)
 
 # voxel -> µm scaling (image resolution)
@@ -242,10 +239,14 @@ print("coords(µm) bounds:",
       np.max(np.asarray(G.vs["coords"], dtype=np.float64), axis=0))
 print("box (µm):", xCoordsBox_um, yCoordsBox_um, zCoordsBox_um)
 
-# Ensure points_um attribute exists (False for all original edges)
+# Ensure points_um attribute exists for all remaining edges(False for all original edges)
+# Flag: original edges are not in um yet (they are in voxels)
 if "points_um" not in G.es.attributes():
     G.es["points_um"] = [False] * G.ecount()
 
+# ========================================================
+# ---- CUT (this function scales points on-the-fly) ----
+# =========================================================
 edges_in_box, edges_across_border, edges_outside_box, border_vertices, new_edges_on_border = \
     get_edges_in_boundingBox_vertex_based(xCoordsBox_um, yCoordsBox_um, zCoordsBox_um)
 
@@ -268,24 +269,16 @@ disconnected_vertices = [v.index for v in G.vs if G.degree(v) == 0]
 G.delete_vertices(disconnected_vertices)
 G.vs["degree"] = G.degree()
 
-# ---------------------------
-# OPTION B (your request):
-# Normalize final graph so ALL remaining edges store points in µm,
-# AND recompute lengths2 / lengths / length consistently in µm,
-# BUT do NOT double-scale new border edges (points_um=True)
-# ---------------------------
+# ---- OPTION B: normalize ALL remaining edges to µm + recompute lengths ----
 for e in G.es:
-    already_um = bool(e["points_um"]) if "points_um" in G.es.attributes() else False
-
+    already_um = bool(e["points_um"])
     pts = np.asarray(e["points"], dtype=np.float64)
 
-    # If original edge -> convert to µm now
     if not already_um:
         pts = pts * scale
         e["points"] = pts.tolist()
-        e["points_um"] = True  # now it's µm too
+        e["points_um"] = True
 
-    # Recompute lengths in µm (for EVERY edge now)
     if pts.shape[0] >= 2:
         lengths2_um = np.linalg.norm(np.diff(pts, axis=0), axis=1)
         e["lengths2"] = lengths2_um.tolist()
@@ -298,17 +291,24 @@ for e in G.es:
         e["length"] = float(lengths2_um.sum())
     else:
         e["lengths2"] = []
-        e["lengths"] = [0.0] * int(pts.shape[0])
-        e["length"] = 0.0
+        e["lengths"]  = [0.0] * int(pts.shape[0])
+        e["length"]   = 0.0
 
+'''
 # OPTIONAL: remove helper flag before saving (if you don't want it)
+# Keep points_um if you want (recommended for debugging)
+# If you dont want to remove it, comment:
 if "points_um" in G.es.attributes():
     del G.es["points_um"]
 
 # OPTIONAL: if you created lengths_input and you don't want it, remove it:
 if "lengths_input" in G.es.attributes():
     del G.es["lengths_input"]
+'''
+with open("graph_18_CUT.pkl", "wb") as f:
+    pickle.dump(G, f, protocol=pickle.HIGHEST_PROTOCOL)
 
+'''
 # Save output as dicts (your format)
 vertices_data = {attr: G.vs[attr] for attr in G.vs.attributes()}
 edges_data = {attr: G.es[attr] for attr in G.es.attributes()}
@@ -319,5 +319,5 @@ with open("vertices_18_graph.pkl", "wb") as f:
 
 with open("edges_18_graph.pkl", "wb") as f:
     pickle.dump(edges_data, f)
-
+'''
 print("Saved: vertices_18_graph.pkl and edges_18_graph.pkl")
