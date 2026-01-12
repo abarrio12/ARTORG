@@ -84,11 +84,9 @@ G.vs["distance_to_surface"] = distance_to_surface_df[0].astype(np.float32).tolis
 G.vs["radii"] = radii_vertex_df[0].astype(np.float32).tolist()
 
 
-
-#CHEKEO 
+# CHEEEECKKK 
 coords = np.asarray(G.vs["coords"], float)
 coords_img = np.asarray(G.vs["coords_image"], float)
-
 print("coords max:", coords.max(axis=0))
 print("coords_image max:", coords_img.max(axis=0))
 print("ratio img/coords:", coords_img.max(axis=0) / coords.max(axis=0))
@@ -145,7 +143,8 @@ lengths_edge = length_df[0].to_numpy(np.float32, copy=False)
 G.es["nkind"] = nkind.tolist()
 G.es["radius"] = radius_edge.tolist()
 G.es["diameter"] = (2.0 * radius_edge).tolist()
-G.es["length"] = lengths_edge.tolist()
+
+G.es["lengths"] = lengths_edge.tolist()
 
 
 # -----------------------------
@@ -264,8 +263,8 @@ if np.mean(diff_vs_csv) > 0.1:
 G.es["points"] = points_list
 G.es["diameters"] = diameters_list
 G.es["lengths2"] = lengths2_list
-G.es["length"] = length_list #vector
-
+G.es["lengths"]   = length_list        # (N)   per edge  ← Gaia cut format
+G.es["length"]    = length_tortuous_arr.tolist()  # scalar per edge 
 G.es["length_tortuous"] = length_tortuous_arr.tolist()
 G.es["tortuosity"] = tortuosity.tolist()
 
@@ -276,6 +275,7 @@ G.es["tortuosity"] = tortuosity.tolist()
 # Data structure
 k = 0
 print(points_list[k].shape, diameters_list[k].shape, length_list[k].shape, lengths2_list[k].shape)
+
 # Esperado: (N,3) (N,) (N,) (N-1,)
 
 # Edge info (Should be 0 or really close)
@@ -283,17 +283,20 @@ bad = 0
 for e in range(G.ecount()):
     pts = G.es[e]["points"]
     d   = G.es[e]["diameters"]
-    l_vec   = G.es[e]["length"]
-    lengths2  = G.es[e]["lengths2"]
     n = pts.shape[0]
-    if len(d)!=n or len(l_vec)!=n or len(lengths2)!=max(n-1,0):
+    l_vec = G.es[e]["lengths"]   # vector N (Gaia cut)
+    length2    = G.es[e]["lengths2"]  # vector N-1
+
+    if len(d) != n or len(l_vec) != n or len(length2) != max(n-1, 0):
         bad += 1
+
 
 print("Edges with inconsistent per-point arrays:", bad)
 
 # Leghths (should be very similar)
 e = 0
 print(np.sum(G.es[e]["lengths2"]), G.es[e]["length_tortuous"])
+
 
 
 # -----------------------------

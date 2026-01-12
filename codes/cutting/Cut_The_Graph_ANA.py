@@ -142,11 +142,14 @@ def get_edges_in_boundingBox_vertex_based(xCoordsBox, yCoordsBox, zCoordsBox):
                     G.add_edge(node_index, node_1)
                     new_edge = G.es[-1]
                     new_edge["connectivity"] = (node_index, node_1)
+                    new_edge["points_um"] = True
                 else:  # second node outside
                     new_points = np.vstack([internal_points, intersection_point])
                     G.add_edge(node_0, node_index)
                     new_edge = G.es[-1]
                     new_edge["connectivity"] = (node_0, node_index)
+                    new_edge["points_um"] = True
+
 
                 # edge attributes
                 lengths2 = [distance(new_points[i], new_points[i + 1]) for i in range(len(new_points) - 1)]
@@ -281,8 +284,26 @@ disconnected_vertices = [v.index for v in G.vs if G.degree(v) == 0]
 G.delete_vertices(disconnected_vertices)
 G.vs["degree"] = G.degree()
 
+# --- NORMALIZE: store all remaining edge points in µm ---
+# Original edges: points were in voxels -> scale them now
+# New border edges: already in µm -> do NOT scale again
+if "points_um" not in G.es.attributes():
+    # in case you run on a graph without new edges created
+    G.es["points_um"] = [False] * G.ecount()
+    for e in G.es:
+        already_um = bool(e["points_um"])
+        if not already_um:
+            pts = np.asarray(e["points"], dtype=np.float64)
+            e["points"] = (pts * scale).tolist()
+
+
 # Save
 vertices_data = {attr: G.vs[attr] for attr in G.vs.attributes()}
+
+# Optional: remove helper flag before saving
+if "points_um" in G.es.attributes():
+    del G.es["points_um"]
+    
 edges_data = {attr: G.es[attr] for attr in G.es.attributes()}
 edges_data["connectivity"] = G.get_edgelist()
 
