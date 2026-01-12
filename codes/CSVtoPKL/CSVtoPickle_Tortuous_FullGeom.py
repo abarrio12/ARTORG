@@ -348,4 +348,5 @@ print("rank:", rank)
 print("median err:", float(np.median(err)))
 print("max err:", float(err.max()))
 print("residuals:", residuals[:10] if hasattr(residuals, "__len__") else residuals)
+
 print("M (image -> atlas):\n", M)

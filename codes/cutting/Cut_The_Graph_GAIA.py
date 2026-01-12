@@ -29,7 +29,7 @@ def distance(v1, v2):
 # BOUNDING BOX - OPTION 1
 # --------------------------------------------------------------------------------------------------------------------------
 
-def get_edges_in_boundingBox_vertex_based(xCoordsBox=[2500,3500], yCoordsBox=[1500,2500],zCoordsBox=[200, 1200]):
+def get_edges_in_boundingBox_vertex_based(xCoordsBox, yCoordsBox,zCoordsBox):
     """ Outputs edges belonging to a given box.
     INPUT: xCoords = xmin,xmax
            yCoords = ymin,ymax
@@ -315,9 +315,19 @@ def get_edges_in_boundingBox_vertex_based_2(xCoordsBox=[1300,1700],yCoordsBox=[1
 # ============= CODE EXECUTION ============
 
 
-with open("/home/admin/Ana/MicroBrain/output18/18_igraph_FULLGEOM_SUB.pkl", "rb") as f:
+with open("/home/admin/Ana/MicroBrain/output18/18_igraph_FULLGEOM.pkl", "rb") as f:
     G = pickle.load(f)
 
+
+coords_v = np.asarray(G.vs["coords"], dtype=float)
+print("VERTEX coords bounds:", coords_v.min(axis=0), coords_v.max(axis=0))# bounds de los points de edges (esto es lo que ParaView suele mostrar)
+allp = []
+for e in G.es[:1000]:  # con 1000 ya basta para ver escala (evita petarlo)
+    p = np.asarray(e["points"], dtype=float)
+    allp.append(p)
+allp = np.vstack(allp)
+print("EDGE points bounds (sample):", allp.min(axis=0), allp.max(axis=0))
+ 
 #G = data["graph"] # when graph as diccionary ~ outgeom
 #x = data["coords"]["x"]
 #y = data["coords"]["y"]
@@ -366,13 +376,44 @@ print("Original xCoordsBox: [", x_min, ",", x_max, "]")
 print("Original yCoordsBox: [", y_min, ",", y_max, "]")
 print("Original zCoordsBox: [", z_min, ",", z_max, "]")
 
+
+coords = np.array(G.vs['coords'])
+coords_img = np.array(G.vs['coords_image'])
+
+# conversion um/voxel
+sx, sy, sz = 1.625, 1.625, 2.5
+
+# coordinates from visual inspection in paraview (axis grid)
+[xmin_pv, xmax_pv] = [1000, 2000]
+[ymin_pv, ymax_pv] = [0,1000]
+[zmin_pv, zmax_pv] = [1500, 2500]
+
+xCoordsBox_pv = [xmin_pv, xmax_pv]
+yCoordsBox_pv = [ymin_pv, ymax_pv]
+zCoordsBox_pv = [zmin_pv, zmax_pv]
+
+# Conversion from voxel to um (system used by Gaia to cut)
+xCoordsBox_um = [xCoordsBox_pv[0]*sx,xCoordsBox_pv[1]*sx]
+yCoordsBox_um = [yCoordsBox_pv[0]*sy,yCoordsBox_pv[1]*sy]
+zCoordsBox_um = [zCoordsBox_pv[0]*sz,zCoordsBox_pv[1]*sz]
+
+
+
 # get_edges_in_boundingBox_vertex_based
 
-# Execute option 1
+# Consistency check
+coords_um = np.asarray(G.vs["coords"], float)
+print("coords(um) bounds", coords_um.min(0), coords_um.max(0))
+print("box (um)", xCoordsBox_um, yCoordsBox_um, zCoordsBox_um)
 
-edges_in_box, edges_across_border, edges_outside_box, border_vertices, new_edges_on_border = get_edges_in_boundingBox_vertex_based(xCoordsBox=[50, 150], yCoordsBox=[150, 300], zCoordsBox=[50, 150])
 
-# Execute option 2
+# =========================                     Execute option 1                =============================================
+
+edges_in_box, edges_across_border, edges_outside_box, border_vertices, new_edges_on_border = get_edges_in_boundingBox_vertex_based(xCoordsBox=xCoordsBox_um, yCoordsBox=yCoordsBox_um, zCoordsBox=zCoordsBox_um)
+
+# =========================                     Execute option 2                =============================================
+
+
 #edges_in_box, edges_across_border, edges_outside_box, border_vertices = get_edges_in_boundingBox_vertex_based_2(xCoordsBox=[1300, 1700], yCoordsBox=[1400, 1800], zCoordsBox=[0, 400])
 
 #all_edges = np.concatenate([edges_in_box])
@@ -461,3 +502,5 @@ with open("vertices_18_graph.pkl", "wb") as f:
 
 with open("edges_18_graph.pkl", "wb") as f:
     pickle.dump(edges_data, f)
+
+
