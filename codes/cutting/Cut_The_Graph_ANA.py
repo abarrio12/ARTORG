@@ -79,8 +79,16 @@ def get_edges_in_boundingBox_vertex_based(xCoordsBox, yCoordsBox, zCoordsBox):
 
         for i, v in enumerate(vertices):
             coords = np.asarray(G.vs[v]["coords"], dtype=np.float64)
+            inside_v = (
+                (xCoordsBox_um[0] <= coords[:,0]) & (coords[:,0] <= xCoordsBox_um[1]) &
+                (yCoordsBox_um[0] <= coords[:,1]) & (coords[:,1] <= yCoordsBox_um[1]) &
+                (zCoordsBox_um[0] <= coords[:,2]) & (coords[:,2] <= zCoordsBox_um[1])
+            )
             if is_inside_box(coords, xCoordsBox, yCoordsBox, zCoordsBox):
                 vertices_in_box[i] = 1
+    
+
+print("Vertices inside box:", int(inside_v.sum()), "out of", len(coords))
 
         s = int(np.sum(vertices_in_box))
         if s == 2:
@@ -89,8 +97,9 @@ def get_edges_in_boundingBox_vertex_based(xCoordsBox, yCoordsBox, zCoordsBox):
 
         if s == 0:
             edges_outside_box.append(e.index)
-            border_vertices.append(vertices[0])
-            border_vertices.append(vertices[1])
+            #border_vertices.append(vertices[0])
+            #border_vertices.append(vertices[1])
+
             continue
 
         # across border
