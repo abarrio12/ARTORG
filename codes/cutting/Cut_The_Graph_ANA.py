@@ -61,18 +61,43 @@ def get_edges_in_boundingBox_vertex_based(xCoordsBox, yCoordsBox, zCoordsBox):
     print("zCoordsBox:", zCoordsBox)
     
     # ---- DEBUG: how many vertices are inside the box? (done once) ----
-    V = np.array(G.vs["coords"], dtype=np.float64)   # shape (N,3)
+    V = np.array(G.vs["coords"], dtype=np.float64)
     inside_v = (
         (xCoordsBox[0] <= V[:, 0]) & (V[:, 0] <= xCoordsBox[1]) &
         (yCoordsBox[0] <= V[:, 1]) & (V[:, 1] <= yCoordsBox[1]) &
         (zCoordsBox[0] <= V[:, 2]) & (V[:, 2] <= zCoordsBox[1])
     )
-    print("Vertices inside box:", int(inside_v.sum()), "out of", V.shape[0])
+    
+    both_in = 0
+    one_in = 0
+    for e in G.es:
+        a, b = e.tuple
+        ia, ib = inside_v[a], inside_v[b]
+        if ia and ib:
+            both_in += 1
+        elif ia or ib:
+            one_in += 1
+    
+    print("Edges with BOTH endpoints inside:", both_in)
+    print("Edges with ONE endpoint inside:", one_in)
+
     # ---------------------------------------------------------------
 
     for e in G.es:
         # ORIGINAL edges are voxels -> scale to µm ON THE FLY
         points = np.asarray(e["points"], dtype=np.float64) * scale
+        # any polyline point inside?
+        any_point_inside = np.any(
+            (xCoordsBox[0] <= points[:,0]) & (points[:,0] <= xCoordsBox[1]) &
+            (yCoordsBox[0] <= points[:,1]) & (points[:,1] <= yCoordsBox[1]) &
+            (zCoordsBox[0] <= points[:,2]) & (points[:,2] <= zCoordsBox[1])
+        )
+        
+        if any_point_inside:
+            edges_in_box.append(e.index)
+        else:
+            edges_outside_box.append(e.index)
+        continue
 
         # robust orientation: compare source vertex to first/last point
         c_s = np.asarray(G.vs[e.source]["coords"], dtype=np.float64)
@@ -331,4 +356,5 @@ with open("vertices_18_graph.pkl", "wb") as f:
 with open("edges_18_graph.pkl", "wb") as f:
     pickle.dump(edges_data, f)
 '''
-print("Saved: vertices_18_graph.pkl and edges_18_graph.pkl")
+print("Saved: graph_18_CUT.pkl")
+
