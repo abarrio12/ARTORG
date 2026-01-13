@@ -1,17 +1,14 @@
 """
-BUILD COMPACT graph from CSVs - OOM SAFE
-- DOES NOT store G.es["points"] for all edges (that explodes RAM).
-- Stores geometry as global arrays + per-edge indices:
-    G.es["p_start"], G.es["p_end"]
-- Computes length_tortuous + tortuosity from geometry (on-the-fly).
-- Saves global geometry arrays to .npy so you can mmap them later.
+BUILD graph from CSVs (no OOM) + OPTIONAL: export FULLGEOM for a ROI (GAIA-compatible)
 
-Then, in your CUT code, you replace e["points"] with get_points_um(...)
+Key:
+- Full graph: store p_start/p_end indices (no points list per edge).
+- When you need GAIA-compatible FULLGEOM: materialize points ONLY for selected edges
+  (e.g., ROI / cut box) and save that subgraph with e["points"] present.
 """
 
 import os
 import gc
-import json
 import pickle
 import numpy as np
 import pandas as pd
@@ -26,23 +23,113 @@ folder = "/home/admin/Ana/MicroBrain/CSV/"
 out_dir = f"/home/admin/Ana/MicroBrain/output{graph_number}/"
 os.makedirs(out_dir, exist_ok=True)
 
-out_graph = os.path.join(out_dir, f"{graph_number}_igraph_COMPACT.pkl")
-out_xyz_npy = os.path.join(out_dir, f"{graph_number}_edge_xyz.npy")   # (Npoints,3) float32 in VOX
-out_r_npy   = os.path.join(out_dir, f"{graph_number}_edge_r.npy")     # (Npoints,) float32 in VOX units
-out_bbox_json = os.path.join(out_dir, f"{graph_number}_bbox_points_um.json")
+# Outputs
+out_graph_compact = os.path.join(out_dir, f"{graph_number}_igraph_INDEXED.pkl")
+out_graph_fullgeom_roi = os.path.join(out_dir, f"{graph_number}_igraph_FULLGEOM_ROI.pkl")
 
-# If you're testing, you can cap edges
-MAX_EDGES = None  # e.g. 200000 or None
+MAX_EDGES = None  # set to e.g. 200000 for tests
 
-# Voxel -> µm scale (image resolution)
+# voxel -> µm scaling (image resolution)
 sx, sy, sz = 1.625, 1.625, 2.5
-scale = np.array([sx, sy, sz], dtype=np.float32)
+scale = np.array([sx, sy, sz], dtype=np.float64)
 
-print("=== START CSV → PKL (COMPACT GEOM, OOM SAFE) ===")
+print("=== START CSV → PKL (INDEXED + optional FULLGEOM ROI) ===")
 
 
 # -----------------------------
-# Load CSVs (use dtypes to reduce RAM)
+# Helper: materialize fullgeom only for a subset of edges
+# -----------------------------
+def materialize_fullgeom_for_edges(G, edge_ids, x, y, z, r_global, starts, ends, scale):
+    """
+    Returns a NEW graph (subgraph) containing only edge_ids,
+    with GAIA-style edge attributes:
+      - points (µm)
+      - diameters (µm)
+      - lengths2, lengths, length, tortuosity
+      - points_um=True
+    """
+    # 1) Subgraph by edges (keeps edge attrs like p_start/p_end, nkind, etc.)
+    Gsub = G.subgraph_edges(edge_ids, delete_vertices=True)
+
+    # 2) Build FULLGEOM only for edges in the subgraph (manageable size)
+    points_list = []
+    diams_list = []
+    lengths2_list = []
+    lengths_list = []
+    length_list = []
+    tort_list = []
+
+    for ei in range(Gsub.ecount()):
+        s = int(Gsub.es[ei]["p_start"])
+        t = int(Gsub.es[ei]["p_end"])
+
+        # points in vox -> um
+        pts = np.stack((x[s:t], y[s:t], z[s:t]), axis=1).astype(np.float64, copy=False) * scale
+        r_pts = r_global[s:t].astype(np.float64, copy=False)
+        diams = (2.0 * r_pts)
+
+        # lengths/tortuosity in um
+        if pts.shape[0] >= 2:
+            seg = np.linalg.norm(np.diff(pts, axis=0), axis=1)
+            L = float(seg.sum())
+            straight = float(np.linalg.norm(pts[-1] - pts[0]))
+            tort = (L / straight) if straight > 0 else 1.0
+
+            lvec = np.empty(pts.shape[0], dtype=np.float64)
+            lvec[:-1] = seg
+            lvec[-1] = seg[-1]
+        else:
+            seg = np.zeros(0, dtype=np.float64)
+            L = 0.0
+            tort = 1.0
+            lvec = np.zeros(pts.shape[0], dtype=np.float64)
+
+        points_list.append(pts.astype(np.float32).tolist())   # store as float32 to reduce file
+        diams_list.append(diams.astype(np.float32).tolist())
+        lengths2_list.append(seg.astype(np.float32).tolist())
+        lengths_list.append(lvec.astype(np.float32).tolist())
+        length_list.append(float(L))
+        tort_list.append(float(tort))
+
+    Gsub.es["points"] = points_list
+    Gsub.es["diameters"] = diams_list
+    Gsub.es["lengths2"] = lengths2_list
+    Gsub.es["lengths"] = lengths_list
+    Gsub.es["length"] = length_list
+    Gsub.es["tortuosity"] = tort_list
+    Gsub.es["points_um"] = [True] * Gsub.ecount()
+
+    return Gsub
+
+
+def edges_in_box_any_point(G, xB_um, yB_um, zB_um, x, y, z, starts, ends, scale):
+    """
+    Fast-ish ROI selection:
+    keeps edge if ANY polyline point is inside the box.
+    Uses geometry from x,y,z on-the-fly (no storing).
+    """
+    keep = []
+    for ei in range(G.ecount()):
+        s = int(starts[ei])
+        t = int(ends[ei])
+        pts_um = (np.stack((x[s:t], y[s:t], z[s:t]), axis=1).astype(np.float64, copy=False) * scale)
+
+        any_inside = np.any(
+            (xB_um[0] <= pts_um[:, 0]) & (pts_um[:, 0] <= xB_um[1]) &
+            (yB_um[0] <= pts_um[:, 1]) & (pts_um[:, 1] <= yB_um[1]) &
+            (zB_um[0] <= pts_um[:, 2]) & (pts_um[:, 2] <= zB_um[1])
+        )
+        if any_inside:
+            keep.append(ei)
+
+        if ei % 200000 == 0 and ei > 0:
+            print(f"  scanned {ei:,}/{G.ecount():,} | keep {len(keep):,}")
+
+    return keep
+
+
+# -----------------------------
+# Load CSVs
 # -----------------------------
 print("\n=== Loading CSVs ===")
 vertices_df = pd.read_csv(folder + "vertices.csv", header=None, dtype=np.int64)
@@ -61,10 +148,7 @@ radii_vertex_df = pd.read_csv(folder + "radii.csv", header=None, dtype=np.float3
 annotation_vertex_df = pd.read_csv(folder + "annotation.csv", header=None, dtype=np.int32)
 distance_to_surface_df = pd.read_csv(folder + "distance_to_surface.csv", header=None, dtype=np.float32)
 
-# Geometry index per edge
 geom_index_df = pd.read_csv(folder + "edge_geometry_indices.csv", header=None, dtype=np.int64)
-
-# Global geometry coordinates (big) + radii (big)
 edge_geometry_df = pd.read_csv(folder + "edge_geometry_coordinates.csv", header=None, dtype=np.float32)
 edge_geometry_radii_df = pd.read_csv(folder + "edge_geometry_radii.csv", header=None, dtype=np.float32)
 
@@ -72,14 +156,13 @@ print("END reading CSVs")
 
 
 # -----------------------------
-# Create graph
+# Create graph (vertices)
 # -----------------------------
 print("\n=== Creating graph structure ===")
 n_vertices = len(vertices_df)
 G = ig.Graph()
 G.add_vertices(n_vertices)
 
-# Vertex attributes
 G.vs["id"] = vertices_df[0].astype(np.int64).tolist()
 del vertices_df
 gc.collect()
@@ -114,8 +197,9 @@ G.vs["radii"] = radii_vertex_df[0].astype(np.float32).tolist()
 del radii_vertex_df
 gc.collect()
 
+
 # -----------------------------
-# Build edges (cap)
+# Build edges
 # -----------------------------
 print("\n=== Building edges ===")
 if MAX_EDGES is not None:
@@ -130,7 +214,6 @@ n_edges = len(edges_df)
 print(f"Processing {n_edges} edges")
 
 edges = list(zip(edges_df[0].astype(np.int64), edges_df[1].astype(np.int64)))
-
 edges_arr = np.asarray(edges, dtype=np.int64)
 assert edges_arr[:, 0].max() < G.vcount()
 assert edges_arr[:, 1].max() < G.vcount()
@@ -139,7 +222,7 @@ G.add_edges(edges)
 del edges
 gc.collect()
 
-# Edge attributes (scalars)
+# Scalars
 nkind = np.full(n_edges, 4, dtype=np.int8)
 nkind[artery_df[0].to_numpy(np.int8) == 1] = 2
 nkind[vein_df[0].to_numpy(np.int8) == 1] = 3
@@ -152,16 +235,14 @@ G.es["radius"] = radius_edge.tolist()
 G.es["diameter"] = (2.0 * radius_edge).tolist()
 G.es["length_csv"] = lengths_edge.tolist()
 
-# free
 del radii_df, vein_df, artery_df, length_df, edges_df, nkind, radius_edge
 gc.collect()
 
 
 # -----------------------------
-# Geometry GLOBAL ARRAYS (save to .npy) + per-edge indices
+# Geometry sources (x,y,z + starts/ends) + indices per edge
 # -----------------------------
-print("\n=== Saving global geometry arrays (.npy) + storing p_start/p_end ===")
-
+print("\n=== Preparing geometry arrays (x,y,z + starts/ends) ===")
 edge_geometry_df.columns = ["x", "y", "z"]
 x = edge_geometry_df["x"].to_numpy(dtype=np.float32, copy=False)
 y = edge_geometry_df["y"].to_numpy(dtype=np.float32, copy=False)
@@ -172,52 +253,32 @@ ends   = geom_index_df[1].to_numpy(dtype=np.int64, copy=False)
 
 r_global = edge_geometry_radii_df[0].to_numpy(dtype=np.float32, copy=False)
 
-assert int(ends[-1]) <= len(edge_geometry_df), "Last end index exceeds points length"
-assert int(ends[-1]) <= len(r_global), "Last end index exceeds radii length"
+assert int(ends[-1]) <= len(edge_geometry_df)
+assert int(ends[-1]) <= len(r_global)
 
-# Save global arrays to .npy (compact, can mmap later)
-# NOTE: xyz stored in VOXELS like your CSV. Convert to µm only when needed.
-xyz = np.stack((x, y, z), axis=1)  # (Npoints,3) float32
-np.save(out_xyz_npy, xyz)
-np.save(out_r_npy, r_global)
-
-print("Saved:", out_xyz_npy)
-print("Saved:", out_r_npy)
-
-# Store per-edge indices in graph
+# Store indices in graph (THIS is what makes GAIA-on-the-fly possible)
 G.es["p_start"] = starts.tolist()
 G.es["p_end"]   = ends.tolist()
 
-# Store metadata so CUT scripts can load geometry arrays
-G["edge_xyz_npy"] = out_xyz_npy
-G["edge_r_npy"]   = out_r_npy
-G["scale_um_per_vox"] = scale.tolist()
+print("Geometry arrays ready.")
+
 
 # -----------------------------
-# Compute length/tortuosity WITHOUT storing points per edge
+# Compute length/tortuosity for all edges (no storing points)
 # -----------------------------
-print("\n=== Computing length/tortuosity (no FULLGEOM storage) ===")
-
-coords_nodes = np.asarray(G.vs["coords"], dtype=np.float32)
+print("\n=== Computing length/tortuosity for ALL edges (no points stored) ===")
 
 length_arr = np.zeros(n_edges, dtype=np.float32)
-tortuosity = np.ones(n_edges, dtype=np.float32)
+tortu_arr  = np.ones(n_edges, dtype=np.float32)
 
-def get_points_vox_from_xyz(xyz_flat, s, e):
-    # xyz_flat is (Npoints,3) float32 in vox
-    return xyz_flat[s:e]
-
-# use xyz (already built as (Npoints,3))
 for i, (s, e) in enumerate(zip(starts, ends)):
-    if i % 200000 == 0:
+    if i % 200000 == 0 and i > 0:
         print(f"  edge {i:,}/{n_edges:,}")
 
-    pts = xyz[s:e]  # (n,3) float32
+    pts_um = (np.stack((x[s:e], y[s:e], z[s:e]), axis=1).astype(np.float64, copy=False) * scale)
 
-    if pts.shape[0] >= 2:
-        # tortuous length in VOX -> convert to µm by scale per-axis
-        pts_um = pts * scale  # (n,3)
-        seg = np.linalg.norm(np.diff(pts_um, axis=0), axis=1).astype(np.float32)
+    if pts_um.shape[0] >= 2:
+        seg = np.linalg.norm(np.diff(pts_um, axis=0), axis=1)
         L = float(seg.sum())
         straight = float(np.linalg.norm(pts_um[-1] - pts_um[0]))
         tort = (L / straight) if straight > 0 else 1.0
@@ -226,42 +287,49 @@ for i, (s, e) in enumerate(zip(starts, ends)):
         tort = 1.0
 
     length_arr[i] = L
-    tortuosity[i] = tort
+    tortu_arr[i] = tort
 
 G.es["length"] = length_arr.tolist()
-G.es["tortuosity"] = tortuosity.tolist()
+G.es["tortuosity"] = tortu_arr.tolist()
 
-# -----------------------------
-# Global bbox of ALL points (in µm) for ParaView axis grid reference
-# -----------------------------
-mn_vox = xyz.min(axis=0).astype(np.float64)
-mx_vox = xyz.max(axis=0).astype(np.float64)
-mn_um = (mn_vox * scale).tolist()
-mx_um = (mx_vox * scale).tolist()
-
-bbox = {"min_um": mn_um, "max_um": mx_um}
-with open(out_bbox_json, "w") as f:
-    json.dump(bbox, f, indent=2)
-
-print("Global bbox saved:", out_bbox_json)
-print("min_um:", mn_um)
-print("max_um:", mx_um)
-
-# free heavy tables
-del edge_geometry_df, edge_geometry_radii_df, geom_index_df
-del x, y, z, xyz, r_global, starts, ends
-del coords_nodes, length_arr, tortuosity, lengths_edge
-gc.collect()
+print("Done metrics.")
 
 
 # -----------------------------
-# Save compact graph
+# Save INDEXED graph (safe)
 # -----------------------------
-print("\n=== Saving COMPACT graph ===")
-with open(out_graph, "wb") as f:
+print("\n=== Saving INDEXED graph (safe) ===")
+with open(out_graph_compact, "wb") as f:
     pickle.dump(G, f, protocol=pickle.HIGHEST_PROTOCOL)
+print("Saved:", out_graph_compact)
 
-print("=== DONE ===")
-print("Graph saved:", out_graph)
-print(f"Final graph: {G.vcount()} vertices, {G.ecount()} edges")
-print("Geometry .npy:", out_xyz_npy, out_r_npy)
+
+# -----------------------------
+# OPTIONAL: build FULLGEOM only for ROI and save (THIS satisfies 'points per edge')
+# -----------------------------
+print("\n=== OPTIONAL: Build FULLGEOM for ROI and save ===")
+# Example ROI in VOXELS -> µm (change to your values)
+xmin_pv, xmax_pv = 1000, 2000
+ymin_pv, ymax_pv = 0, 1000
+zmin_pv, zmax_pv = 1500, 2500
+
+xB_um = [xmin_pv * sx, xmax_pv * sx]
+yB_um = [ymin_pv * sy, ymax_pv * sy]
+zB_um = [zmin_pv * sz, zmax_pv * sz]
+
+print("ROI box (um):", xB_um, yB_um, zB_um)
+
+keep_edges = edges_in_box_any_point(G, xB_um, yB_um, zB_um, x, y, z, starts, ends, scale)
+print("Edges kept in ROI:", len(keep_edges))
+
+G_roi = materialize_fullgeom_for_edges(G, keep_edges, x, y, z, r_global, starts, ends, scale)
+
+with open(out_graph_fullgeom_roi, "wb") as f:
+    pickle.dump(G_roi, f, protocol=pickle.HIGHEST_PROTOCOL)
+
+print("Saved FULLGEOM ROI:", out_graph_fullgeom_roi)
+print("ROI graph:", G_roi.vcount(), "vertices,", G_roi.ecount(), "edges")
+
+
+print("\n=== DONE ===")
+print(f"Full graph (indexed): {G.vcount()} vertices, {G.ecount()} edges")
