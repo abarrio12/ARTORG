@@ -7,9 +7,9 @@ import numpy as np
 # ============================
 
 in_path = "/home/admin/Ana/MicroBrain/output/graph_18_OutGeom.pkl"
-# if you want the tortuous vtp uncomment
-# out_vtp = "/home/admin/Ana/MicroBrain/output/graph_18_TORTUOUS.vtp"
-# if you want the non tortuous vtp uncomment
+# if you want the tortuous vtp, uncomment
+#out_vtp = "/home/admin/Ana/MicroBrain/output/graph_18_TORTUOUS.vtp"
+# if you want the NON tortuous vtp, uncomment
 out_vtp = "/home/admin/Ana/MicroBrain/output/graph_18_NON_TORTUOUS.vtp"
 
 data = pickle.load(open(in_path, "rb"))
