@@ -99,7 +99,7 @@ import vtk
 import numpy as np
 
 G = pickle.load(open(
-    "/home/admin/Ana/MicroBrain/output18/18_igraph_FULLGEOM.pkl", "rb"
+    "/home/admin/Ana/MicroBrain/output18/18_igraph_FULLGEOM_SUB.pkl", "rb"
 ))
 
 points = vtk.vtkPoints()
@@ -150,7 +150,7 @@ polydata.GetCellData().AddArray(tortuosity_array)
 polydata.GetCellData().SetActiveScalars("nkind")
 
 writer = vtk.vtkXMLPolyDataWriter()
-writer.SetFileName("/home/admin/Ana/MicroBrain/output18/18_igraph_FULLGEOM.vtp")
+writer.SetFileName("/home/admin/Ana/MicroBrain/output18/18_igraph_FULLGEOM_SUB.vtp")
 writer.SetInputData(polydata)
 writer.SetDataModeToBinary()
 writer.Write()

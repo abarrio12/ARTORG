@@ -115,7 +115,7 @@ def write_vtp(graph, filename, subgraph_TF=False, penetrating_trees=False):
             VTP file written to disk.
 
         ############################################################################
-        #--> PAY ATTENTION TO THE UNITS FOR THE DEFINITION OF THE MINIMUM DISTANCE !!!
+        #--> PAY ATTENTION TO THE UNITS FOR THE DEFINITION OF THE MINIMUM  !!!
         ############################################################################
 
 
@@ -148,7 +148,7 @@ def write_vtp(graph, filename, subgraph_TF=False, penetrating_trees=False):
             vertices_array=G.vs["coords"],
             connectivity_array=G.es["connectivity"],
             point_data={"index": G.vs["id"], "annotation": G.vs["annotation"],
-                        "distance_to_surface": G.vs["distance_to_surface"], "node_label": G.vs["node_label"]},
+                         "node_label": G.vs["node_label"]},
             cell_data={"connectivity": G.es["connectivity"], "radius": G.es["radius"],
                        "vessel_diameter": G.es["diameter"], "vessel_nkind": G.es["nkind"],
                        'penetrating_trees': G.es["penetrating_trees"],
@@ -158,8 +158,8 @@ def write_vtp(graph, filename, subgraph_TF=False, penetrating_trees=False):
             filename=filename,
             vertices_array=G.vs["coords"],
             connectivity_array=G.es["connectivity"],
-            point_data={"index": G.vs["id"], "annotation": G.vs["annotation"],
-                        "distance_to_surface": G.vs["distance_to_surface"], "high_degree_node": G.vs["high_degree_node"]},
+            point_data={"index": G.vs["id"], "annotation": G.vs["annotation"]
+                      },
             cell_data={"connectivity": G.es["connectivity"], "radius": G.es["radius"],
                        "vessel_diameter": G.es["diameter"], "vessel_nkind": G.es["nkind"],
                        "vessel_length": G.es["length"]}, subgraph=subgraph_TF)
@@ -167,10 +167,10 @@ def write_vtp(graph, filename, subgraph_TF=False, penetrating_trees=False):
         
 import pickle
 # Load graph
-with open("C:/Users/Ana/OneDrive/Escritorio/ARTORG/igraph/half brain scripts/18_igraph_CUT_SomatomotorArea_UPDATED.pkl", "rb") as f:
+with open("/home/admin/Ana/MicroBrain/18_igraph.pkl", "rb") as f:
     G = pickle.load(f, encoding='latin1')
 
 # Save as VTP file. If subgraph (cut) then subgraph_TF=True
 write_vtp(G,
-          "C:/Users/Ana/OneDrive/Escritorio/ARTORG/igraph/half brain scripts/18_igraph_CUT_SomatomotorArea_UPDATED.vtp",
-          subgraph_TF=True)
+          "/home/admin/Ana/MicroBrain/18_igraph.vtp",
+          subgraph_TF=False)
