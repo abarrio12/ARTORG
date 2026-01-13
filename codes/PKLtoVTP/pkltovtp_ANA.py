@@ -169,11 +169,11 @@ def write_vtp(graph, filename, subgraph_TF=False):
 # ==============================================================================
 if __name__ == "__main__":
     # Load graph
-    in_pkl = "/home/admin/Ana/MicroBrain/18_igraph.pkl"
-    out_vtp = "/home/admin/Ana/MicroBrain/18_igraph_NON_TORTUOUS.vtp"
+    in_pkl = "/home/admin/Ana/MicroBrain/output/graph_18_OutGeom_CUT.pkl"
+    out_vtp = "/home/admin/Ana/MicroBrain/output/graph_18_OutGeom_CUT_nonTortuous.vtp"
 
-    with open(in_pkl, "rb") as f:
-        G = pickle.load(f, encoding="latin1")
+    data = pickle.load(open(in_pkl, "rb"))
+    G = data["graph"]
 
     # Save as VTP file. If subgraph (cut) then subgraph_TF=True
     write_vtp(G, out_vtp, subgraph_TF=False)
