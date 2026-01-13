@@ -189,7 +189,7 @@ G.es["diameter"] = (2.0 * radius_edge).tolist()
 
 G.es["length_csv"] = lengths_edge.tolist()
 
-
+'''
 # -----------------------------
 # Geometry FULL (points per edge)
 # -----------------------------
@@ -308,6 +308,117 @@ G.es["lengths"]     = length_points_seg_list        # (N) per-point (Gaia)
 G.es["length"]      = length_arr.tolist()   # scalar tortuous 
 #G.es["length_csv"]  = lengths_edge.tolist()          # scalar from CSV
 #G.es["tortuosity"]  = tortuosity.tolist()
+'''
+
+# -----------------------------
+# Geometry FULL (points per edge)  -- OPTION 2: BYTES+SHAPE (OOM SAFE)
+# -----------------------------
+edge_geometry_df.columns = ["x", "y", "z"]
+
+x = edge_geometry_df["x"].to_numpy(dtype=np.float32, copy=False)
+y = edge_geometry_df["y"].to_numpy(dtype=np.float32, copy=False)
+z = edge_geometry_df["z"].to_numpy(dtype=np.float32, copy=False)
+
+starts = geom_index_df[0].to_numpy(dtype=np.int64, copy=False)
+ends   = geom_index_df[1].to_numpy(dtype=np.int64, copy=False)
+
+r_global = edge_geometry_radii_df[0].to_numpy(dtype=np.float32, copy=False)
+
+assert int(ends[-1]) <= len(edge_geometry_df), "Last end index exceeds points length"
+assert int(ends[-1]) <= len(r_global), "Last end index exceeds radii length"
+
+# arrays of source/target nodes of polyline + coords (array of coordinates)
+edges_sources = edges_arr[:, 0]
+edges_targets = edges_arr[:, 1]
+
+# scalars per edge
+length_arr  = np.zeros(n_edges, dtype=np.float32)
+tortuosity  = np.ones(n_edges, dtype=np.float32)
+
+# IMPORTANT: store coords as array for fast access (your code uses coords[src])
+# Here, "coords" must be (n_vertices, 3) float32
+# If you currently have coords as list-of-arrays, make this once:
+coords_nodes = np.asarray(G.vs["coords"], dtype=np.float32)
+
+for i, (s, e, src, tg) in enumerate(zip(starts, ends, edges_sources, edges_targets)):
+    if i % 50000 == 0 and i > 0:
+        print(f"  Processing edge {i}/{n_edges}")
+
+    # Nx3 float32 array (vox)
+    pts = np.stack((x[s:e], y[s:e], z[s:e]), axis=1).astype(np.float32, copy=False)
+
+    coords_source = coords_nodes[src]
+
+    p0 = pts[0]
+    p_last = pts[-1]
+
+    # N radii -> N diameters
+    r_pts = r_global[s:e].astype(np.float32, copy=False)
+    diams = (2.0 * r_pts).astype(np.float32, copy=False)
+
+    # Orient so first point matches source (if possible)
+    if not np.allclose(coords_source, p0, atol=1e-6):
+        if np.allclose(coords_source, p_last, atol=1e-6):
+            pts = pts[::-1].copy()
+            diams = diams[::-1].copy()
+
+    # Compute lengths (still in vox here; if you want µm multiply pts*scale first)
+    # If you want tortuosity/length in µm (recommended):
+    pts_um = pts.astype(np.float64, copy=False) * scale
+
+    if pts_um.shape[0] >= 2:
+        lengths2 = np.linalg.norm(np.diff(pts_um, axis=0), axis=1).astype(np.float32)  # (N-1)
+
+        length_points_seg = np.empty(pts_um.shape[0], dtype=np.float32)  # (N,)
+        length_points_seg[:-1] = lengths2
+        length_points_seg[-1]  = lengths2[-1]
+
+        length = float(lengths2.sum())
+        straight_dist = float(np.linalg.norm(pts_um[-1] - pts_um[0]))
+        tortu = (length / straight_dist) if straight_dist > 0 else 1.0
+    else:
+        lengths2 = np.zeros(0, dtype=np.float32)
+        length_points_seg = np.zeros(pts_um.shape[0], dtype=np.float32)
+        length = 0.0
+        tortu = 1.0
+
+    # -----------------------------
+    # STORE COMPACTLY PER EDGE (bytes + lengths)
+    # -----------------------------
+    # store points in µm (float32) to reduce size and to be consistent downstream
+    pts_store = (pts_um.astype(np.float32, copy=False))
+
+    eobj = G.es[i]
+
+    # points
+    eobj["points_bytes"] = pts_store.tobytes()
+    eobj["points_n"] = int(pts_store.shape[0])  # number of points
+
+    # diameters
+    di_store = diams.astype(np.float32, copy=False)
+    eobj["diameters_bytes"] = di_store.tobytes()
+    eobj["diameters_n"] = int(di_store.shape[0])
+
+    # lengths2
+    l2_store = lengths2.astype(np.float32, copy=False)
+    eobj["lengths2_bytes"] = l2_store.tobytes()
+    eobj["lengths2_n"] = int(l2_store.shape[0])
+
+    # lengths (per-point)
+    l_store = length_points_seg.astype(np.float32, copy=False)
+    eobj["lengths_bytes"] = l_store.tobytes()
+    eobj["lengths_n"] = int(l_store.shape[0])
+
+    # flags/scalars
+    eobj["points_um"] = True
+    tortuosity[i] = tortu
+    length_arr[i] = length
+
+# assign scalar arrays
+G.es["length"] = length_arr.tolist()
+G.es["tortuosity"] = tortuosity.tolist()
+
+print("Geometry assignment complete (bytes per edge).")
 
 
 
