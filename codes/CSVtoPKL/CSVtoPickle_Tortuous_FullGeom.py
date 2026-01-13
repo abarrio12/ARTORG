@@ -185,7 +185,8 @@ lengths_edge = length_df[0].to_numpy(np.float32, copy=False)
 G.es["nkind"] = nkind.tolist()
 G.es["radius"] = radius_edge.tolist()
 G.es["diameter"] = (2.0 * radius_edge).tolist()
-G.es["length"] = lengths_edge.tolist()
+
+G.es["length_csv"] = lengths_edge.tolist()
 
 
 # -----------------------------
@@ -296,17 +297,16 @@ if np.mean(diff_vs_csv) > 0.1:
     # Check extra contra la distancia recta
     # (Podrías guardar dist_recta en un array para comparar aquí también)
 
-#  --- CHECK OF LENGHTS END ---
-
-
 
 # --- GRAPH ASSIGNATION ---
-G.es["points"] = points_list
-G.es["diameters"] = diameters_list
-G.es["lengths2"] = lengths2_list
-G.es["length_points_seg"] = length_points_seg_list    # vector
-G.es["length"] = length_arr.tolist() # scalar
-G.es["tortuosity"] = tortuosity.tolist()
+
+G.es["points"]      = points_list      # Nx3
+G.es["diameters"]   = diameters_list    # N
+G.es["lengths2"]    = lengths2_list      # (N-1)
+G.es["lengths"]     = length_list        # (N) per-point (Gaia)
+G.es["length"]      = length_tortuous_arr.tolist()   # scalar tortuous 
+G.es["length_csv"]  = lengths_edge.tolist()          # scalar from CSV
+G.es["tortuosity"]  = tortuosity.tolist()
 
 
 
@@ -364,4 +364,7 @@ print("rank:", rank)
 print("median err:", float(np.median(err)))
 print("max err:", float(err.max()))
 print("residuals:", residuals[:10] if hasattr(residuals, "__len__") else residuals)
+
+
 print("M (image -> atlas):\n", M)
+
