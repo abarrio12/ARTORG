@@ -89,12 +89,13 @@ def cut_outgeom_gaia_like(data, xBox, yBox, zBox, tol=1e-4, min_straight_dist=1.
     # Mapa old_vid -> new_vid (solo para los que queden dentro)
     old2new = {}
 
-    coords_v = np.asarray(G.vs["coords"], dtype=np.float32)
+    coords_v = np.asarray(G.vs["coords_image"], dtype=np.float32)
     inside_v = (
         (coords_v[:,0] >= xBox[0]) & (coords_v[:,0] <= xBox[1]) &
         (coords_v[:,1] >= yBox[0]) & (coords_v[:,1] <= yBox[1]) &
         (coords_v[:,2] >= zBox[0]) & (coords_v[:,2] <= zBox[1])
     )
+    
 
     # Añadimos primero los vértices interiores (igual que Gaia: solo lo que queda en el subgrafo)
     inside_old_ids = np.where(inside_v)[0]
@@ -141,7 +142,7 @@ def cut_outgeom_gaia_like(data, xBox, yBox, zBox, tol=1e-4, min_straight_dist=1.
         P = np.column_stack([x[s:en], y[s:en], z[s:en]]).astype(np.float32, copy=False)
 
         # Orientación coherente con el edge: P[0] debería coincidir con coords del source
-        cu = np.asarray(G.vs[u]["coords"], dtype=np.float32)
+        cu = np.asarray(G.vs[u]["coords_image"], dtype=np.float32)
         if not np.allclose(P[0], cu, atol=1e-5):
             # entonces P está en dirección v->u, lo invertimos para que sea u->v
             P = P[::-1].copy()
@@ -344,13 +345,24 @@ if __name__ == "__main__":
     in_path  = "/home/admin/Ana/MicroBrain/output/graph_18_OutGeom.pkl"
     out_path = "/home/admin/Ana/MicroBrain/output/graph_18_OutGeom_CUT.pkl"
 
-    with open(in_path, "rb") as f:
-        data = pickle.load(f)
+    data = pickle.load(open(in_path, "rb"))
+
+    G = data["graph"]
 
     # ejemplo de box en µm
-    xBox = [2000*1.625, 2000*1.625]
-    yBox = [500*1.625,    1500*1.625]
-    zBox = [1200*2.5,   2200*2.5]
+    xBox = [1500/1.625, 2500/1.625]
+    yBox = [1500/1.625,    2500/1.625]
+    zBox = [1500/2.5,   2500/2.5]
+
+    
+
+    coords_img = np.asarray(G.vs["coords_image"], float)
+    print("coords_image bounds:", coords_img.min(0), coords_img.max(0))
+    x = np.asarray(data["coords"]["x"], float)
+    y = np.asarray(data["coords"]["y"], float)
+    z = np.asarray(data["coords"]["z"], float)
+    print("edge-geometry (x,y,z) bounds:", [x.min(), y.min(), z.min()], [x.max(), y.max(), z.max()])
+    print("BOX (Paraview):", xBox, yBox, zBox)
 
     cut = cut_outgeom_gaia_like(data, xBox, yBox, zBox, tol=1e-3, min_straight_dist=1.0)
 
