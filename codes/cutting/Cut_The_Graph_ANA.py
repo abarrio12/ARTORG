@@ -164,13 +164,13 @@ def get_edges_in_boundingBox_vertex_based(xCoordsBox, yCoordsBox, zCoordsBox):
 
                 # per-point "lengths" vector in Gaia-style (N), last repeats last segment
                 if new_points.shape[0] >= 2:
-                    lengths_vec = np.empty(new_points.shape[0], dtype=np.float64)
-                    lengths_vec[:-1] = lengths2
-                    lengths_vec[-1]  = lengths2[-1]
+                    length_points_seg = np.empty(new_points.shape[0], dtype=np.float64)
+                    length_points_seg[:-1] = lengths2
+                    length_points_seg[-1]  = lengths2[-1]
                 else:
-                    lengths_vec = np.zeros(new_points.shape[0], dtype=np.float64)
+                    length_points_seg = np.zeros(new_points.shape[0], dtype=np.float64)
 
-                new_edge["lengths"] = lengths_vec.tolist()
+                new_edge["length_points_seg"] = length_points_seg.tolist()
                 new_edge["length"]  = float(lengths2.sum())
 
                 # diameters/lengths per-point based on original indexing
@@ -179,15 +179,15 @@ def get_edges_in_boundingBox_vertex_based(xCoordsBox, yCoordsBox, zCoordsBox):
 
                 if vertices_in_box[0] == 0:
                     diameters.append(e["diameters"][save_index[0]])
-                    lengths_old.append(e["lengths"][save_index[0]])
+                    lengths_old.append(e["length_points_seg"][save_index[0]])
 
                 for i_idx in save_index:
                     diameters.append(e["diameters"][i_idx])
-                    lengths_old.append(e["lengths"][i_idx])
+                    lengths_old.append(e["length_points_seg"][i_idx])
 
                 if vertices_in_box[0] == 1:
                     diameters.append(e["diameters"][save_index[-1]])
-                    lengths_old.append(e["lengths"][save_index[-1]])
+                    lengths_old.append(e["length_points_seg"][save_index[-1]])
 
                 new_edge["diameter"]  = e["diameter"]
                 new_edge["nkind"]     = e["nkind"]
@@ -294,8 +294,8 @@ for e in G.es:
         lengths_um[:-1] = lengths2_um
         lengths_um[-1]  = lengths2_um[-1]
         e["lengths"] = lengths_um.tolist()
-
         e["length"] = float(lengths2_um.sum())
+        
     else:
         e["lengths2"] = []
         e["lengths"] = [0.0] * int(pts.shape[0])
@@ -321,3 +321,221 @@ with open("edges_18_graph.pkl", "wb") as f:
     pickle.dump(edges_data, f)
 
 print("Saved: vertices_18_graph.pkl and edges_18_graph.pkl")
+
+
+
+'''
+import numpy as np
+import pickle
+import igraph as ig
+
+def intersect_with_plane(p1, p2, axis, value):
+    if p2[axis] == p1[axis]:
+        raise ValueError("Segment parallel to plane.")
+    t = (value - p1[axis]) / (p2[axis] - p1[axis])
+    return p1 + t * (p2 - p1), t
+
+def is_inside_box(p, xB, yB, zB):
+    return (xB[0] <= p[0] <= xB[1] and
+            yB[0] <= p[1] <= yB[1] and
+            zB[0] <= p[2] <= zB[1])
+
+def node_exists_coords_um(G, p_um, atol=1e-6):
+    p = np.asarray(p_um, dtype=np.float64)
+    for v in G.vs:
+        if np.allclose(np.asarray(v["coords_um"], dtype=np.float64), p, atol=atol):
+            return v.index
+    return None
+
+def recompute_lengths_um(points_um):
+    pts = np.asarray(points_um, dtype=np.float64)
+    if pts.shape[0] >= 2:
+        lengths2 = np.linalg.norm(np.diff(pts, axis=0), axis=1)
+        lengths = np.empty(pts.shape[0], dtype=np.float64)
+        lengths[:-1] = lengths2
+        lengths[-1]  = lengths2[-1]
+        return lengths2.tolist(), lengths.tolist(), float(lengths2.sum())
+    else:
+        return [], [0.0]*int(pts.shape[0]), 0.0
+
+def get_edges_in_boundingBox_vertex_based(G, xB, yB, zB, scale):
+    edges_in_box = []
+    edges_outside_box = []
+    edges_across_border = []
+    border_vertices = []
+    new_edges_on_border = []
+
+    for e in G.es:
+        # endpoints in µm (image space)
+        c0 = np.asarray(G.vs[e.source]["coords_um"], dtype=np.float64)
+        c1 = np.asarray(G.vs[e.target]["coords_um"], dtype=np.float64)
+
+        in0 = is_inside_box(c0, xB, yB, zB)
+        in1 = is_inside_box(c1, xB, yB, zB)
+
+        if in0 and in1:
+            edges_in_box.append(e.index)
+            continue
+
+        if (not in0) and (not in1):
+            edges_outside_box.append(e.index)
+            border_vertices.extend([e.source, e.target])
+            continue
+
+        # exactly one endpoint inside
+        edges_across_border.append(e.index)
+
+        # decide inside/outside node
+        if in0:
+            node_in, node_out = e.source, e.target
+        else:
+            node_in, node_out = e.target, e.source
+        border_vertices.append(node_out)
+
+        # points in µm (image space)
+        pts_um = np.asarray(e["points"], dtype=np.float64) * scale
+
+        # orient polyline so it starts at inside node (closest end)
+        cin = np.asarray(G.vs[node_in]["coords_um"], dtype=np.float64)
+        if np.linalg.norm(cin - pts_um[0]) > np.linalg.norm(cin - pts_um[-1]):
+            pts_um = pts_um[::-1].copy()
+            diams = np.asarray(e["diameters"], dtype=np.float64)[::-1].copy()
+        else:
+            diams = np.asarray(e["diameters"], dtype=np.float64).copy()
+
+        # find first crossing from inside -> outside along the polyline
+        inside_flags = np.array([is_inside_box(p, xB, yB, zB) for p in pts_um], dtype=bool)
+
+        # We want an index j such that inside[j] == True and inside[j+1] == False
+        cross_idx = None
+        for j in range(len(inside_flags)-1):
+            if inside_flags[j] and (not inside_flags[j+1]):
+                cross_idx = j
+                break
+
+        # If we didn't find a clean inside->outside transition, fallback:
+        # keep as "in box" if any point inside, else outside.
+        if cross_idx is None:
+            if inside_flags.any():
+                edges_in_box.append(e.index)
+            else:
+                edges_outside_box.append(e.index)
+            continue
+
+        p_in  = pts_um[cross_idx]
+        p_out = pts_um[cross_idx+1]
+
+        # Determine which plane is crossed (like Gaia)
+        intersection = None
+        for axis, (mn, mx) in enumerate([(xB[0], xB[1]), (yB[0], yB[1]), (zB[0], zB[1])]):
+            if p_out[axis] < mn or p_out[axis] > mx:
+                plane_val = mn if p_out[axis] < mn else mx
+                intersection, t = intersect_with_plane(p_in, p_out, axis, plane_val)
+                break
+
+        if intersection is None:
+            # should be rare; fallback keep edge
+            edges_in_box.append(e.index)
+            continue
+
+        # create/find border node at intersection (coords_um)
+        node_i = node_exists_coords_um(G, intersection)
+        if node_i is None:
+            node_i = len(G.vs)
+            G.add_vertices(1)
+            G.vs[-1]["coords_um"] = intersection.tolist()
+            G.vs[-1]["degree"] = 1
+            G.vs[-1]["index"] = node_i
+
+        # build new_points: from inside part + intersection
+        internal_pts = pts_um[:cross_idx+1]  # includes p_in
+        internal_d   = diams[:cross_idx+1]
+
+        new_points_um = np.vstack([internal_pts, intersection])  # end at boundary
+        # diameters: copy internal + add diameter for intersection = last internal diameter (simple)
+        new_diams = np.concatenate([internal_d, [internal_d[-1]]])
+
+        # add new edge (inside node -> intersection node)
+        G.add_edge(node_in, node_i)
+        new_edge = G.es[-1]
+        new_edge["connectivity"] = (node_in, node_i)
+        new_edge["points_um"] = True
+        new_edge["points"] = new_points_um.tolist()
+        new_edge["diameters"] = new_diams.tolist()
+
+        # copy scalars
+        new_edge["diameter"] = e["diameter"]
+        new_edge["nkind"] = e["nkind"]
+        if "radius" in e.attributes():
+            new_edge["radius"] = e["radius"]
+
+        # recompute lengths in µm
+        l2, lvec, L = recompute_lengths_um(new_points_um)
+        new_edge["lengths2"] = l2
+        new_edge["lengths"]  = lvec
+        new_edge["length"]   = L
+
+        new_edges_on_border.append(new_edge.index)
+
+    return (np.unique(edges_in_box),
+            np.unique(edges_across_border),
+            np.unique(edges_outside_box),
+            np.unique(border_vertices),
+            np.unique(new_edges_on_border))
+
+# ---------------------------
+# Run
+# ---------------------------
+with open("/home/admin/Ana/MicroBrain/output18/18_igraph_FULLGEOM_SUB.pkl", "rb") as f:
+    G = pickle.load(f)
+
+sx, sy, sz = 1.625, 1.625, 2.5
+scale = np.array([sx, sy, sz], dtype=np.float64)
+
+# coords_um from coords_image
+coords_img = np.asarray(G.vs["coords_image"], dtype=np.float64)
+G.vs["coords_um"] = (coords_img * scale).tolist()
+
+# box in voxels -> µm
+xmin_pv, xmax_pv = 1000, 2000
+ymin_pv, ymax_pv = 0, 1000
+zmin_pv, zmax_pv = 1500, 2500
+
+xB = [xmin_pv*sx, xmax_pv*sx]
+yB = [ymin_pv*sy, ymax_pv*sy]
+zB = [zmin_pv*sz, zmax_pv*sz]
+
+if "points_um" not in G.es.attributes():
+    G.es["points_um"] = [False]*G.ecount()
+
+edges_in_box, edges_across, edges_out, border_vertices, new_edges = \
+    get_edges_in_boundingBox_vertex_based(G, xB, yB, zB, scale)
+
+all_edges = np.concatenate([edges_in_box, new_edges])
+edges_to_delete = list(set(range(G.ecount())) - set(all_edges))
+
+G.delete_edges(edges_to_delete)
+# borrar nodos fuera + aislados (si quieres)
+# G.delete_vertices(border_vertices)
+disconnected = [v.index for v in G.vs if G.degree(v) == 0]
+G.delete_vertices(disconnected)
+G.vs["degree"] = G.degree()
+
+# normalize remaining ORIGINAL edges to µm + recompute lengths
+for e in G.es:
+    pts = np.asarray(e["points"], dtype=np.float64)
+    if not bool(e["points_um"]):
+        pts = pts * scale
+        e["points"] = pts.tolist()
+        e["points_um"] = True
+
+    l2, lvec, L = recompute_lengths_um(pts)
+    e["lengths2"] = l2
+    e["lengths"]  = lvec
+    e["length"]   = L
+
+with open("graph_18_CUT.pkl", "wb") as f:
+    pickle.dump(G, f, protocol=pickle.HIGHEST_PROTOCOL)
+
+print("Saved: graph_18_CUT.pkl")
+'''

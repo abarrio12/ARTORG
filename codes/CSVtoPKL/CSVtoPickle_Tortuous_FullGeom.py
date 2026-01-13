@@ -22,6 +22,42 @@ out_path = f"/home/admin/Ana/MicroBrain/output{graph_number}/{graph_number}_igra
 # set to None for full (WARNING: huge)
 MAX_EDGES = 200000  # e.g. 200000  (for a test)
 
+# ----------------------------------------------------------------------
+# Functions
+# ----------------------------------------------------------------------
+def points_space_report(G, n_edges=5000, seed=0):
+    rng = np.random.default_rng(seed)
+    m = G.ecount()
+    idxs = rng.choice(m, size=min(n_edges, m), replace=False)    
+    dA = []
+    dI = []    
+    for ei in idxs:
+        e = G.es[ei]
+        pts = np.asarray(e["points"], dtype=np.float64)
+        if pts.ndim != 2 or pts.shape[0] < 2:
+            continue        
+        p0 = pts[0]
+        p1 = pts[-1]
+        src, tgt = e.source, e.target        
+        A0 = np.asarray(G.vs[src]["coords"], dtype=np.float64)
+        A1 = np.asarray(G.vs[tgt]["coords"], dtype=np.float64)
+        I0 = np.asarray(G.vs[src]["coords_image"], dtype=np.float64)
+        I1 = np.asarray(G.vs[tgt]["coords_image"], dtype=np.float64)        # distancia del extremo de la polilínea al extremo de nodo (min sobre p0/p1 y src/tgt)
+        dA.append(min(np.linalg.norm(p0-A0), np.linalg.norm(p0-A1),
+                      np.linalg.norm(p1-A0), np.linalg.norm(p1-A1)))
+        dI.append(min(np.linalg.norm(p0-I0), np.linalg.norm(p0-I1),
+                      np.linalg.norm(p1-I0), np.linalg.norm(p1-I1)))    
+    dA = np.array(dA)
+    dI = np.array(dI)   
+    print("Samples:", len(dA))
+    print("Median dist to ATLAS (coords):", float(np.median(dA)))
+    print("Median dist to IMAGE (coords_image):", float(np.median(dI)))
+    print("Percent where ATLAS closer:", float(np.mean(dA < dI) * 100), "%")
+    print("Percent where IMAGE closer:", float(np.mean(dI < dA) * 100), "%")
+
+# -------------------------------------------------------------------------
+
+
 print("=== START CSV → PKL (FULLGEOM) ===")
 
 
@@ -69,7 +105,8 @@ coords = np.column_stack([
     coordinates_df[1].to_numpy(np.float32, copy=False),
     coordinates_df[2].to_numpy(np.float32, copy=False),
 ])
-# store as tuples (stable + Gaia-friendly)<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<
+
+
 G.vs["coords"] = [np.asarray(row) for row in coords]
 
 coords_img = np.column_stack([
@@ -77,25 +114,29 @@ coords_img = np.column_stack([
     coordinates_images_df[1].to_numpy(np.float32, copy=False),
     coordinates_images_df[2].to_numpy(np.float32, copy=False),
 ])
+
 G.vs["coords_image"] = [np.asarray(row) for row in coords_img]
+
 
 G.vs["annotation"] = annotation_vertex_df[0].astype(np.int32).tolist()
 G.vs["distance_to_surface"] = distance_to_surface_df[0].astype(np.float32).tolist()
 G.vs["radii"] = radii_vertex_df[0].astype(np.float32).tolist()
 
 
-# CHEEEECKKK 
+# -----------------------------
+# Checks: node duplicates
+# -----------------------------
+
+# Check coords vs coords img 
 coords = np.asarray(G.vs["coords"], float)
 coords_img = np.asarray(G.vs["coords_image"], float)
+
 print("coords max:", coords.max(axis=0))
 print("coords_image max:", coords_img.max(axis=0))
 print("ratio img/coords:", coords_img.max(axis=0) / coords.max(axis=0))
 
 
-
-# -----------------------------
-# Checks: node duplicates
-# -----------------------------
+# Checks node duplicates
 n_unique = len({tuple(c) for c in G.vs["coords"]})
 print("CHECK nodes:")
 print("  N nodos:", n_vertices)
@@ -114,8 +155,9 @@ if MAX_EDGES is not None:
     artery_df = artery_df.iloc[:MAX_EDGES].reset_index(drop=True)
     geom_index_df = geom_index_df.iloc[:MAX_EDGES].reset_index(drop=True)
 
-n_edges = len(edges_df)
 
+
+n_edges = len(edges_df)
 edges = list(zip(edges_df[0].astype(np.int64), edges_df[1].astype(np.int64))) # Nx2 
 
 # Check edge indices
@@ -143,8 +185,7 @@ lengths_edge = length_df[0].to_numpy(np.float32, copy=False)
 G.es["nkind"] = nkind.tolist()
 G.es["radius"] = radius_edge.tolist()
 G.es["diameter"] = (2.0 * radius_edge).tolist()
-
-G.es["lengths"] = lengths_edge.tolist()
+G.es["length"] = lengths_edge.tolist()
 
 
 # -----------------------------
@@ -168,15 +209,14 @@ assert int(ends[-1]) <= len(r_global), "Last end index exceeds radii length"
 points_list = []
 diameters_list = []
 lengths2_list = []
-length_list = []
-
+length_points_seg_list = [] # assignment to each position its  segment: 0 -> seg0
 
 # arrays of source/target nodes of polyline + coords (array of coordinates)
 edges_sources = edges_arr[:,0]
 edges_targets = edges_arr[:,1]
 
 # arrays to compute tortuosity
-length_tortuous_arr= np.zeros(n_edges, dtype=np.float32)
+length_arr= np.zeros(n_edges, dtype=np.float32)
 tortuosity = np.ones(n_edges, dtype=np.float32) # Initialize in 1 (min tortuosity)
 
 
@@ -186,6 +226,7 @@ for i, (s, e, src, tg) in enumerate(zip(starts, ends, edges_sources, edges_targe
     pts = np.column_stack((x[s:e], y[s:e], z[s:e])).astype(np.float32, copy=False)
 
     coords_source = coords[src] #coords source node
+    
     p0 = np.asarray(pts[0], dtype=np.float32)
     p_last = np.asarray(pts[-1], dtype=np.float32)
     
@@ -205,44 +246,46 @@ for i, (s, e, src, tg) in enumerate(zip(starts, ends, edges_sources, edges_targe
 
 
     # pts: (N,3)
-    # lengths2: (N-1) segment lengths
-    # lenght: (N)
+    # lengths2: (N-1) segment lengths --> a-a1-a2-a3-b
+    # lenght_tortuous: (N) --> a-b
+    # we use l_seg to go from N-1 to N
+    
     if pts.shape[0] >= 2:
         #lengths2 (per segment)
         lengths2 = np.linalg.norm(np.diff(pts, axis=0), axis=1).astype(np.float32)  # (N-1)
         # length (per node)
-        length = np.empty(pts.shape[0], dtype=np.float32)  # (N,)
-        length[:-1] = lengths2
-        length[-1]  = lengths2[-1] # point 0 --> seg 0-1, point 1 --> seg 1-2. If not [-1], point 0 --> "fictional", point 1 --> seg 0-1 
+        length_points_seg = np.empty(pts.shape[0], dtype=np.float32)  # (N,)
+        length_points_seg[:-1] = lengths2
+        length_points_seg[-1]  = lengths2[-1] # point 0 --> seg 0-1, point 1 --> seg 1-2. If not [-1], point 0 --> "fictional", point 1 --> seg 0-1 
 
         # Calculate tortuosity
-        length_tortuous = np.sum(lengths2)
+        length = np.sum(lengths2) # scalar (N)
         straight_dist = np.linalg.norm(pts[-1] - pts[0])
-        tortu = length_tortuous / straight_dist if straight_dist > 0 else 1
+        tortu = length / straight_dist if straight_dist > 0 else 1
 
 
     else:
-        length = np.zeros(pts.shape[0], dtype=np.float32)
+        length_points_seg = np.zeros(pts.shape[0], dtype=np.float32)
         lengths2 = np.zeros(0, dtype=np.float32)
-        length_tortuous = 0.0
-        tortu = 1
+        length = 0.0
+        tortu = 1.0
         
     # because each edge has != num of points/diams, we can't use normal np, should use a list of arrays. Using directly a list with .append is better.    
     points_list.append(pts)
     diameters_list.append(diams)
     lengths2_list.append(lengths2) 
-    length_list.append(length) # list of vector value global length of edge 
+    length_points_seg_list.append(length_points_seg)
 
     # because it is a scalar per edge, we can use normal np
     tortuosity[i] = tortu
-    length_tortuous_arr[i] = length_tortuous
+    length_arr[i] = length #global length 
 
 # --- CHECK OF LENGHTS START ---
 # GTtoCSV uses euclidian distance in straight line between A and B, not intermediate points
 # This check helps us see if the length from CSV (no points) and the tortuous length (using points) is the same
 
 # 'lengths_edge' loaded from length.csv at the start
-diff_vs_csv = np.abs(length_tortuous_arr - lengths_edge)
+diff_vs_csv = np.abs(length_arr - lengths_edge)
 print("\n=== validation tortuous/csv legth ===")
 print(f"Mean Diff: {np.mean(diff_vs_csv):.4f} um")
 print(f"Max Diff: {np.max(diff_vs_csv):.4f} um")
@@ -258,14 +301,11 @@ if np.mean(diff_vs_csv) > 0.1:
 
 
 # --- GRAPH ASSIGNATION ---
-
-# Complies with Gaias cut the graph code attributes names
 G.es["points"] = points_list
 G.es["diameters"] = diameters_list
 G.es["lengths2"] = lengths2_list
-G.es["lengths"]   = length_list        # (N)   per edge  ← Gaia cut format
-G.es["length"]    = length_tortuous_arr.tolist()  # scalar per edge 
-G.es["length_tortuous"] = length_tortuous_arr.tolist()
+G.es["length_points_seg"] = length_points_seg_list    # vector
+G.es["length"] = length_arr.tolist() # scalar
 G.es["tortuosity"] = tortuosity.tolist()
 
 
@@ -274,30 +314,31 @@ G.es["tortuosity"] = tortuosity.tolist()
 
 # Data structure
 k = 0
-print(points_list[k].shape, diameters_list[k].shape, length_list[k].shape, lengths2_list[k].shape)
+print(points_list[k].shape, diameters_list[k].shape, length_points_seg_list[k].shape, lengths2_list[k].shape)
 
-# Esperado: (N,3) (N,) (N,) (N-1,)
 
 # Edge info (Should be 0 or really close)
 bad = 0
 for e in range(G.ecount()):
     pts = G.es[e]["points"]
     d   = G.es[e]["diameters"]
-    n = pts.shape[0]
-    l_vec = G.es[e]["lengths"]   # vector N (Gaia cut)
-    length2    = G.es[e]["lengths2"]  # vector N-1
+    l_edge  = G.es[e]["length"] #scalar
+    l_pt = G.es[e]["length_points_seg"]
 
-    if len(d) != n or len(l_vec) != n or len(length2) != max(n-1, 0):
+    lengths2  = G.es[e]["lengths2"]
+    n = pts.shape[0]
+    if len(d) != n or len(l_pt) != n or len(lengths2) != max(n-1, 0):
         bad += 1
 
 
 print("Edges with inconsistent per-point arrays:", bad)
 
-# Leghths (should be very similar)
+# Legths (should be very similar) = sum(lengths2)
 e = 0
-print(np.sum(G.es[e]["lengths2"]), G.es[e]["length_tortuous"])
+print(np.sum(G.es[e]["lengths2"]), G.es[e]["length"])
 
 
+points_space_report(G, n_edges=5000)
 
 # -----------------------------
 # Save
@@ -309,37 +350,9 @@ with open(out_path, "wb") as f:
 print("Graph saved at:", out_path)
 print("=== DONE ===")
 
-def points_space_report(G, n_edges=5000, seed=0):
-    rng = np.random.default_rng(seed)
-    m = G.ecount()
-    idxs = rng.choice(m, size=min(n_edges, m), replace=False)    
-    dA = []
-    dI = []    
-    for ei in idxs:
-        e = G.es[ei]
-        pts = np.asarray(e["points"], dtype=np.float64)
-        if pts.ndim != 2 or pts.shape[0] < 2:
-            continue        
-        p0 = pts[0]
-        p1 = pts[-1]
-        src, tgt = e.source, e.target        
-        A0 = np.asarray(G.vs[src]["coords"], dtype=np.float64)
-        A1 = np.asarray(G.vs[tgt]["coords"], dtype=np.float64)
-        I0 = np.asarray(G.vs[src]["coords_image"], dtype=np.float64)
-        I1 = np.asarray(G.vs[tgt]["coords_image"], dtype=np.float64)        # distancia del extremo de la polilínea al extremo de nodo (min sobre p0/p1 y src/tgt)
-        dA.append(min(np.linalg.norm(p0-A0), np.linalg.norm(p0-A1),
-                      np.linalg.norm(p1-A0), np.linalg.norm(p1-A1)))
-        dI.append(min(np.linalg.norm(p0-I0), np.linalg.norm(p0-I1),
-                      np.linalg.norm(p1-I0), np.linalg.norm(p1-I1)))    
-    dA = np.array(dA)
-    dI = np.array(dI)   
-    print("Samples:", len(dA))
-    print("Median dist to ATLAS (coords):", float(np.median(dA)))
-    print("Median dist to IMAGE (coords_image):", float(np.median(dI)))
-    print("Percent where ATLAS closer:", float(np.mean(dA < dI) * 100), "%")
-    print("Percent where IMAGE closer:", float(np.mean(dI < dA) * 100), "%")
 
-points_space_report(G, n_edges=5000)
+
+
 
 X = np.asarray(G.vs["coords_image"], dtype=np.float64)  # imagen
 Y = np.asarray(G.vs["coords"], dtype=np.float64)        # atlas
@@ -351,5 +364,4 @@ print("rank:", rank)
 print("median err:", float(np.median(err)))
 print("max err:", float(err.max()))
 print("residuals:", residuals[:10] if hasattr(residuals, "__len__") else residuals)
-
 print("M (image -> atlas):\n", M)
