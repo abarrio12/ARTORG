@@ -98,7 +98,7 @@ def materialize_fullgeom_for_edges(G, edge_ids, x, y, z, r_global, starts, ends,
     Gsub.es["length"] = length_list
     Gsub.es["tortuosity"] = tort_list
     Gsub.es["points_um"] = [True] * Gsub.ecount()
-
+ 
     return Gsub
 
 

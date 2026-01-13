@@ -9,6 +9,7 @@ import pickle
 import numpy as np
 import pandas as pd
 import igraph as ig
+import gc
 
 
 # -----------------------------
@@ -281,7 +282,7 @@ for i, (s, e, src, tg) in enumerate(zip(starts, ends, edges_sources, edges_targe
     # because it is a scalar per edge, we can use normal np
     tortuosity[i] = tortu
     length_arr[i] = length #global length 
-'''
+
 # --- CHECK OF LENGHTS START ---
 # GTtoCSV uses euclidian distance in straight line between A and B, not intermediate points
 # This check helps us see if the length from CSV (no points) and the tortuous length (using points) is the same
@@ -297,7 +298,7 @@ if np.mean(diff_vs_csv) > 0.1:
     print("CONFIRMADO: El CSV original no coincide con la suma de segmentos.")
     # Check extra contra la distancia recta
     # (Podrías guardar dist_recta en un array para comparar aquí también)
-'''
+
 
 # --- GRAPH ASSIGNATION ---
 
@@ -308,117 +309,6 @@ G.es["lengths"]     = length_points_seg_list        # (N) per-point (Gaia)
 G.es["length"]      = length_arr.tolist()   # scalar tortuous 
 #G.es["length_csv"]  = lengths_edge.tolist()          # scalar from CSV
 #G.es["tortuosity"]  = tortuosity.tolist()
-'''
-
-# -----------------------------
-# Geometry FULL (points per edge)  -- OPTION 2: BYTES+SHAPE (OOM SAFE)
-# -----------------------------
-edge_geometry_df.columns = ["x", "y", "z"]
-
-x = edge_geometry_df["x"].to_numpy(dtype=np.float32, copy=False)
-y = edge_geometry_df["y"].to_numpy(dtype=np.float32, copy=False)
-z = edge_geometry_df["z"].to_numpy(dtype=np.float32, copy=False)
-
-starts = geom_index_df[0].to_numpy(dtype=np.int64, copy=False)
-ends   = geom_index_df[1].to_numpy(dtype=np.int64, copy=False)
-
-r_global = edge_geometry_radii_df[0].to_numpy(dtype=np.float32, copy=False)
-
-assert int(ends[-1]) <= len(edge_geometry_df), "Last end index exceeds points length"
-assert int(ends[-1]) <= len(r_global), "Last end index exceeds radii length"
-
-# arrays of source/target nodes of polyline + coords (array of coordinates)
-edges_sources = edges_arr[:, 0]
-edges_targets = edges_arr[:, 1]
-
-# scalars per edge
-length_arr  = np.zeros(n_edges, dtype=np.float32)
-tortuosity  = np.ones(n_edges, dtype=np.float32)
-
-# IMPORTANT: store coords as array for fast access (your code uses coords[src])
-# Here, "coords" must be (n_vertices, 3) float32
-# If you currently have coords as list-of-arrays, make this once:
-coords_nodes = np.asarray(G.vs["coords"], dtype=np.float32)
-
-for i, (s, e, src, tg) in enumerate(zip(starts, ends, edges_sources, edges_targets)):
-    if i % 50000 == 0 and i > 0:
-        print(f"  Processing edge {i}/{n_edges}")
-
-    # Nx3 float32 array (vox)
-    pts = np.stack((x[s:e], y[s:e], z[s:e]), axis=1).astype(np.float32, copy=False)
-
-    coords_source = coords_nodes[src]
-
-    p0 = pts[0]
-    p_last = pts[-1]
-
-    # N radii -> N diameters
-    r_pts = r_global[s:e].astype(np.float32, copy=False)
-    diams = (2.0 * r_pts).astype(np.float32, copy=False)
-
-    # Orient so first point matches source (if possible)
-    if not np.allclose(coords_source, p0, atol=1e-6):
-        if np.allclose(coords_source, p_last, atol=1e-6):
-            pts = pts[::-1].copy()
-            diams = diams[::-1].copy()
-
-    # Compute lengths (still in vox here; if you want µm multiply pts*scale first)
-    # If you want tortuosity/length in µm (recommended):
-    pts_um = pts.astype(np.float64, copy=False) * scale
-
-    if pts_um.shape[0] >= 2:
-        lengths2 = np.linalg.norm(np.diff(pts_um, axis=0), axis=1).astype(np.float32)  # (N-1)
-
-        length_points_seg = np.empty(pts_um.shape[0], dtype=np.float32)  # (N,)
-        length_points_seg[:-1] = lengths2
-        length_points_seg[-1]  = lengths2[-1]
-
-        length = float(lengths2.sum())
-        straight_dist = float(np.linalg.norm(pts_um[-1] - pts_um[0]))
-        tortu = (length / straight_dist) if straight_dist > 0 else 1.0
-    else:
-        lengths2 = np.zeros(0, dtype=np.float32)
-        length_points_seg = np.zeros(pts_um.shape[0], dtype=np.float32)
-        length = 0.0
-        tortu = 1.0
-
-    # -----------------------------
-    # STORE COMPACTLY PER EDGE (bytes + lengths)
-    # -----------------------------
-    # store points in µm (float32) to reduce size and to be consistent downstream
-    pts_store = (pts_um.astype(np.float32, copy=False))
-
-    eobj = G.es[i]
-
-    # points
-    eobj["points_bytes"] = pts_store.tobytes()
-    eobj["points_n"] = int(pts_store.shape[0])  # number of points
-
-    # diameters
-    di_store = diams.astype(np.float32, copy=False)
-    eobj["diameters_bytes"] = di_store.tobytes()
-    eobj["diameters_n"] = int(di_store.shape[0])
-
-    # lengths2
-    l2_store = lengths2.astype(np.float32, copy=False)
-    eobj["lengths2_bytes"] = l2_store.tobytes()
-    eobj["lengths2_n"] = int(l2_store.shape[0])
-
-    # lengths (per-point)
-    l_store = length_points_seg.astype(np.float32, copy=False)
-    eobj["lengths_bytes"] = l_store.tobytes()
-    eobj["lengths_n"] = int(l_store.shape[0])
-
-    # flags/scalars
-    eobj["points_um"] = True
-    tortuosity[i] = tortu
-    length_arr[i] = length
-
-# assign scalar arrays
-G.es["length"] = length_arr.tolist()
-G.es["tortuosity"] = tortuosity.tolist()
-
-print("Geometry assignment complete (bytes per edge).")
 
 
 
@@ -451,7 +341,138 @@ print(np.sum(G.es[e]["lengths2"]), G.es[e]["length"])
 
 
 points_space_report(G, n_edges=5000)
+'''
 
+# -----------------------------
+# Geometry FULL (points per edge)  -- OPTION 2: BYTES+SHAPE (OOM SAFE)
+# -----------------------------
+edge_geometry_df.columns = ["x", "y", "z"]
+
+x = edge_geometry_df["x"].to_numpy(dtype=np.float32, copy=False)
+y = edge_geometry_df["y"].to_numpy(dtype=np.float32, copy=False)
+z = edge_geometry_df["z"].to_numpy(dtype=np.float32, copy=False)
+
+starts = geom_index_df[0].to_numpy(dtype=np.int64, copy=False)
+ends   = geom_index_df[1].to_numpy(dtype=np.int64, copy=False)
+r_global = edge_geometry_radii_df[0].to_numpy(dtype=np.float32, copy=False)
+
+assert int(ends[-1]) <= len(edge_geometry_df), "Last end index exceeds points length"
+assert int(ends[-1]) <= len(r_global), "Last end index exceeds radii length"# arrays of source/target nodes of polyline + coords (array of coordinates)
+
+edges_sources = edges_arr[:, 0]
+edges_targets = edges_arr[:, 1]# scalars per edge
+
+length_arr  = np.zeros(n_edges, dtype=np.float32)
+tortuosity  = np.ones(n_edges, dtype=np.float32)# IMPORTANT: store coords as array for fast access (your code uses coords[src])
+
+sx, sy, sz = 1.625, 1.625, 2.5
+scale = np.array([sx, sy, sz], dtype=np.float64)
+
+# Here, "coords" must be (n_vertices, 3) float32
+# If you currently have coords as list-of-arrays, make this once:
+coords_nodes = np.asarray(G.vs["coords"], dtype=np.float32)
+for i, (s, e, src, tg) in enumerate(zip(starts, ends, edges_sources, edges_targets)):
+    if i % 50000 == 0 and i > 0:
+        print(f"  Processing edge {i}/{n_edges}")    # Nx3 float32 array (vox)
+    pts = np.stack((x[s:e], y[s:e], z[s:e]), axis=1).astype(np.float32, copy=False)    
+    coords_source = coords_nodes[src]    
+    p0 = pts[0]
+    p_last = pts[-1]    # N radii -> N diameters
+    r_pts = r_global[s:e].astype(np.float32, copy=False)
+    diams = (2.0 * r_pts).astype(np.float32, copy=False)    # Orient so first point matches source (if possible)
+    if not np.allclose(coords_source, p0, atol=1e-6):
+        if np.allclose(coords_source, p_last, atol=1e-6):
+            pts = pts[::-1].copy()
+            diams = diams[::-1].copy()    # Compute lengths (still in vox here; if you want µm multiply pts*scale first)
+    # If you want tortuosity/length in µm (recommended):
+    pts_um = pts.astype(np.float64, copy=False) * scale    
+    if pts_um.shape[0] >= 2:
+        lengths2 = np.linalg.norm(np.diff(pts_um, axis=0), axis=1).astype(np.float32)  # (N-1)        
+        length_points_seg = np.empty(pts_um.shape[0], dtype=np.float32)  # (N,)
+        length_points_seg[:-1] = lengths2
+        length_points_seg[-1]  = lengths2[-1]        
+        length = float(lengths2.sum())
+        straight_dist = float(np.linalg.norm(pts_um[-1] - pts_um[0]))
+        tortu = (length / straight_dist) if straight_dist > 0 else 1.0
+    else:
+        lengths2 = np.zeros(0, dtype=np.float32)
+        length_points_seg = np.zeros(pts_um.shape[0], dtype=np.float32)
+        length = 0.0
+        tortu = 1.0    # -----------------------------
+    # STORE COMPACTLY PER EDGE (bytes + lengths)
+    # -----------------------------
+    # store points in µm (float32) to reduce size and to be consistent downstream
+    pts_store = (pts_um.astype(np.float32, copy=False))    
+    eobj = G.es[i]    # points
+    eobj["points_bytes"] = pts_store.tobytes()
+    eobj["points_n"] = int(pts_store.shape[0])  # number of points    # diameters
+    di_store = diams.astype(np.float32, copy=False)
+    eobj["diameters_bytes"] = di_store.tobytes()
+    eobj["diameters_n"] = int(di_store.shape[0])    # lengths2
+    l2_store = lengths2.astype(np.float32, copy=False)
+    eobj["lengths2_bytes"] = l2_store.tobytes()
+    eobj["lengths2_n"] = int(l2_store.shape[0])    # lengths (per-point)
+    l_store = length_points_seg.astype(np.float32, copy=False)
+    eobj["lengths_bytes"] = l_store.tobytes()
+    eobj["lengths_n"] = int(l_store.shape[0])    # flags/scalars
+    eobj["points_um"] = True
+    tortuosity[i] = tortu
+    length_arr[i] = length# assign scalar arrays
+G.es["length"] = length_arr.tolist()
+G.es["tortuosity"] = tortuosity.tolist()
+print("Geometry assignment complete (bytes per edge).")
+
+# -------------------------------------------------
+# Optional: remove old list-based attrs if they exist
+# -------------------------------------------------
+for old in ("points", "diameters", "lengths", "lengths2"):
+    if old in G.es.attributes():
+        try:
+            del G.es[old]
+            print(f"Removed old edge attribute: {old}")
+        except Exception as ex:
+            print(f"Could not remove {old}: {ex}")
+
+gc.collect()
+
+# -------------------------------------------------
+# Quick sanity check: reconstruct a random edge
+# -------------------------------------------------
+def edge_points_from_bytes(e):
+    n = int(e["points_n"])
+    return np.frombuffer(e["points_bytes"], dtype=np.float32).reshape(n, 3)
+
+def edge_diams_from_bytes(e):
+    n = int(e["diameters_n"])
+    return np.frombuffer(e["diameters_bytes"], dtype=np.float32, count=n)
+
+k = 0  # or np.random.randint(G.ecount())
+e0 = G.es[k]
+pts0 = edge_points_from_bytes(e0)
+d0   = edge_diams_from_bytes(e0)
+print("CHECK edge 0 reconstructed shapes:",
+      "points", pts0.shape, "diams", d0.shape)
+assert pts0.shape[0] == d0.shape[0], "Mismatch points vs diameters length!"# -------------------------------------------------
+# Save
+# -------------------------------------------------
+print("\n=== Saving graph ===")
+os.makedirs(os.path.dirname(out_path), exist_ok=True)
+
+with open(out_path, "wb") as f:
+    pickle.dump(G, f, protocol=pickle.HIGHEST_PROTOCOL)
+    print(f"Graph saved at: {out_path}")
+print("=== DONE ===")
+print(f"Final graph: {G.vcount()} vertices, {G.ecount()} edges")
+
+
+
+
+
+
+
+
+
+''''
 # -----------------------------
 # Save
 # -----------------------------
@@ -465,7 +486,7 @@ print("=== DONE ===")
 
 
 
-'''
+
 X = np.asarray(G.vs["coords_image"], dtype=np.float64)  # imagen
 Y = np.asarray(G.vs["coords"], dtype=np.float64)        # atlas
 Xh = np.c_[X, np.ones(len(X))]                          # (N,4)
