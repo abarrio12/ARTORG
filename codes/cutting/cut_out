@@ -348,9 +348,9 @@ if __name__ == "__main__":
         data = pickle.load(f)
 
     # ejemplo de box en µm
-    xBox = [1000*1.625, 2000*1.625]
-    yBox = [0*1.625,    1000*1.625]
-    zBox = [1500*2.5,   2500*2.5]
+    xBox = [2000*1.625, 2000*1.625]
+    yBox = [500*1.625,    1500*1.625]
+    zBox = [1200*2.5,   2200*2.5]
 
     cut = cut_outgeom_gaia_like(data, xBox, yBox, zBox, tol=1e-3, min_straight_dist=1.0)
 
