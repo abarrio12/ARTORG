@@ -59,6 +59,14 @@ def points_space_report(G, n_edges=5000, seed=0):
     print("Percent where ATLAS closer:", float(np.mean(dA < dI) * 100), "%")
     print("Percent where IMAGE closer:", float(np.mean(dI < dA) * 100), "%")
 
+
+
+    def get_points_um(G, ei, scale):
+        s = G.es[ei]["p_start"]
+        t = G.es[ei]["p_end"]
+        pts = G["P"][s:t]
+        return pts * scale
+
 # -------------------------------------------------------------------------
 
 print("=== START CSV → PKL (FULLGEOM) - MEMORY OPTIMIZED ===")
