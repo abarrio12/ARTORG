@@ -1,3 +1,4 @@
+'''
 import numpy as np
 import pickle
 import igraph
@@ -330,7 +331,7 @@ for e in G.es:
         e["lengths"]  = [0.0] * int(pts.shape[0])
         e["length"]   = 0.0
 
-'''
+
 # OPTIONAL: remove helper flag before saving (if you don't want it)
 # Keep points_um if you want (recommended for debugging)
 # If you dont want to remove it, comment:
@@ -340,11 +341,11 @@ if "points_um" in G.es.attributes():
 # OPTIONAL: if you created lengths_input and you don't want it, remove it:
 if "lengths_input" in G.es.attributes():
     del G.es["lengths_input"]
-'''
+
 with open("graph_18_CUT.pkl", "wb") as f:
     pickle.dump(G, f, protocol=pickle.HIGHEST_PROTOCOL)
 
-'''
+
 # Save output as dicts (your format)
 vertices_data = {attr: G.vs[attr] for attr in G.vs.attributes()}
 edges_data = {attr: G.es[attr] for attr in G.es.attributes()}
@@ -355,14 +356,13 @@ with open("vertices_18_graph.pkl", "wb") as f:
 
 with open("edges_18_graph.pkl", "wb") as f:
     pickle.dump(edges_data, f)
-'''
+
 print("Saved: graph_18_CUT.pkl")
 
 print("Saved: vertices_18_graph.pkl and edges_18_graph.pkl")
 
-
-
 '''
+
 import numpy as np
 import pickle
 import igraph as ig
@@ -576,4 +576,4 @@ with open("graph_18_CUT.pkl", "wb") as f:
     pickle.dump(G, f, protocol=pickle.HIGHEST_PROTOCOL)
 
 print("Saved: graph_18_CUT.pkl")
-'''
+

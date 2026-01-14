@@ -3,17 +3,20 @@ import vtk
 import numpy as np
 
 # ============================
-# Load FULL pkl
+# Load pkl
 # ============================
 
-data = pickle.load(open(
-    "/home/admin/Ana/MicroBrain/output/.pkl", "rb"
-))
+in_path = "/home/admin/Ana/MicroBrain/output/graph_18_OutGeom.pkl"
+# if you want the tortuous vtp, uncomment
+#out_vtp = "/home/admin/Ana/MicroBrain/output/graph_18_TORTUOUS.vtp"
+# if you want the NON tortuous vtp, uncomment
+out_vtp = "/home/admin/Ana/MicroBrain/output/graph_18_NON_TORTUOUS.vtp"
 
+data = pickle.load(open(in_path, "rb"))
 G = data["graph"]
-coords = data["coords"]
-
-x, y, z = coords["x"], coords["y"], coords["z"]
+x = data["coords"]["x"]
+y = data["coords"]["y"]
+z = data["coords"]["z"]
 
 # ============================
 # VTK structures
@@ -41,9 +44,14 @@ point_id = 0
 # ============================
 
 for e in range(G.ecount()):
-    s = int(G.es[e]["geom_start"])
-    e_ = int(G.es[e]["geom_end"])
-    npts = e_ - s
+    #s = int(G.es[e]["geom_start"])
+    #en = int(G.es[e]["geom_end"])
+
+    # if non tortuous graph then uncomment following/commment above:
+    s = G.vs["geom_start"]["coords"]
+    en = G.vs["geom_end"]["coords"]
+
+    npts = en - s
 
     if npts < 2:
         continue
@@ -88,11 +96,11 @@ polydata.GetCellData().SetActiveScalars("nkind")
 # ============================
 
 writer = vtk.vtkXMLPolyDataWriter()
-writer.SetFileName("/home/admin/Ana/MicroBrain/output/.vtp")
+writer.SetFileName(out_vtp)
 writer.SetInputData(polydata)
 writer.SetDataModeToAppended()
 writer.EncodeAppendedDataOff()
 writer.Write()
 
-print("Saved vascular_network")
+print("Saved", out_vtp)
 
