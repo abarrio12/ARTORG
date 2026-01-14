@@ -303,8 +303,8 @@ if np.mean(diff_vs_csv) > 0.1:
 G.es["points"]      = points_list      # Nx3
 G.es["diameters"]   = diameters_list    # N
 G.es["lengths2"]    = lengths2_list      # (N-1)
-G.es["lengths"]     = length_list        # (N) per-point (Gaia)
-G.es["length"]      = length_tortuous_arr.tolist()   # scalar tortuous 
+G.es["lengths"]     = length_points_seg_list        # (N) per-point (Gaia)
+G.es["length"]      = length_arr.tolist()   # scalar tortuous 
 G.es["length_csv"]  = lengths_edge.tolist()          # scalar from CSV
 G.es["tortuosity"]  = tortuosity.tolist()
 
@@ -323,7 +323,7 @@ for e in range(G.ecount()):
     pts = G.es[e]["points"]
     d   = G.es[e]["diameters"]
     l_edge  = G.es[e]["length"] #scalar
-    l_pt = G.es[e]["length_points_seg"]
+    l_pt = G.es[e]["lengths"]
 
     lengths2  = G.es[e]["lengths2"]
     n = pts.shape[0]
