@@ -4,7 +4,6 @@ __pycache__/
 
 # ===== Data / outputs =====
 CSV/
-output/
 *.gt
 *.vtp
 
@@ -15,6 +14,11 @@ output/
 *.vtk
 *.vtu
 
+# ===== Allow output folder and its pkl/vtp =====
+!output/
+!output/*.pkl
+!output/*.vtp
+
 # ===== Temp / misc =====
 *.log
 
@@ -24,4 +28,7 @@ output/
 *.pdf
 *.jpeg
 *.mp4
+
+
+
 
