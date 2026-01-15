@@ -7,10 +7,7 @@ import numpy as np
 # ============================
 
 in_path = "/home/admin/Ana/MicroBrain/output/graph_18_OutGeom.pkl"
-# if you want the tortuous vtp, uncomment
-#out_vtp = "/home/admin/Ana/MicroBrain/output/graph_18_TORTUOUS.vtp"
-# if you want the NON tortuous vtp, uncomment
-out_vtp = "/home/admin/Ana/MicroBrain/output/graph_18_NON_TORTUOUS.vtp"
+out_vtp = "/home/admin/Ana/MicroBrain/output/graph_18_TORTUOUS.vtp"
 
 data = pickle.load(open(in_path, "rb"))
 G = data["graph"]
@@ -44,12 +41,8 @@ point_id = 0
 # ============================
 
 for e in range(G.ecount()):
-    #s = int(G.es[e]["geom_start"])
-    #en = int(G.es[e]["geom_end"])
-
-    # if non tortuous graph then uncomment following/commment above:
-    s = G.vs["geom_start"]["coords"]
-    en = G.vs["geom_end"]["coords"]
+    s = int(G.es[e]["geom_start"])
+    en = int(G.es[e]["geom_end"])
 
     npts = en - s
 

@@ -32,8 +32,8 @@ import json
 
 
 # ========================== LOAD JSON =============================
-json_path = r"C:\Users\Ana\OneDrive\Escritorio\ARTORG\whole brain\Extract Area Annotated from graph Brain\ABA_annotation_last.json"
-
+#json_path = r"C:\Users\Ana\OneDrive\Escritorio\ARTORG\whole brain\Extract Area Annotated from graph Brain\ABA_annotation_last.json"
+json_path = "/home/admin/Ana/MicroBrain/Select Region/ABA_annotation_last.json"
 # open in read mode
 with open(json_path, "r") as f:
     atlas = json.load(f) # all content of the JSON file as Python objects (dictionaries, lists, int, float, etc.)
