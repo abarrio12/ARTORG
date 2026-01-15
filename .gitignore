@@ -14,13 +14,6 @@ CSV/
 *.vtk
 *.vtu
 
-# ===== Allow output folder =====
-!output/
-!output/**
-
-# ===== But only allow these inside output =====
-!output/**/*.pkl
-!output/**/*.vtp
 
 # ===== Temp / misc =====
 *.log
