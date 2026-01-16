@@ -222,5 +222,6 @@ class QualityCheck(object):
 
 if __name__ == '__main__':
     graph = ReadWriteGraph("/Volumes/home/RenierDatasets/HalfBrain/082025-datasets/graph_18/18_vessels_graph.gt")
-    graph.writeAll()
+    #graph.writeAll()
+    graph.writeGraphPropertyEdgeGeometryAnnotation() # i only need to export this right now, as i have all the other csvs 
     QualityCheck(graph.graph)
