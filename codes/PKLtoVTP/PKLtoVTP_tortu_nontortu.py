@@ -88,7 +88,7 @@ w.Write()
 print("Saved tortuous:", out_tort, "| edges:", kept_edges_t)
 
 # ============================
-# 2) NON-TORTUOUS export (A,B endpoints from geometry)
+# 2) NON-TORTUOUS export (A,B endpoints from geometry)           !!!!!!!!!!!!!!!!!!!!
 # ============================
 points_n = vtk.vtkPoints()
 lines_n  = vtk.vtkCellArray()
@@ -103,7 +103,7 @@ for e in range(G.ecount()):
     if en - s < 2:
         continue
 
-    A = (float(x[s]),    float(y[s]),    float(z[s]))
+    A = (float(x[s]),    float(y[s]),    float(z[s]))             # !!!!!!!!!!!!!!!!!
     B = (float(x[en-1]), float(y[en-1]), float(z[en-1]))
 
     points_n.InsertNextPoint(*A)

@@ -8,13 +8,15 @@ in_pkl = "/home/admin/Ana/MicroBrain/output/graph_18_OutGeom_CUT.pkl"
 
 # Box USED for the cut (same coordinate system as x,y,z and coords_image)
 # >>> Put your values here (in image voxels) <<<
-xBox = [3250.0, 4875.0]
-yBox = [812.5,  2437.5]
-zBox = [3000.0, 5500.0]
+xBox_um = [1500, 2500]
+yBox_um = [1500,  2500]
+zBox_um = [1500, 2500]
 
-# If your ParaView box was in micrometers and your x,y,z are voxels:
-# sx, sy, sz = 1.625, 1.625, 2.5
-# xBox = [xBox_um[0]/sx, xBox_um[1]/sx] etc.
+
+sx, sy, sz = 1.625, 1.625, 2.5
+xBox = [xBox_um[0]/sx, xBox_um[1]/sx]
+yBox = [yBox_um[0]/sy, yBox_um[1]/sy]
+zBox = [zBox_um[0]/sz, zBox_um[1]/sz]
 
 tol_err = 1e-3     # mismatch tolerance (vox)
 eps_plane = 1e-2   # "on boundary plane" tolerance (vox) - adjust if needed
@@ -47,14 +49,17 @@ boundary_mismatch = []
 interior_mismatch = []
 
 for e in range(G.ecount()):
+    # geometric endpoints (tortuous)
     s  = int(G.es[e]["geom_start"])
     en = int(G.es[e]["geom_end"])
     if en - s < 2:
         continue
 
+    #polyline endpoints    
     A = np.array([x[s], y[s], z[s]], np.float32)
     B = np.array([x[en-1], y[en-1], z[en-1]], np.float32)
 
+    # topological endpoints (non tortuous)
     u = G.es[e].source
     v = G.es[e].target
     U = V[u]

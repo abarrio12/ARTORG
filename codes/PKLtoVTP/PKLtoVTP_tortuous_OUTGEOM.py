@@ -7,6 +7,7 @@ import numpy as np
 # ============================
 
 <<<<<<< HEAD
+<<<<<<< HEAD
 in_path = "/home/admin/Ana/MicroBrain/output/graph_18_OutGeom.pkl"
 out_vtp = "/home/admin/Ana/MicroBrain/output/graph_18_OutGeom.vtp"
 # ejemplo: si quieres el cut:
@@ -16,6 +17,10 @@ out_vtp = "/home/admin/Ana/MicroBrain/output/graph_18_OutGeom.vtp"
 in_path = "/home/admin/Ana/MicroBrain/output/graph_18_OutGeom_CUT.pkl"
 out_vtp = "/home/admin/Ana/MicroBrain/output/graph_18_OutGeom_CUT_TORTUOUS.vtp"
 >>>>>>> 3eb0a63 (PKLtoVTP combine Tort/nonTort)
+=======
+in_path = "/home/admin/Ana/MicroBrain/output/graph_18_OutGeom.pkl"
+out_vtp = "/home/admin/Ana/MicroBrain/output/graph_18_OutGeom.vtp"
+>>>>>>> 480ff5f (gt with edge annotation)
 
 data = pickle.load(open(in_path, "rb"))
 G = data["graph"]
@@ -51,6 +56,10 @@ if ann is not None:
 
 point_id = 0
 
+annotation_array = vtk.vtkIntArray()
+annotation_array.SetName("annotation") # EDGE!!!
+ann = data["edge_annotation"]
+
 # ============================
 # Loop over edges
 # ============================
@@ -67,14 +76,22 @@ for e in range(G.ecount()):
     polyline.GetPointIds().SetNumberOfIds(npts)
 
     for i in range(npts):
+<<<<<<< HEAD
         points.InsertNextPoint(float(x[s + i]), float(y[s + i]), float(z[s + i]))
+=======
+        points.InsertNextPoint(
+            float(x[s + i]),
+            float(y[s + i]),
+            float(z[s + i])
+        )
+        annotation_array.InsertNextValue(int(ann[s+i]))   
+>>>>>>> 480ff5f (gt with edge annotation)
         polyline.GetPointIds().SetId(i, point_id)
 
         if ann_array is not None:
             ann_array.InsertNextValue(int(ann[s + i]))
 
         point_id += 1
-
     lines.InsertNextCell(polyline)
 
     nkind_array.InsertNextValue(int(G.es[e]["nkind"]))
@@ -93,12 +110,24 @@ polydata = vtk.vtkPolyData()
 polydata.SetPoints(points)
 polydata.SetLines(lines)
 
+<<<<<<< HEAD
 # CellData
+=======
+#CellData = edge info
+>>>>>>> 480ff5f (gt with edge annotation)
 polydata.GetCellData().AddArray(nkind_array)
 polydata.GetCellData().AddArray(radius_array)
 polydata.GetCellData().AddArray(length_array)
 polydata.GetCellData().AddArray(tortuosity_array)
+<<<<<<< HEAD
+=======
+#PointData = pts info
+polydata.GetPointData().AddArray(annotation_array)
+
+# Default coloring
+>>>>>>> 480ff5f (gt with edge annotation)
 polydata.GetCellData().SetActiveScalars("nkind")
+polydata.GetPointData().SetActiveScalars("edge annotation")
 
 # PointData
 if ann_array is not None:

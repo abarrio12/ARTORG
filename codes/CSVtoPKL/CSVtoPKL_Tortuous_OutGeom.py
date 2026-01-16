@@ -41,6 +41,7 @@ distance_to_surface_df = pd.read_csv(folder + "distance_to_surface.csv", header=
 
 geom_index_df = pd.read_csv(folder + "edge_geometry_indices.csv", header=None)
 edge_geometry_df = pd.read_csv(folder + "edge_geometry_coordinates.csv", header=None)
+edge_geometry_annotation_df = pd.read_csv(folder + "edge_geometry_annotation.csv", header=None)
 
 edge_geometry_annotation_df = pd.read_csv(folder + "edge_geometry_annotation.csv", header=None)
 
@@ -60,6 +61,7 @@ G.vs["coords"] = list(zip(
     coordinates_df[1].astype(np.float32),
     coordinates_df[2].astype(np.float32),
 ))
+<<<<<<< HEAD
 
 G.vs["coords_image"] = list(zip(
     coordinates_images_df[0].astype(np.float32),
@@ -68,6 +70,9 @@ G.vs["coords_image"] = list(zip(
 ))
 
 G.vs["annotation"] = annotation_vertex_df[0].astype(np.int32).tolist()
+=======
+G.vs["vertex_annotation"] = annotation_vertex_df[0].astype(int).tolist()
+>>>>>>> 480ff5f (gt with edge annotation)
 G.vs["distance_to_surface"] = distance_to_surface_df[0].astype(np.float32).tolist()
 G.vs["radii"] = radii_vertex_df[0].astype(np.float32).tolist()
 
@@ -160,6 +165,8 @@ print("Tortuosity computed")
 print("  NaN:", int(np.sum(~mask)))
 print("  Max:", float(np.nanmax(tortuosity)))
 
+edge_annotation = edge_geometry_annotation_df[0].to_numpy(dtype=np.int32) # geom attr
+
 # ============================
 # Save
 # ============================
@@ -167,7 +174,11 @@ print("  Max:", float(np.nanmax(tortuosity)))
 data = {
     "graph": G,
     "coords": {"x": x, "y": y, "z": z},
+<<<<<<< HEAD
     "annotation": ann_geom,  # <-- point-wise annotation for the geometry arrays
+=======
+    "edge_annotation": edge_annotation
+>>>>>>> 480ff5f (gt with edge annotation)
 }
 
 os.makedirs(os.path.dirname(out_path), exist_ok=True)

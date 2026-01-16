@@ -167,10 +167,10 @@ def write_vtp(graph, filename, subgraph_TF=False, penetrating_trees=False):
         
 import pickle
 # Load graph
-with open("/home/admin/Ana/MicroBrain/output/graph_18_OutGeom.pkl", "rb") as f:
+with open("/home/admin/Ana/MicroBrain/18_igraph.pkl", "rb") as f:
     G = pickle.load(f, encoding='latin1')
 
 # Save as VTP file. If subgraph (cut) then subgraph_TF=True
 write_vtp(G,
-          "/home/admin/Ana/MicroBrain/output/graph_18_OutGeom.vtp",
+          "/home/admin/Ana/MicroBrain/18_igraph.vtp",
           subgraph_TF=False)
