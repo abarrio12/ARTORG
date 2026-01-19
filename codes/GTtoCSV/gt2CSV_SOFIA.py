@@ -11,7 +11,7 @@ import sys
 #value = sys.argv[1]
 
 
-folder = "/Volumes/home/RenierDatasets/HalfBrain/082025-datasets/graph_18/CSV/"
+folder = "/home/admin/Ana/MicroBrain/CSV"
 
 class ReadWriteGraph(object):
     def __init__(self, file = False):
@@ -112,8 +112,8 @@ class ReadWriteGraph(object):
         self.saveFile(array, file)
 
     def writeGraphPropertyEdgeGeometryAnnotation(self, file = folder +'edge_geometry_annotation.csv'):
-    array = self.graph.graph_properties.edge_geometry_annotation
-    self.saveFile(array, file)
+        array = self.graph.graph_properties.edge_geometry_annotation
+        self.saveFile(array, file)
 
     def computeLength(self, A, B):
         return numpy.linalg.norm(A-B)
@@ -221,7 +221,7 @@ class QualityCheck(object):
                     print('Non matching tortuos coordinates in edge %s: %s, %s'%(edge,a,b))
 
 if __name__ == '__main__':
-    graph = ReadWriteGraph("/Volumes/home/RenierDatasets/HalfBrain/082025-datasets/graph_18/18_vessels_graph.gt")
+    graph = ReadWriteGraph("/home/admin/Ana/MicroBrain/18_vessels_graph.gt")
     #graph.writeAll()
     graph.writeGraphPropertyEdgeGeometryAnnotation() # i only need to export this right now, as i have all the other csvs 
     QualityCheck(graph.graph)
