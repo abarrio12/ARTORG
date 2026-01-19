@@ -111,6 +111,10 @@ class ReadWriteGraph(object):
         array = self.graph.graph_properties.edge_geometry_coordinates_atlas
         self.saveFile(array, file)
 
+    def writeGraphPropertyEdgeGeometryAnnotation(self, file = folder +'edge_geometry_annotation.csv'):
+    array = self.graph.graph_properties.edge_geometry_annotation
+    self.saveFile(array, file)
+
     def computeLength(self, A, B):
         return numpy.linalg.norm(A-B)
 
@@ -168,6 +172,7 @@ class ReadWriteGraph(object):
         self.writeGraphPropertyEdgeGeometryCoordinatesAtlas()
         self.writeGraphPropertyEdgeGeometryArteryRaw()
         self.writeGraphPropertyEdgeGeometryArteryBinary()
+        self.writeGraphPropertyEdgeGeometryAnnotation()
 
 class QualityCheck(object):
     def __init__(self, graph):
@@ -217,5 +222,6 @@ class QualityCheck(object):
 
 if __name__ == '__main__':
     graph = ReadWriteGraph("/Volumes/home/RenierDatasets/HalfBrain/082025-datasets/graph_18/18_vessels_graph.gt")
-    graph.writeAll()
+    #graph.writeAll()
+    graph.writeGraphPropertyEdgeGeometryAnnotation() # i only need to export this right now, as i have all the other csvs 
     QualityCheck(graph.graph)
