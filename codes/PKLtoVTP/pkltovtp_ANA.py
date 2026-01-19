@@ -169,7 +169,7 @@ def write_vtp(graph, filename, subgraph_TF=False):
 # ==============================================================================
 if __name__ == "__main__":
     # Load graph
-    in_pkl = "/home/admin/Ana/MicroBrain/output/graph_18_OutGeom_CUT.pkl"
+    in_pkl = "/home/admin/Ana/MicroBrain/output/graph_18_OutGeom.pkl"
     out_vtp = "/home/admin/Ana/MicroBrain/output/graph_18_OutGeom_CUT_nonTortuous.vtp"
 
     data = pickle.load(open(in_pkl, "rb"))
