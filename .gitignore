@@ -25,6 +25,8 @@ CSV/
 *.jpeg
 *.mp4
 
+# Installers
+*.sh
 
 
 
