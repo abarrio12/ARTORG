@@ -6,126 +6,98 @@ import pickle
 # Helpers
 # --------------------------
 def is_inside_box_np(P, xBox, yBox, zBox):
-    # P: (N,3)
     return (
-        (P[:,0] >= xBox[0]) & (P[:,0] <= xBox[1]) &
-        (P[:,1] >= yBox[0]) & (P[:,1] <= yBox[1]) &
-        (P[:,2] >= zBox[0]) & (P[:,2] <= zBox[1])
+        (P[:, 0] >= xBox[0]) & (P[:, 0] <= xBox[1]) &
+        (P[:, 1] >= yBox[0]) & (P[:, 1] <= yBox[1]) &
+        (P[:, 2] >= zBox[0]) & (P[:, 2] <= zBox[1])
     )
 
 def quant_key(p, tol=1e-4):
-    # tol en micras (ajústalo: 1e-4–1e-3 suele ir bien con float32)
-    return tuple(np.round(np.asarray(p)/tol).astype(np.int64))
+    return tuple(np.round(np.asarray(p) / tol).astype(np.int64))
 
 def segment_box_intersection(p_in, p_out, xBox, yBox, zBox):
     """
     Intersección del segmento (p_in -> p_out) con el borde del AABB.
     p_in está dentro, p_out está fuera.
-    Devuelve punto de intersección (3,) o None si algo raro.
+    Devuelve punto de intersección (3,) o None.
     """
     p_in = np.asarray(p_in, float)
     p_out = np.asarray(p_out, float)
     d = p_out - p_in
 
     t_candidates = []
-
-    # Para cada plano x=min/max, y=min/max, z=min/max:
     for axis, (mn, mx) in enumerate([xBox, yBox, zBox]):
         if abs(d[axis]) < 1e-12:
             continue
 
-        # intersección con mn
-        t = (mn - p_in[axis]) / d[axis]
-        if 0.0 <= t <= 1.0:
-            p = p_in + t*d
-            if (xBox[0]-1e-6 <= p[0] <= xBox[1]+1e-6 and
-                yBox[0]-1e-6 <= p[1] <= yBox[1]+1e-6 and
-                zBox[0]-1e-6 <= p[2] <= zBox[1]+1e-6):
-                t_candidates.append((t, p))
-
-        # intersección con mx
-        t = (mx - p_in[axis]) / d[axis]
-        if 0.0 <= t <= 1.0:
-            p = p_in + t*d
-            if (xBox[0]-1e-6 <= p[0] <= xBox[1]+1e-6 and
-                yBox[0]-1e-6 <= p[1] <= yBox[1]+1e-6 and
-                zBox[0]-1e-6 <= p[2] <= zBox[1]+1e-6):
-                t_candidates.append((t, p))
+        for bound in (mn, mx):
+            t = (bound - p_in[axis]) / d[axis]
+            if 0.0 <= t <= 1.0:
+                p = p_in + t * d
+                if (xBox[0] - 1e-6 <= p[0] <= xBox[1] + 1e-6 and
+                    yBox[0] - 1e-6 <= p[1] <= yBox[1] + 1e-6 and
+                    zBox[0] - 1e-6 <= p[2] <= zBox[1] + 1e-6):
+                    t_candidates.append((t, p))
 
     if not t_candidates:
         return None
 
-    # Queremos el primer cruce saliendo desde p_in => t mínimo > 0
     t_candidates.sort(key=lambda a: a[0])
     return t_candidates[0][1]
-
-def polyline_length(P):
-    if len(P) < 2:
-        return 0.0
-    d = np.diff(P, axis=0)
-    return float(np.sum(np.linalg.norm(d, axis=1)))
 
 # --------------------------
 # Main cut
 # --------------------------
 def cut_outgeom_gaia_like(data, xBox, yBox, zBox, tol=1e-4, min_straight_dist=1.0):
     """
-    data: dict con {"graph":G, "coords":{"x":x,"y":y,"z":z}}
-    Devuelve data_cut en el mismo formato OUTGEOM.
+    data: dict con {"graph":G, "coords":{"x":x,"y":y,"z":z}, "annotation":ann_geom}
+    Devuelve data_cut en el mismo formato OUTGEOM, recortando también annotation.
     """
     G = data["graph"]
     x = np.asarray(data["coords"]["x"], dtype=np.float32)
     y = np.asarray(data["coords"]["y"], dtype=np.float32)
     z = np.asarray(data["coords"]["z"], dtype=np.float32)
 
-    # --- preparar nuevo grafo H ---
+    ann_geom = None
+    if "annotation" in data:
+        ann_geom = np.asarray(data["annotation"], dtype=np.int32)
+        if len(ann_geom) != len(x):
+            raise ValueError("data['annotation'] length must match coords arrays length.")
+
+    # --- nuevo grafo H ---
     H = ig.Graph()
     H.add_vertices(0)
 
-    # Copiamos lista de atributos (excepto los que vamos a recalcular)
     v_attrs = list(G.vs.attributes())
     e_attrs = list(G.es.attributes())
 
-    # Mapa old_vid -> new_vid (solo para los que queden dentro)
     old2new = {}
 
     coords_v = np.asarray(G.vs["coords_image"], dtype=np.float32)
     inside_v = (
-        (coords_v[:,0] >= xBox[0]) & (coords_v[:,0] <= xBox[1]) &
-        (coords_v[:,1] >= yBox[0]) & (coords_v[:,1] <= yBox[1]) &
-        (coords_v[:,2] >= zBox[0]) & (coords_v[:,2] <= zBox[1])
+        (coords_v[:, 0] >= xBox[0]) & (coords_v[:, 0] <= xBox[1]) &
+        (coords_v[:, 1] >= yBox[0]) & (coords_v[:, 1] <= yBox[1]) &
+        (coords_v[:, 2] >= zBox[0]) & (coords_v[:, 2] <= zBox[1])
     )
-    
 
-    # Añadimos primero los vértices interiores (igual que Gaia: solo lo que queda en el subgrafo)
     inside_old_ids = np.where(inside_v)[0]
     H.add_vertices(len(inside_old_ids))
+
     for new_i, old_i in enumerate(inside_old_ids):
         old2new[int(old_i)] = int(new_i)
-        for a in v_attrs:
-            # inicializa atributos por vertex (luego asignamos)
-            pass
 
-    # Copiar atributos de vertices interiores (vectorizado por listas)
+    # Copiar atributos de vertices interiores
     for a in v_attrs:
-        vals = [G.vs[int(i)][a] for i in inside_old_ids]
-        H.vs[a] = vals
+        H.vs[a] = [G.vs[int(i)][a] for i in inside_old_ids]
 
-    # Hash para nodos frontera (intersecciones) para no duplicar
     border_key2new = {}
 
-    # Nuevos arrays globales de geometría
-    new_x = []
-    new_y = []
-    new_z = []
-    new_geom_start = []
-    new_geom_end = []
+    new_x, new_y, new_z = [], [], []
+    new_ann = []  # point-wise annotation recortada (si existe)
+    new_geom_start, new_geom_end = [], []
 
-    # Almacenamos edges y sus atributos (para añadir al final)
     new_edges = []
     new_edge_attr = {a: [] for a in e_attrs if a not in ["geom_start", "geom_end"]}
-    # Recalculamos también length_tortuous / tortuosity si existen o si quieres
-    want_length_tort = True
 
     # ---------------------------------------------------------
     # iterar edges
@@ -138,98 +110,99 @@ def cut_outgeom_gaia_like(data, xBox, yBox, zBox, tol=1e-4, min_straight_dist=1.
         if en - s < 2:
             continue
 
-        # slice de puntos del edge (temporal)
+        # slice de puntos del edge
         P = np.column_stack([x[s:en], y[s:en], z[s:en]]).astype(np.float32, copy=False)
+        A = ann_geom[s:en].copy() if ann_geom is not None else None
 
-        # Orientación coherente con el edge: P[0] debería coincidir con coords del source
+        # Orientación coherente: P[0] debería ser coords_image del source
         cu = np.asarray(G.vs[u]["coords_image"], dtype=np.float32)
         if not np.allclose(P[0], cu, atol=1e-5):
-            # entonces P está en dirección v->u, lo invertimos para que sea u->v
             P = P[::-1].copy()
+            if A is not None:
+                A = A[::-1].copy()
 
         u_in = bool(inside_v[u])
         v_in = bool(inside_v[v])
 
-        # Caso A: ambos dentro => copiamos edge completo
+        # A: ambos dentro
         if u_in and v_in:
             uu = old2new[u]
             vv = old2new[v]
 
             start_idx = len(new_x)
-            new_x.extend(P[:,0].tolist())
-            new_y.extend(P[:,1].tolist())
-            new_z.extend(P[:,2].tolist())
+            new_x.extend(P[:, 0].tolist())
+            new_y.extend(P[:, 1].tolist())
+            new_z.extend(P[:, 2].tolist())
+            if A is not None:
+                new_ann.extend(A.tolist())
             end_idx = len(new_x)
 
             new_edges.append((uu, vv))
             new_geom_start.append(start_idx)
             new_geom_end.append(end_idx)
 
-            # copiar atributos edge (excepto geom_*)
             for a in new_edge_attr.keys():
                 new_edge_attr[a].append(e[a])
-
             continue
 
-        # Caso B: ambos fuera => descartamos
+        # B: ambos fuera
         if (not u_in) and (not v_in):
             continue
 
-        # Caso C: cruza borde => recorte Gaia-like
-        # mask de puntos dentro
+        # C: cruza borde
         inside_mask = is_inside_box_np(P, xBox, yBox, zBox)
         if not np.any(inside_mask):
-            # aunque uno de los vertices sea "inside" por coords, puede pasar si coords no coincide con P por algún bug
             continue
 
-        # Queremos quedarnos con el tramo interno conectado al vértice interno
-        # Si u está dentro => buscamos transición desde el inicio
-        # Si v está dentro => buscamos transición desde el final
         if u_in:
-            # tramo interior empieza en 0
-            # buscamos primer punto que salga
-            # transición i -> i+1 donde inside cambia 1->0
             diff = np.diff(inside_mask.astype(np.int8))
             cut_idx = np.where(diff == -1)[0]
+
             if len(cut_idx) == 0:
-                # todo dentro (por geometría) aunque v no esté dentro por coords; nos quedamos con todo
                 P_keep = P
+                A_keep = A
                 inter = None
             else:
                 i = int(cut_idx[0])
                 p_in = P[i]
-                p_out = P[i+1]
+                p_out = P[i + 1]
                 inter = segment_box_intersection(p_in, p_out, xBox, yBox, zBox)
                 if inter is None:
                     continue
-                P_keep = np.vstack([P[:i+1], inter.astype(np.float32)])
+
+                P_keep = np.vstack([P[:i + 1], inter.astype(np.float32)])
+
+                if A is not None:
+                    # anotación del punto nuevo: copiamos la del último punto dentro (P[i])
+                    inter_ann = int(A[i])
+                    A_keep = np.concatenate([A[:i + 1], np.array([inter_ann], dtype=np.int32)])
+                else:
+                    A_keep = None
 
             uu = old2new[u]
 
-            # crear/reusar nodo frontera
             if inter is None:
-                # raro: no hay intersección, pero si v está fuera, aún así mantenemos P_keep y conectamos a v?
-                # Mejor: creamos nodo frontera en último punto de P_keep
                 inter = P_keep[-1]
             key = quant_key(inter, tol=tol)
+
             if key in border_key2new:
                 ww = border_key2new[key]
             else:
                 ww = H.vcount()
                 H.add_vertices(1)
                 border_key2new[key] = ww
-                # copiar atributos de vertex desde el interior (o inicializar)
                 for a in v_attrs:
                     if a == "coords":
                         H.vs[ww][a] = tuple(map(float, inter))
                     else:
-                        # estrategia segura: si existe el atributo, clonamos del nodo interior
-                        H.vs[ww][a] = H.vs[uu][a] if a in H.vs.attributes() else None
+                        H.vs[ww][a] = H.vs[uu][a]
 
             start_idx = len(new_x)
-            new_x.extend(P_keep[:,0].tolist())
-            new_y.extend(P_keep[:,1].tolist())
-            new_z.extend(P_keep[:,2].tolist())
+            new_x.extend(P_keep[:, 0].tolist())
+            new_y.extend(P_keep[:, 1].tolist())
+            new_z.extend(P_keep[:, 2].tolist())
+            if A_keep is not None:
+                new_ann.extend(A_keep.tolist())
             end_idx = len(new_x)
 
             new_edges.append((uu, ww))
@@ -240,27 +213,36 @@ def cut_outgeom_gaia_like(data, xBox, yBox, zBox, tol=1e-4, min_straight_dist=1.
                 new_edge_attr[a].append(e[a])
 
         else:
-            # v_in == True, tramo interior acaba en el final
+            # v_in == True
             diff = np.diff(inside_mask.astype(np.int8))
-            cut_idx = np.where(diff == 1)[0]  # 0->1 entrando al box
+            cut_idx = np.where(diff == 1)[0]  # 0->1 entrando
+
             if len(cut_idx) == 0:
                 P_keep = P
+                A_keep = A
                 inter = None
             else:
-                i = int(cut_idx[-1])  # última entrada
+                i = int(cut_idx[-1])
                 p_out = P[i]
-                p_in = P[i+1]
+                p_in = P[i + 1]
                 inter = segment_box_intersection(p_in, p_out, xBox, yBox, zBox)
                 if inter is None:
                     continue
-                # mantenemos desde i+1 hasta final, pero con inter delante
-                P_keep = np.vstack([inter.astype(np.float32), P[i+1:]])
+
+                P_keep = np.vstack([inter.astype(np.float32), P[i + 1:]])
+
+                if A is not None:
+                    inter_ann = int(A[i + 1])  # primer punto dentro
+                    A_keep = np.concatenate([np.array([inter_ann], dtype=np.int32), A[i + 1:]])
+                else:
+                    A_keep = None
 
             vv = old2new[v]
 
             if inter is None:
                 inter = P_keep[0]
             key = quant_key(inter, tol=tol)
+
             if key in border_key2new:
                 ww = border_key2new[key]
             else:
@@ -271,12 +253,14 @@ def cut_outgeom_gaia_like(data, xBox, yBox, zBox, tol=1e-4, min_straight_dist=1.
                     if a == "coords":
                         H.vs[ww][a] = tuple(map(float, inter))
                     else:
-                        H.vs[ww][a] = H.vs[vv][a] if a in H.vs.attributes() else None
+                        H.vs[ww][a] = H.vs[vv][a]
 
             start_idx = len(new_x)
-            new_x.extend(P_keep[:,0].tolist())
-            new_y.extend(P_keep[:,1].tolist())
-            new_z.extend(P_keep[:,2].tolist())
+            new_x.extend(P_keep[:, 0].tolist())
+            new_y.extend(P_keep[:, 1].tolist())
+            new_z.extend(P_keep[:, 2].tolist())
+            if A_keep is not None:
+                new_ann.extend(A_keep.tolist())
             end_idx = len(new_x)
 
             new_edges.append((ww, vv))
@@ -286,78 +270,92 @@ def cut_outgeom_gaia_like(data, xBox, yBox, zBox, tol=1e-4, min_straight_dist=1.
             for a in new_edge_attr.keys():
                 new_edge_attr[a].append(e[a])
 
-    # Añadir edges al grafo y setear atributos
+    # Añadir edges
+    if len(new_edges) == 0:
+        out = {"graph": H, "coords": {"x": np.array([], np.float32),
+                                     "y": np.array([], np.float32),
+                                     "z": np.array([], np.float32)}}
+        if ann_geom is not None:
+            out["annotation"] = np.array([], np.int32)
+        return out
+
     H.add_edges(new_edges)
 
     # geom indices
     H.es["geom_start"] = list(map(int, new_geom_start))
-    H.es["geom_end"]   = list(map(int, new_geom_end))
+    H.es["geom_end"] = list(map(int, new_geom_end))
 
-    # copiar atributos
+    # copiar atributos edge
     for a, vals in new_edge_attr.items():
         H.es[a] = vals
 
-    # Recalcular length_tortuous / tortuosity (barato porque ya tenemos geom indices)
-    if want_length_tort:
-        nx = np.asarray(new_x, dtype=np.float32)
-        ny = np.asarray(new_y, dtype=np.float32)
-        nz = np.asarray(new_z, dtype=np.float32)
+    # Recalcular length_tortuous / tortuosity
+    nx = np.asarray(new_x, dtype=np.float32)
+    ny = np.asarray(new_y, dtype=np.float32)
+    nz = np.asarray(new_z, dtype=np.float32)
 
-        lt = np.zeros(H.ecount(), dtype=np.float32)
-        sd = np.zeros(H.ecount(), dtype=np.float32)
+    lt = np.zeros(H.ecount(), dtype=np.float32)
+    sd = np.zeros(H.ecount(), dtype=np.float32)
 
-        for ei in range(H.ecount()):
-            s = H.es[ei]["geom_start"]
-            en = H.es[ei]["geom_end"]
-            if en - s < 2:
-                continue
-            dx = np.diff(nx[s:en])
-            dy = np.diff(ny[s:en])
-            dz = np.diff(nz[s:en])
-            lt[ei] = np.sum(np.sqrt(dx*dx + dy*dy + dz*dz))
-            sd[ei] = np.sqrt((nx[en-1]-nx[s])**2 + (ny[en-1]-ny[s])**2 + (nz[en-1]-nz[s])**2)
+    for ei in range(H.ecount()):
+        s = int(H.es[ei]["geom_start"])
+        en = int(H.es[ei]["geom_end"])
+        if en - s < 2:
+            continue
+        dx = np.diff(nx[s:en])
+        dy = np.diff(ny[s:en])
+        dz = np.diff(nz[s:en])
+        lt[ei] = np.sum(np.sqrt(dx * dx + dy * dy + dz * dz))
+        sd[ei] = np.sqrt((nx[en - 1] - nx[s]) ** 2 + (ny[en - 1] - ny[s]) ** 2 + (nz[en - 1] - nz[s]) ** 2)
 
-        tort = np.full(H.ecount(), np.nan, dtype=np.float32)
-        mask = sd >= float(min_straight_dist)
-        tort[mask] = lt[mask] / sd[mask]
-        H.es["length_tortuous"] = lt.tolist()
-        H.es["tortuosity"] = tort.tolist()
+    tort = np.full(H.ecount(), np.nan, dtype=np.float32)
+    mask = sd >= float(min_straight_dist)
+    tort[mask] = lt[mask] / sd[mask]
+    H.es["length_tortuous"] = lt.tolist()
+    H.es["tortuosity"] = tort.tolist()
 
-    # limpiar vértices aislados
+    # borrar vértices aislados
     iso = [v.index for v in H.vs if H.degree(v) == 0]
     if iso:
         H.delete_vertices(iso)
 
     out = {
         "graph": H,
-        "coords": {
-            "x": np.asarray(new_x, dtype=np.float32),
-            "y": np.asarray(new_y, dtype=np.float32),
-            "z": np.asarray(new_z, dtype=np.float32),
-        }
+        "coords": {"x": nx, "y": ny, "z": nz},
     }
+    if ann_geom is not None:
+        out["annotation"] = np.asarray(new_ann, dtype=np.int32)
+
+        # sanity check
+        if len(out["annotation"]) != len(out["coords"]["x"]):
+            raise RuntimeError("Cut annotation length mismatch with coords arrays.")
+
     return out
+
 
 # --------------------------
 # Example usage
 # --------------------------
 if __name__ == "__main__":
-    in_path  = "/home/admin/Ana/MicroBrain/output/graph_18_OutGeom.pkl"
+    in_path = "/home/admin/Ana/MicroBrain/output/graph_18_OutGeom.pkl"
     out_path = "/home/admin/Ana/MicroBrain/output/graph_18_OutGeom_CUT.pkl"
 
     data = pickle.load(open(in_path, "rb"))
-
     G = data["graph"]
 
-    # ejemplo de box en µm
-    xBox = [1500/1.625, 2500/1.625]
-    yBox = [1500/1.625,    2500/1.625]
-    zBox = [1500/2.5,   2500/2.5]
+    # box micrometers
+    xBox = [1500 / 1.625, 2500 / 1.625]
+    yBox = [1500 / 1.625, 2500 / 1.625]
+    zBox = [1500 / 2.5,   2500 / 2.5]
 
-    
+    # box paraview for ROI cut -> direct Hover points measurements
+    #xBox = [1500, 2500]
+    #yBox = [1500, 2500]
+    #zBox = [1500,   2500]
 
     coords_img = np.asarray(G.vs["coords_image"], float)
     print("coords_image bounds:", coords_img.min(0), coords_img.max(0))
+
     x = np.asarray(data["coords"]["x"], float)
     y = np.asarray(data["coords"]["y"], float)
     z = np.asarray(data["coords"]["z"], float)
@@ -370,3 +368,5 @@ if __name__ == "__main__":
         pickle.dump(cut, f, protocol=pickle.HIGHEST_PROTOCOL)
 
     print("Saved:", out_path, "Vertices:", cut["graph"].vcount(), "Edges:", cut["graph"].ecount())
+    if "annotation" in cut:
+        print("Cut annotation length:", len(cut["annotation"]))
