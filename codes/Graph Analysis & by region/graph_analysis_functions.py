@@ -2,6 +2,10 @@ import pickle
 import numpy as np
 import matplotlib.pyplot as plt
 from collections import Counter
+from mpl_toolkits.mplot3d.art3d import Poly3DCollection
+from matplotlib.lines import Line2D
+from matplotlib.patches import Patch
+from matplotlib.patches import Rectangle
 
 
 # ====================================================================================================================
@@ -299,79 +303,6 @@ def find_duplicated_edges(graph):
     
     return len(duplicated)
     
-    
-
-# ============================= FALTARÍA AÑADIR FUNCION DE LAS BC, PRIMERO MIRAR CODIGO DE GAIA PARA VER COMO PODRÍA 
-# HACERSE (IF/ELSE TORTUOUS) ======================================================
-
-
-
-
-
-
-# ====================================================================================================================
-#                                                      PLOTTING FUNCTIONS
-# ====================================================================================================================
-
-
-
-
-# Tip: Group before plotting (by nkind, mean values, etc.)
-
-def plot_category_stats(categ, attribute_toplot, label_dict=None,
-                        xlabel="Category", ylabel="Value",
-                        title="Category statistics"):
-    labels = [label_dict.get(c, c) if label_dict else c for c in categ] 
-    # Map categories to labels if label_dict is provided cat = [2,3,4] + label dict = {2:"artery", 3:"vein", 4:"capillary"} 
-    # --> labels = ["artery", "vein", "capillary"]
-
-    plt.figure(figsize=(8,5))
-    plt.bar(labels, attribute_toplot, color="steelblue", edgecolor="black")
-    plt.xlabel(xlabel)
-    plt.ylabel(ylabel)
-    plt.title(title)
-    plt.show()
-
-
-def plot_histograms_by_category(attribute_toplot, category, label_dict=None,
-                                xlabel="Value", plot_title="Category"):
-
-    unique_cats = np.unique(category)
-
-    # Compute shared global min/max for all categories
-    global_min = attribute_toplot.min()
-    global_max = attribute_toplot.max()
-
-    # Shared bins for ALL subplots → ensures comparability
-    bins = np.linspace(global_min, global_max, 80)
-
-    plt.figure(figsize=(12, 4 * len(unique_cats)))
-
-    for i, c in enumerate(unique_cats, 1):
-        plt.subplot(len(unique_cats), 1, i)
-
-        subset = attribute_toplot[category == c]
-        mean_value = subset.mean()
-
-        # Plot histogram using shared bins
-        plt.hist(subset, bins=bins, alpha=0.75, density=True)
-
-        # Mean line
-        plt.axvline(mean_value, color='red', linestyle='--', linewidth=1.5)
-
-        # Shared X-range for ALL subplots
-        plt.xlim(global_min, global_max)
-
-        # Label
-        name = label_dict.get(c, "Unknown") if label_dict else c
-
-        plt.title(f"{plot_title} {c} ({name})")
-        plt.xlabel(xlabel)
-        plt.ylabel("Density")
-        plt.legend([f"Mean = {mean_value:.2f}"])
-
-    plt.tight_layout()
-    plt.show()
 
 
 
@@ -482,7 +413,7 @@ def _distance_to_surface_stats(graph, nodes):
 
 
 # ============================================================
-# Main analysis
+# Main analysis BC NODES
 # ============================================================
 
 def analyze_bc_for_box(graph, box, coords_attr, eps=1e-3):
@@ -613,6 +544,345 @@ def analyze_bc_for_box(graph, box, coords_attr, eps=1e-3):
 
 
 # ====================================================================================================================
+#                                                      PLOTTING FUNCTIONS
+# ====================================================================================================================
+
+
+
+
+# Tip: Group before plotting (by nkind, mean values, etc.)
+
+def plot_category_stats(categ, attribute_toplot, label_dict=None,
+                        xlabel="Category", ylabel="Value",
+                        title="Category statistics"):
+    labels = [label_dict.get(c, c) if label_dict else c for c in categ] 
+    # Map categories to labels if label_dict is provided cat = [2,3,4] + label dict = {2:"artery", 3:"vein", 4:"capillary"} 
+    # --> labels = ["artery", "vein", "capillary"]
+
+    plt.figure(figsize=(8,5))
+    plt.bar(labels, attribute_toplot, color="steelblue", edgecolor="black")
+    plt.xlabel(xlabel)
+    plt.ylabel(ylabel)
+    plt.title(title)
+    plt.show()
+
+
+def plot_histograms_by_category(attribute_toplot, category, label_dict=None,
+                                xlabel="Value", plot_title="Category"):
+
+    unique_cats = np.unique(category)
+
+    # Compute shared global min/max for all categories
+    global_min = attribute_toplot.min()
+    global_max = attribute_toplot.max()
+
+    # Shared bins for ALL subplots → ensures comparability
+    bins = np.linspace(global_min, global_max, 80)
+
+    plt.figure(figsize=(12, 4 * len(unique_cats)))
+
+    for i, c in enumerate(unique_cats, 1):
+        plt.subplot(len(unique_cats), 1, i)
+
+        subset = attribute_toplot[category == c]
+        mean_value = subset.mean()
+
+        # Plot histogram using shared bins
+        plt.hist(subset, bins=bins, alpha=0.75, density=True)
+
+        # Mean line
+        plt.axvline(mean_value, color='red', linestyle='--', linewidth=1.5)
+
+        # Shared X-range for ALL subplots
+        plt.xlim(global_min, global_max)
+
+        # Label
+        name = label_dict.get(c, "Unknown") if label_dict else c
+
+        plt.title(f"{plot_title} {c} ({name})")
+        plt.xlabel(xlabel)
+        plt.ylabel("Density")
+        plt.legend([f"Mean = {mean_value:.2f}"])
+
+    plt.tight_layout()
+    plt.show()
+
+
+
+def plot_bc_three_views_custom(
+    G, res, box,
+    coords_attr,
+    # your requested views:
+    faces_A=("x_min", "z_max"),
+    faces_B=("x_max", "z_min"),
+    faces_C=("y_min", "y_max"),
+    # visuals
+    elev=18, azim=35,
+    face_alpha=0.08,
+    point_alpha=0.85,
+    point_size=10,
+    sample_max=None,
+    # robustness
+    clip_eps=1e-6,          # expand box slightly when clipping
+    verbose_clip=True,
+    show_face_legend=True,
+    show_vessel_legend=True
+):
+    """
+    3 cubes, each highlights TWO faces (no overlap of face annotations).
+    Also clips BC points to the box to avoid 'out of range' visuals.
+    """
+
+    # -------- basic checks --------
+    if coords_attr not in G.vs.attributes():
+        raise ValueError(f"coords_attr='{coords_attr}' not in G.vs.attributes(): {G.vs.attributes()}")
+
+    coords = np.asarray(G.vs[coords_attr], dtype=float)
+    if coords.ndim != 2 or coords.shape[1] != 3:
+        raise ValueError(f"G.vs['{coords_attr}'] must be Nx3; got shape {coords.shape}")
+
+    xmin, xmax = float(box["xmin"]), float(box["xmax"])
+    ymin, ymax = float(box["ymin"]), float(box["ymax"])
+    zmin, zmax = float(box["zmin"]), float(box["zmax"])
+
+    # -------- cube geometry --------
+    corners = np.array([
+        [xmin,ymin,zmin],[xmax,ymin,zmin],[xmax,ymax,zmin],[xmin,ymax,zmin],
+        [xmin,ymin,zmax],[xmax,ymin,zmax],[xmax,ymax,zmax],[xmin,ymax,zmax]
+    ])
+    cube_edges = [(0,1),(1,2),(2,3),(3,0),
+                  (4,5),(5,6),(6,7),(7,4),
+                  (0,4),(1,5),(2,6),(3,7)]
+
+    face_polys = {
+        "x_min": [(xmin,ymin,zmin),(xmin,ymax,zmin),(xmin,ymax,zmax),(xmin,ymin,zmax)],
+        "x_max": [(xmax,ymin,zmin),(xmax,ymax,zmin),(xmax,ymax,zmax),(xmax,ymin,zmax)],
+        "y_min": [(xmin,ymin,zmin),(xmax,ymin,zmin),(xmax,ymin,zmax),(xmin,ymin,zmax)],
+        "y_max": [(xmin,ymax,zmin),(xmax,ymax,zmin),(xmax,ymax,zmax),(xmin,ymax,zmax)],
+        "z_min": [(xmin,ymin,zmin),(xmax,ymin,zmin),(xmax,ymax,zmin),(xmin,ymax,zmin)],
+        "z_max": [(xmin,ymin,zmax),(xmax,ymin,zmax),(xmax,ymax,zmax),(xmin,ymax,zmax)],
+    }
+
+    # -------- stable colors --------
+    cycle = plt.rcParams['axes.prop_cycle'].by_key()['color']
+    vessel_colors = {
+        "arteriole": cycle[0],
+        "venule":    cycle[1],
+        "capillary": cycle[2],
+        "unknown":   cycle[3],
+    }
+    face_colors = {
+        "x_min": cycle[0], "x_max": cycle[0],
+        "y_min": cycle[1], "y_max": cycle[1],
+        "z_min": cycle[2], "z_max": cycle[2],
+    }
+
+    # expects bc_node_type_label(G, node_id) defined in your notebook
+    def node_label(v):
+        return bc_node_type_label(G, int(v))
+
+    def draw_cube(ax, faces_to_tint, title):
+        # wireframe
+        for a,b in cube_edges:
+            ax.plot([corners[a,0], corners[b,0]],
+                    [corners[a,1], corners[b,1]],
+                    [corners[a,2], corners[b,2]], linewidth=1.2)
+
+        # tinted faces
+        polys = [face_polys[f] for f in faces_to_tint]
+        cols  = [face_colors[f] for f in faces_to_tint]
+        pc = Poly3DCollection(polys, facecolors=cols, edgecolors="k",
+                              linewidths=0.8, alpha=face_alpha)
+        ax.add_collection3d(pc)
+
+        # fixed axes (NOT inverted)
+        ax.set_xlim(xmin, xmax)
+        ax.set_ylim(ymin, ymax)
+        ax.set_zlim(zmin, zmax)
+        ax.set_xlabel("X")
+        ax.set_ylabel("Y")
+        ax.set_zlabel("Z")
+        ax.set_box_aspect((xmax-xmin, ymax-ymin, zmax-zmin))
+        ax.view_init(elev=elev, azim=azim)
+        ax.set_title(title)
+
+    def scatter_bc_nodes(ax, faces_subset):
+        # gather nodes from these faces
+        nodes = []
+        for f in faces_subset:
+            nodes.extend(list(res[f]["nodes"]))
+        nodes = np.array(nodes, dtype=int)
+
+        if len(nodes) == 0:
+            return
+
+        # optional sampling (before clipping is ok)
+        if sample_max is not None and len(nodes) > sample_max:
+            nodes = np.random.choice(nodes, size=sample_max, replace=False)
+
+        pts = coords[nodes]
+
+        # ---- CLIP to box to avoid "out of range" dots ----
+        clip_mask = (
+            (pts[:,0] >= xmin - clip_eps) & (pts[:,0] <= xmax + clip_eps) &
+            (pts[:,1] >= ymin - clip_eps) & (pts[:,1] <= ymax + clip_eps) &
+            (pts[:,2] >= zmin - clip_eps) & (pts[:,2] <= zmax + clip_eps)
+        )
+        if verbose_clip:
+            dropped = int(np.sum(~clip_mask))
+            if dropped > 0:
+                print(f"[plot clip] Dropped {dropped}/{len(nodes)} BC points outside box "
+                      f"(coords_attr='{coords_attr}'). "
+                      f"Check that analyze_bc_for_box used SAME coords_attr/box units.")
+
+        nodes = nodes[clip_mask]
+        pts   = pts[clip_mask]
+
+        if len(nodes) == 0:
+            return
+
+        labels = np.array([node_label(v) for v in nodes], dtype=object)
+
+        for lab in ["arteriole","venule","capillary","unknown"]:
+            m = labels == lab
+            if np.any(m):
+                ax.scatter(pts[m,0], pts[m,1], pts[m,2],
+                           s=point_size, alpha=point_alpha,
+                           color=vessel_colors[lab])
+
+    # -------- figure --------
+    fig = plt.figure(figsize=(18, 6))
+
+    ax1 = fig.add_subplot(1, 3, 1, projection="3d")
+    draw_cube(ax1, faces_A, f"View A: {faces_A[0]} + {faces_A[1]}")
+    scatter_bc_nodes(ax1, faces_A)
+
+    ax2 = fig.add_subplot(1, 3, 2, projection="3d")
+    draw_cube(ax2, faces_B, f"View B: {faces_B[0]} + {faces_B[1]}")
+    scatter_bc_nodes(ax2, faces_B)
+
+    ax3 = fig.add_subplot(1, 3, 3, projection="3d")
+    draw_cube(ax3, faces_C, f"View C: {faces_C[0]} + {faces_C[1]}")
+    scatter_bc_nodes(ax3, faces_C)
+
+    # vessel legend
+    if show_vessel_legend:
+        vessel_handles = [
+            Line2D([0],[0], marker='o', linestyle='', markersize=7,
+                   markerfacecolor=vessel_colors[k], markeredgecolor='none', label=k)
+            for k in ["arteriole","venule","capillary","unknown"]
+        ]
+        ax3.legend(handles=vessel_handles, title="Vessel type", loc="upper left")
+
+    # face legend
+    if show_face_legend:
+        used_faces = list(dict.fromkeys(list(faces_A) + list(faces_B) + list(faces_C)))
+        face_handles = [Patch(facecolor=face_colors[f], edgecolor="k", alpha=face_alpha, label=f)
+                        for f in used_faces]
+        ax1.legend(handles=face_handles, title="Highlighted faces", loc="upper left")
+
+    plt.tight_layout()
+    plt.show()
+
+# Unfolded cube 
+
+def plot_bc_cube_net(
+    res,
+    title="BC composition per face (cube net)",
+    face_alpha=0.35,
+    fontsize=10,
+    pct_decimals=1,
+    show_unknown=False
+):
+    """
+    Pretty cube-net like the screenshot.
+    Expects res from analyze_bc_for_box():
+      res[face]["count"]
+      res[face]["type_percent"]  # dict label->percent, where labels are:
+                                # "arteriole","venule","capillary","unknown"
+    """
+
+    # ---- layout (same as your image) ----
+    #           z_max
+    # x_min     y_max     x_max     y_min
+    #           z_min
+    layout = {
+        "z_max": (1, 2),
+        "x_min": (0, 1),
+        "y_max": (1, 1),
+        "x_max": (2, 1),
+        "y_min": (3, 1),
+        "z_min": (1, 0),
+    }
+
+    # ---- pastel face colors (close to screenshot) ----
+    face_colors = {
+        "z_max": "#9ECAE1",  # light blue
+        "y_max": "#A1D99B",  # light green
+        "x_min": "#FDD0A2",  # light orange
+        "x_max": "#FCBBA1",  # light red/pink
+        "y_min": "#C7C1E3",  # light purple
+        "z_min": "#D9D9D9",  # light gray
+    }
+
+    # vessel order for printing
+    vessel_order = ["arteriole", "venule", "capillary"]
+    if show_unknown:
+        vessel_order.append("unknown")
+
+    def face_text(face):
+        if face not in res:
+            return f"{face}\n(no data)"
+
+        n = int(res[face].get("count", 0))
+        tp = res[face].get("type_percent", {}) or {}
+
+        lines = [f"{face}  (n={n})"]
+        for k in vessel_order:
+            if k in tp:
+                val = float(tp[k])
+                # mimic screenshot: omit ~0% lines
+                if val < 1e-9:
+                    continue
+                lines.append(f"{k}: {val:.{pct_decimals}f}%")
+
+        # If no types printed (e.g. empty)
+        if len(lines) == 1:
+            lines.append("(no types)")
+
+        return "\n".join(lines)
+
+    # ---- draw ----
+    fig, ax = plt.subplots(figsize=(10.5, 4.8))
+    ax.set_aspect("equal")
+    ax.axis("off")
+    ax.set_title(title, fontsize=fontsize+2, pad=12)
+
+    # draw squares + text
+    for face, (gx, gy) in layout.items():
+        rect = Rectangle(
+            (gx, gy), 1, 1,
+            facecolor=face_colors.get(face, "#EEEEEE"),
+            edgecolor="black",
+            linewidth=1.2,
+            alpha=face_alpha
+        )
+        ax.add_patch(rect)
+
+        ax.text(
+            gx + 0.5, gy + 0.5,
+            face_text(face),
+            ha="center", va="center",
+            fontsize=fontsize
+        )
+
+    # limits to fit net nicely
+    ax.set_xlim(-0.2, 4.2)
+    ax.set_ylim(-0.2, 3.2)
+
+    plt.tight_layout()
+    plt.show()
+# ====================================================================================================================
 #                                                     SAVE GRAPH FUNCTION
 # ====================================================================================================================
 
@@ -632,30 +902,3 @@ def dump_graph(graph, out_path):
         pickle.dump(graph, f)
     print(f"\nGraph successfully saved to: {out_path}")
 
-
-
-# ============================================================
-# Minimal "how to run"
-# ============================================================
-if __name__ == "__main__":
-    # ---- EDIT THESE (cut file if BC node recognition) ---- 
-    pkl_path = r"C:\Users\Ana\OneDrive\Escritorio\ARTORG\half brain files (pkl-vtp)\18_igraph.pkl"
-
-    # Your cut box limits (same units as coords_attr)
-    box = dict(
-        xmin=0, xmax=1000,
-        ymin=0, ymax=1000,
-        zmin=0, zmax=1000
-    )
-
-    # Choose coordinates:
-    # - "coordinates_atlas" (usually µm)
-    # - "coordinates" (if your vertices store image/voxel coords)
-    coords_attr = "coords"
-
-    # Tolerance. If µm and floats from interpolation, try 1e-2 or 1e-1.
-    eps = 1e-2
-
-    # ---- RUN ----
-    G = load_graph(pkl_path)
-    _ = analyze_bc_for_box(G, box, coords_attr=coords_attr, eps=eps)
