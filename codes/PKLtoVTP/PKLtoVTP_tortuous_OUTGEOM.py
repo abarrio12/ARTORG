@@ -6,8 +6,8 @@ import numpy as np
 # Load pkl
 # ============================
 
-in_path = "/home/admin/Ana/MicroBrain/output/graph_18_OutGeom_CUT.pkl"
-out_vtp = "/home/admin/Ana/MicroBrain/output/graph_18_OutGeom_CUT_TORTUOUS.vtp"
+in_path = "/home/admin/Ana/MicroBrain/output/graph_18_OutGeom.pkl"
+out_vtp = "/home/admin/Ana/MicroBrain/output/graph_18_OutGeom.vtp"
 
 data = pickle.load(open(in_path, "rb"))
 G = data["graph"]
