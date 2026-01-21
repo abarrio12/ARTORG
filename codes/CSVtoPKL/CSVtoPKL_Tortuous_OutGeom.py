@@ -14,7 +14,7 @@ import os
 # Parameters
 # ============================
 
-graph_number = 18
+#graph_number = 18
 folder = "/home/admin/Ana/MicroBrain/CSV/"
 out_path = "/home/admin/Ana/MicroBrain/output/graph_18_OutGeom.pkl"
 MIN_STRAIGHT_DIST = 1.0  # µm
@@ -61,7 +61,6 @@ G.vs["coords"] = list(zip(
     coordinates_df[1].astype(np.float32),
     coordinates_df[2].astype(np.float32),
 ))
-<<<<<<< HEAD
 
 G.vs["coords_image"] = list(zip(
     coordinates_images_df[0].astype(np.float32),
@@ -69,10 +68,7 @@ G.vs["coords_image"] = list(zip(
     coordinates_images_df[2].astype(np.float32),
 ))
 
-G.vs["annotation"] = annotation_vertex_df[0].astype(np.int32).tolist()
-=======
-G.vs["vertex_annotation"] = annotation_vertex_df[0].astype(int).tolist()
->>>>>>> 480ff5f (gt with edge annotation)
+G.vs["vertex_annotation"] = annotation_vertex_df[0].astype(np.int32).tolist()
 G.vs["distance_to_surface"] = distance_to_surface_df[0].astype(np.float32).tolist()
 G.vs["radii"] = radii_vertex_df[0].astype(np.float32).tolist()
 
@@ -174,11 +170,7 @@ edge_annotation = edge_geometry_annotation_df[0].to_numpy(dtype=np.int32) # geom
 data = {
     "graph": G,
     "coords": {"x": x, "y": y, "z": z},
-<<<<<<< HEAD
     "annotation": ann_geom,  # <-- point-wise annotation for the geometry arrays
-=======
-    "edge_annotation": edge_annotation
->>>>>>> 480ff5f (gt with edge annotation)
 }
 
 os.makedirs(os.path.dirname(out_path), exist_ok=True)
