@@ -1,33 +1,50 @@
-# ===== Python =====
-__pycache__/
-*.pyc
-
-# ===== Data / outputs =====
-CSV/
-*.gt
-*.vtp
-
-# ===== Ignore all PKL by default =====
-*.pkl
-
-# ===== ParaView / VTK =====
-*.vtk
-*.vtu
-
-
-# ===== Temp / misc =====
-*.log
-
-# ===== Images / documents =====
-*.png
-*.jpg
-*.pdf
-*.jpeg
-*.mp4
-
 # Installers
 *.sh
 
+# Data
+*.csv
+*.pkl
+*.pickle
+*.log
+
+# VTK / VTU / etc
+*.vtp
+*.vtk
+*.vtu
+*.gt
+
+# Media
+*.pdf
+*.mp4
+*.mov
+*.avi
+*.mkv
+
+# Image
+*.png
+*.jpg
+*.jpeg
+*.webp
+*.gif
+*.tiff
+*.bmp
+*.svg
+
+# Files
+*.zip
+*.tar
+*.gz
+*.7z
+*.rar
+
+# PYthon 
+__pycache__/
+*.pyc
+.DS_Store
+.vscode/
+.idea/
 
 
-
+.venv/
+venv/
+env/

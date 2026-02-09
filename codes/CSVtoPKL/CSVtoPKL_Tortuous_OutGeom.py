@@ -43,7 +43,7 @@ geom_index_df = pd.read_csv(folder + "edge_geometry_indices.csv", header=None)
 edge_geometry_df = pd.read_csv(folder + "edge_geometry_coordinates.csv", header=None)
 edge_geometry_annotation_df = pd.read_csv(folder + "edge_geometry_annotation.csv", header=None)
 
-edge_geometry_annotation_df = pd.read_csv(folder + "edge_geometry_annotation.csv", header=None)
+edge_geometry_radii_df = pd.read_csv(folder + "edge_geometry_radii.csv", header=None)
 
 print("CSVs loaded")
 
@@ -125,6 +125,13 @@ if len(ann_geom) != len(x):
         "Check your CSV exports."
     )
 
+
+r_geom = edge_geometry_radii_df[0].to_numpy(dtype=np.float32)
+
+if len(r_geom) != len(x):
+    raise ValueError(f"edge_geometry_radii length ({len(r_geom)}) != coords length ({len(x)})")
+
+
 # ============================
 # Tortuosity (ROBUST)
 # ============================
@@ -170,7 +177,8 @@ edge_annotation = edge_geometry_annotation_df[0].to_numpy(dtype=np.int32) # geom
 data = {
     "graph": G,
     "coords": {"x": x, "y": y, "z": z},
-    "annotation": ann_geom,  # <-- point-wise annotation for the geometry arrays
+    #"annotation": ann_geom,  # <-- point-wise annotation for the geometry arrays
+    "radii_geom": r_geom  
 }
 
 os.makedirs(os.path.dirname(out_path), exist_ok=True)

@@ -15,8 +15,8 @@ graph_number = 18
 
 
 # Load CSV files
-folder = "/Volumes/home/RenierDatasets/HalfBrain/082025-datasets/graph_" + str(graph_number) + "/CSV/"
-
+#folder = "/Volumes/home/RenierDatasets/HalfBrain/082025-datasets/graph_" + str(graph_number) + "/CSV/"
+folder = "/home/admin/Ana/MicroBrain/CSV/"
 vertices_df = pd.read_csv(folder + "vertices.csv", header=None)  # Nodes
 coordinates_df = pd.read_csv(folder + "coordinates_atlas.csv", header=None)  # Coordinates nodes atlas verison
 coordinates_images_df = pd.read_csv(folder + "coordinates.csv", header=None)  # Coordinates nodes from Image
@@ -110,8 +110,9 @@ check_column_types(length_df[0], "length_df")
 check_column_types(radii_df[0], "radii_df")
 check_column_types(vertices_df[0], "vertices_df")
 
-
+#out_path = "/Volumes/home/RenierDatasets/HalfBrain/082025-datasets/graph_" + str(graph_number) + "/add_coord_" + str(graph_number) +"_igraph.pkl"
+out_path = "/home/admin/Ana/MicroBrain/output" + str(graph_number) + "igraph.pkl"
 # save it in pickle to read with igraph
-with open("/Volumes/home/RenierDatasets/HalfBrain/082025-datasets/graph_" + str(graph_number) + "/add_coord_" + str(graph_number) +"_igraph.pkl", "wb") as f:
+with open(out_path, "wb") as f:
     pickle.dump(G, f)
 print('Graph saved in pickle format.')
