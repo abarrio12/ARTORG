@@ -1182,117 +1182,80 @@ def vessel_density_slabs_in_box(ms, box, slab=50.0, axis="z",
     return df
 
 
-def edge_radius_consistency_report(
+def edge_radius_consistency_report_MAX(
     data,
-    sample=200_000,          # set None to use all edges (can be heavy)
+    sample=10000,             # Reducido un poco para que el loop de búsqueda sea rápido
     seed=0,
-    bins=120,
-    tol_abs_list=(0.0, 1e-3, 1e-2, 5e-2, 1e-1),  # in same units as radii (likely voxels or µm)
-    tol_rel_list=(0.0, 1e-3, 1e-2, 5e-2, 1e-1),  # relative tolerance
-    use_abs_delta=True,      # plot |Δr| if True else Δr
+    bins=100,
+    tol_abs_list=(0.0, 1e-3, 1e-2, 5e-2, 1e-1),
+    use_abs_delta=True
 ):
     """
-    Compares global edge radius (CSV) vs endpoint-average reference:
-        r_ref = (r_geom[start] + r_geom[end-1]) / 2
-
-    Produces:
-      - summary stats
-      - % mismatches for abs and rel tolerances
-      - histogram of (Δr or |Δr|)
-      - optional check of discretization (unique step sizes)
+    Compara el radio del eje (r_edge) contra el MÁXIMO de su geometría:
+        r_ref = max(geom['radii'][start : end])
     """
 
     G = data["graph"]
     rg = np.asarray(data["geom"]["radii"], dtype=np.float32)
 
-    # Get edge radii (global)
+    # 1. Obtener radios de los ejes
     if "radius" in G.es.attributes():
         r_edge = np.asarray(G.es["radius"], dtype=np.float32)
     else:
-        raise ValueError("No edge radius found: expected G.es['radius'] (from radii_edge.csv).")
+        raise ValueError("No se encontró G.es['radius'].")
 
     gs = np.asarray(G.es["geom_start"], dtype=np.int64)
     ge = np.asarray(G.es["geom_end"], dtype=np.int64)
 
     nE = G.ecount()
+    # Muestreo
     if sample is None or sample >= nE:
         idx = np.arange(nE, dtype=np.int64)
     else:
         rng = np.random.default_rng(seed)
         idx = rng.choice(nE, size=int(sample), replace=False)
 
-    gs_i = gs[idx]
-    ge_i = ge[idx]
-    # endpoint radii per edge
-    r_start = rg[gs_i]
-    r_end   = rg[ge_i - 1]
-    r_ref = 0.5 * (r_start + r_end)
+    # 2. CÁLCULO DE LA REFERENCIA POR MÁXIMO (Aquí está el cambio clave)
+    r_ref = np.zeros(len(idx), dtype=np.float32)
+    
+    print(f"Calculando el máximo de geometría para {len(idx)} ejes...")
+    for i, edge_idx in enumerate(idx):
+        start = gs[edge_idx]
+        end = ge[edge_idx]
+        if end > start:
+            # Buscamos el máximo en el segmento real de la geometría
+            r_ref[i] = np.max(rg[start:end])
+        else:
+            r_ref[i] = rg[start] # Caso de un solo punto
 
     r_edge_i = r_edge[idx]
 
-    # Differences
+    # 3. Diferencias
     delta = (r_edge_i - r_ref).astype(np.float64)
     delta_abs = np.abs(delta)
-    with np.errstate(divide="ignore", invalid="ignore"):
-        delta_rel = delta_abs / np.abs(r_ref)
 
-    # Basic stats
-    finite = np.isfinite(delta_abs) & np.isfinite(r_ref) & np.isfinite(r_edge_i)
-    delta = delta[finite]
-    delta_abs = delta_abs[finite]
-    delta_rel = delta_rel[finite]
-    r_ref_f = r_ref[finite]
+    # Estadísticas básicas
+    print(f"\n--- REPORTE DE CONSISTENCIA (POLÍTICA: MÁXIMO) ---")
+    print(f"Δr stats: mean={np.mean(delta):.6g} | std={np.std(delta):.6g}")
+    print(f"|Δr| <= 0.0 (Coincidencia exacta): {100.0 * np.mean(delta_abs <= 1e-7):.2f}%")
 
-    def rmse(x): return float(np.sqrt(np.mean(x * x))) if len(x) else np.nan
-    def mae(x):  return float(np.mean(np.abs(x))) if len(x) else np.nan
-
-    print(f"Edges total: {nE:,} | tested: {len(delta_abs):,} (sample={sample})")
-    print("Reference: r_ref = (r_start + r_end)/2 using geom['radii'] endpoints")
-    print(f"Δr stats: mean={float(np.mean(delta)):.6g}  std={float(np.std(delta)):.6g}")
-    print(f"|Δr| stats: mean={float(np.mean(delta_abs)):.6g}  max={float(np.max(delta_abs)):.6g}")
-    print(f"RMSE(Δr)={rmse(delta):.6g}  MAE(|Δr|)={mae(delta):.6g}")
-
-    # Percentages absolute tolerance
-    print("\n% within ABS tolerance:")
+    # Porcentajes de error
+    print("\n% dentro de tolerancia ABSOLUTA:")
     for t in tol_abs_list:
-        pct = 100.0 * float(np.mean(delta_abs <= t))
+        pct = 100.0 * np.mean(delta_abs <= t)
         print(f"  |Δr| <= {t:g}: {pct:.2f}%")
 
-    # Percentages relative tolerance (ignore r_ref==0)
-    good_rel_mask = np.isfinite(delta_rel) & (np.abs(r_ref_f) > 0)
-    print("\n% within REL tolerance (|Δr|/|r_ref|):")
-    for t in tol_rel_list:
-        pct = 100.0 * float(np.mean(delta_rel[good_rel_mask] <= t)) if np.any(good_rel_mask) else np.nan
-        print(f"  rel <= {t:g}: {pct:.2f}%")
-
-    # Histogram
-    plot_vals = delta_abs if use_abs_delta else delta
-    title = "|Δr| = |r_edge - (r_start+r_end)/2|" if use_abs_delta else "Δr = r_edge - (r_start+r_end)/2"
-
-    plt.figure()
-    plt.hist(plot_vals, bins=bins)
-    plt.xlabel(title)
-    plt.ylabel("Count")
-    plt.title("Edge radius consistency distribution")
+    # Histograma
+    plt.figure(figsize=(10,6))
+    plt.hist(delta, bins=bins, color='skyblue', edgecolor='black')
+    plt.axvline(0, color='red', linestyle='dashed', linewidth=1)
+    plt.xlabel("Error (Radio_Eje - Max_Geometría)")
+    plt.ylabel("Número de ejes")
+    plt.title("Distribución del error respecto al MÁXIMO")
     plt.show()
 
-    # Optional: check if Δr looks quantized (rounding/steps)
-    # (Downsample unique values for speed)
-    if len(delta) > 0:
-        q = np.round(delta, 6)  # adjust decimals if needed
-        uniq = np.unique(q)
-        print(f"\nUnique rounded Δr values (rounded to 1e-6): {len(uniq)}")
-        if len(uniq) < 60:
-            print("Values:", uniq[:60])
-        else:
-            print("First 20 values:", uniq[:20])
+    return delta
 
-    return {
-        "n_tested": int(len(delta_abs)),
-        "delta": delta,               # signed
-        "delta_abs": delta_abs,       # absolute
-        "delta_rel": delta_rel,       # relative
-    }
 
 
 

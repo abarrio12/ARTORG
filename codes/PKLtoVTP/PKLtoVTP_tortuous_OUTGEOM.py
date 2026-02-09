@@ -8,10 +8,11 @@ length = la longitud “del edge” que te venía del CSV / atributo del grafo. 
 (chord) o una longitud “resumida” precomputada (depende de cómo exportaste length.csv).
 '''
 
-in_path = "/home/admin/Ana/MicroBrain/output/graph_18_OutGeom.pkl"
-out_vtp = "/home/admin/Ana/MicroBrain/output/graph_18_OutGeom.vtp"
+in_path = "/home/admin/Ana/MicroBrain/output/cut_non_equiv.pkl"
+out_vtp = "/home/admin/Ana/MicroBrain/output/cut_non_equiv.vtp"
 
 data = pickle.load(open(in_path, "rb"))
+
 G = data["graph"]
 geom = data["geom"]
 

@@ -72,9 +72,8 @@ def cut_graph_to_bounding_box(G, xCoordsBox, yCoordsBox, zCoordsBox, output_pick
 
 
 
-with open("/home/admin/Ana/MicroBrain/output/graph_18_OutGeom.pkl", "rb") as f:
-    data = pickle.load(f, encoding='latin1')
-    G = data["graph"]
+with open("/home/admin/Ana/MicroBrain/18_igraph.pkl", "rb") as f:
+    G = pickle.load(f, encoding='latin1')
 
 # These measurements should be set according to the desired bounding box in paraview (box option)
 # In order to check which coordinates to use, select Hover Points (red dot with question mark) in paraview and click on points of interest (xmin, ymin, zmin)

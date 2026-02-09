@@ -1181,8 +1181,6 @@ def vessel_density_slabs_in_box(ms, box, slab=50.0, axis="z",
 
     return df
 
-import numpy as np
-import matplotlib.pyplot as plt
 
 def edge_radius_consistency_report_MAX(
     data,
@@ -1257,6 +1255,9 @@ def edge_radius_consistency_report_MAX(
     plt.show()
 
     return delta
+
+
+
 
 # ====================================================================================================================
 # RADII SANITY CHECKS (for microbloom / consistency)
