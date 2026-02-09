@@ -46,7 +46,7 @@ def segment_box_intersection(p0, p1, xBox, yBox, zBox):
 
     return None if best_p is None else best_p
 
-import numpy as np
+
 
 def restore_edges_gaia_like(cut, store_points=False):
     """
@@ -140,6 +140,7 @@ def analyze_cut_edges(data, xBox, yBox, zBox, res_um, long_factor=2.0):
 
     n_crossing = 0
     n_long_crossing = 0
+   
 
     for e in G.es:
         u, v = int(e.source), int(e.target)
@@ -365,10 +366,11 @@ def cut_outgeom_gaia_like(data, xBox, yBox, zBox, tol=1e-6, min_straight_dist=1.
     new_geom_start, new_geom_end = [], []
     new_edges = []
     new_edge_attr = {a: [] for a in e_attrs if a not in ["geom_start", "geom_end"]}
-
+    orig_eid = []
     # --------------------------
     # iterate edges
     # --------------------------
+
     for e in G.es:
         u = int(e.source)
         v = int(e.target)
@@ -420,6 +422,7 @@ def cut_outgeom_gaia_like(data, xBox, yBox, zBox, tol=1e-6, min_straight_dist=1.
             start_idx, end_idx = append_geom_block(P_keep, A_keep, R_keep)
 
             new_edges.append((uu, vv))
+            orig_eid.append(int(e.index))
             new_geom_start.append(start_idx)
             new_geom_end.append(end_idx)
             for a in new_edge_attr.keys():
@@ -465,6 +468,7 @@ def cut_outgeom_gaia_like(data, xBox, yBox, zBox, tol=1e-6, min_straight_dist=1.
             start_idx, end_idx = append_geom_block(P_keep, A_keep, R_keep)
 
             new_edges.append((uu, ww))
+            orig_eid.append(int(e.index))
             new_geom_start.append(start_idx)
             new_geom_end.append(end_idx)
             for a in new_edge_attr.keys():
@@ -500,6 +504,7 @@ def cut_outgeom_gaia_like(data, xBox, yBox, zBox, tol=1e-6, min_straight_dist=1.
             start_idx, end_idx = append_geom_block(P_keep, A_keep, R_keep)
 
             new_edges.append((ww, vv))
+            orig_eid.append(int(e.index))
             new_geom_start.append(start_idx)
             new_geom_end.append(end_idx)
             for a in new_edge_attr.keys():
@@ -531,6 +536,8 @@ def cut_outgeom_gaia_like(data, xBox, yBox, zBox, tol=1e-6, min_straight_dist=1.
     H.add_edges(new_edges)
     H.es["geom_start"] = list(map(int, new_geom_start))
     H.es["geom_end"] = list(map(int, new_geom_end))
+    H.es["orig_eid"] = orig_eid
+
     for a, vals in new_edge_attr.items():
         H.es[a] = vals
 
@@ -618,8 +625,8 @@ def cut_outgeom_gaia_like(data, xBox, yBox, zBox, tol=1e-6, min_straight_dist=1.
 # Example usage
 # --------------------------
 if __name__ == "__main__":
-    in_path = "/home/admin/Ana/MicroBrain/output/graph_18_OutGeom.pkl"
-    out_path = "/home/admin/Ana/MicroBrain/output/graph_18_OutGeom_Hcut3_new.pkl"
+    in_path = "/home/admin/Ana/MicroBrain/18_igraph_OutGeom.pkl"
+    out_path = "/home/admin/Ana/MicroBrain/output/18_igraph_Hcut3.pkl"
 
     data = pickle.load(open(in_path, "rb"))
 

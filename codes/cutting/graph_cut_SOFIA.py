@@ -72,18 +72,31 @@ def cut_graph_to_bounding_box(G, xCoordsBox, yCoordsBox, zCoordsBox, output_pick
 
 
 
-with open("C:/Users/Ana/OneDrive/Escritorio/ARTORG/igraph/half brain scripts/18_igraph.pkl", "rb") as f:
-    G = pickle.load(f, encoding='latin1')
+with open("/home/admin/Ana/MicroBrain/output/graph_18_OutGeom.pkl", "rb") as f:
+    data = pickle.load(f, encoding='latin1')
+    G = data["graph"]
 
 # These measurements should be set according to the desired bounding box in paraview (box option)
 # In order to check which coordinates to use, select Hover Points (red dot with question mark) in paraview and click on points of interest (xmin, ymin, zmin)
 # & (xmax, ymax, zmax) to see their coordinates.
-xCoordsBox = [50, 150]
-yCoordsBox = [70,170]
-zCoordsBox = [110, 210]
+
+    # Image resolution (µm / voxel)
+res = np.array([1.625, 1.625, 2.5], dtype=float)
+
+    # Box center (voxels)
+center = np.array([2100, 4200, 750], dtype=float)
+
+    # Box physical size (µm)
+box_um = np.array([400, 400, 400], dtype=float)
+
+box_vox = box_um / res
+xBox = [center[0] - box_vox[0]/2, center[0] + box_vox[0]/2]
+yBox = [center[1] - box_vox[1]/2, center[1] + box_vox[1]/2]
+zBox = [center[2] - box_vox[2]/2, center[2] + box_vox[2]/2]
 
 
-G_cut = cut_graph_to_bounding_box(G, xCoordsBox, yCoordsBox, zCoordsBox, output_pickle="C:/Users/Ana/OneDrive/Escritorio/ARTORG/igraph/half brain scripts/18_igraph_CUT_SomatomotorArea.pkl")
+
+G_cut = cut_graph_to_bounding_box(G, xBox, yBox, zBox, output_pickle="/home/admin/Ana/MicroBrain/output/18_igraph_nHcut3.pkl")
 
 
 print(G_cut.summary())
