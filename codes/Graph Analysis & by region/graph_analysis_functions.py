@@ -27,11 +27,13 @@ import igraph as ig
 #                                                   GLOBAL CONSTANTS
 # ====================================================================================================================
 
-vessel_type = {
+EDGE_NKIND_TO_LABEL = {
     2: "arteriole",
     3: "venule",
     4: "capillary"
 }
+
+FACES = ("x_min","x_max","y_min","y_max","z_min","z_max") 
 
 
 # ====================================================================================================================
@@ -127,19 +129,26 @@ def make_box(
 
 
 # ====================================================================================================================
-#                                                   BASIC HELPERS
+#                                                   BASIC HELPERS 
 # ====================================================================================================================
-    
-def _get_coords_array(graph, coords_attr):
+
+def get_coords(graph, coords_attr):
+    """Return Nx3 float array from graph.vs[coords_attr]."""
     if coords_attr not in graph.vs.attributes():
-        raise ValueError(
-            f"Missing vertex attribute '{coords_attr}'. "
-            f"Available vertex attrs: {graph.vs.attributes()}"
-        )
+        raise ValueError(f"Missing vertex attribute '{coords_attr}'. "
+                         f"Available: {graph.vs.attributes()}")
     P = np.asarray(graph.vs[coords_attr], dtype=float)
     if P.ndim != 2 or P.shape[1] != 3:
-        raise ValueError(f"'{coords_attr}' must be Nx3. Got shape {P.shape}.")
+        raise ValueError(f"'{coords_attr}' must be Nx3. Got {P.shape}.")
     return P
+
+
+def validate_box(box):
+    """Raise if box misses required keys."""
+    req = ("xmin","xmax","ymin","ymax","zmin","zmax")
+    missing = [k for k in req if k not in box]
+    if missing:
+        raise ValueError(f"box missing keys: {missing}. Required: {list(req)}")
 
 
 def _nkind_label_and_color(nkind):
@@ -428,7 +437,7 @@ def bc_nodes_on_plane(graph, axis, value, box, coords_attr, eps=2.0):
       (1) on the plane within eps
       (2) inside the box in the other coordinates (with eps margin)
     """
-    C = _get_coords_array(graph, coords_attr)
+    C = get_coords(graph, coords_attr)
 
     xmin, xmax = float(box["xmin"]), float(box["xmax"])
     ymin, ymax = float(box["ymin"]), float(box["ymax"])
@@ -443,7 +452,7 @@ def bc_nodes_on_plane(graph, axis, value, box, coords_attr, eps=2.0):
     return np.where(inside & on_plane)[0]
 
 
-def bc_nodes_on_box_faces(graph, box, coords_attr, eps=2.0):
+def bc_nodes_on_box_faces(graph, box, coords_attr, eps=0.5):
     """Return dict face_name -> np.array(node_ids) for 6 faces."""
     required = ["xmin", "xmax", "ymin", "ymax", "zmin", "zmax"]
     missing = [k for k in required if k not in box]
@@ -460,7 +469,7 @@ def bc_nodes_on_box_faces(graph, box, coords_attr, eps=2.0):
     }
 
 
-def bc_node_nkind(graph, node_id):
+def bc_node_common_nkind(graph, node_id):
     """Return most common nkind among incident edges of node."""
     if "nkind" not in graph.es.attributes():
         raise ValueError("Missing edge attribute 'nkind'.")
@@ -472,8 +481,8 @@ def bc_node_nkind(graph, node_id):
     return Counter(nk).most_common(1)[0][0]
 
 
-def bc_node_type_label(graph, node_id, vessel_type_map=vessel_type):
-    nk = bc_node_nkind(graph, node_id)
+def infer_node_type_from_incident_edges(graph, node_id, vessel_type_map=EDGE_NKIND_TO_LABEL):
+    nk = bc_node_common_nkind(graph, node_id)
     if nk is None:
         return "unknown"
     return vessel_type_map.get(int(nk), f"nkind_{nk}")
@@ -481,12 +490,13 @@ def bc_node_type_label(graph, node_id, vessel_type_map=vessel_type):
 
 def analyze_bc_faces(graph, box, coords_attr, eps=2.0, degree_thr=4, verbose=True):
     """
-    BC ANALYSIS PER FACE ONLY (no TOTAL_unique, no per-box totals).
+    BC ANALYSIS PER FACE
     Returns dict: face -> metrics
     """
     faces = bc_nodes_on_box_faces(graph, box, coords_attr, eps=eps)
     degrees = np.asarray(graph.degree(), dtype=int)
     has_d2s = ("distance_to_surface" in graph.vs.attributes())
+    validate_box(box)
 
     results = {}
 
@@ -499,7 +509,7 @@ def analyze_bc_faces(graph, box, coords_attr, eps=2.0, degree_thr=4, verbose=Tru
         nodes = np.asarray(nodes, dtype=int)
         total = int(len(nodes))
 
-        labels = [bc_node_type_label(graph, int(v)) for v in nodes]
+        labels = [infer_node_type_from_incident_edges(graph, int(v)) for v in nodes]
         type_counts = Counter(labels)
 
         deg_counts = Counter(degrees[nodes]) if total else Counter()
@@ -536,16 +546,11 @@ def analyze_bc_faces(graph, box, coords_attr, eps=2.0, degree_thr=4, verbose=Tru
     return results
 
 
-# Backwards-compat alias if old notebook calls this:
-def analyze_bc_for_box(*args, **kwargs):
-    return analyze_bc_faces(*args, **kwargs)
-
-
 # ====================================================================================================================
 # PLOTTING: GENERAL
 # ====================================================================================================================
 
-def plot_category_stats(categ, attribute_toplot, label_dict=None,
+def plot_bar_by_category(categ, attribute_toplot, label_dict=None,
                         xlabel="Category", ylabel="Value",
                         title="Category statistics",
                         show_values=True, value_fmt="{:.2f}"):
@@ -574,7 +579,7 @@ def plot_category_stats(categ, attribute_toplot, label_dict=None,
     plt.show()
 
 
-def plot_histograms_by_category(attribute_toplot, category, label_dict=None,
+def plot_hist_by_category(attribute_toplot, category, label_dict=None,
                                 xlabel="Value", plot_title="Category"):
     unique_cats = np.unique(category)
     global_min = attribute_toplot.min()
@@ -605,8 +610,107 @@ def plot_histograms_by_category(attribute_toplot, category, label_dict=None,
 # ====================================================================================================================
 # PLOTTING: BC CUBES (faces-only)
 # ====================================================================================================================
+def cube_geometry_from_box(box):
+    xmin, xmax = float(box["xmin"]), float(box["xmax"])
+    ymin, ymax = float(box["ymin"]), float(box["ymax"])
+    zmin, zmax = float(box["zmin"]), float(box["zmax"])
 
-def plot_bc_three_views_custom(
+    corners = np.array([
+        [xmin, ymin, zmin], [xmax, ymin, zmin], [xmax, ymax, zmin], [xmin, ymax, zmin],
+        [xmin, ymin, zmax], [xmax, ymin, zmax], [xmax, ymax, zmax], [xmin, ymax, zmax]
+    ], dtype=float)
+
+    cube_edges = [(0, 1), (1, 2), (2, 3), (3, 0),
+                  (4, 5), (5, 6), (6, 7), (7, 4),
+                  (0, 4), (1, 5), (2, 6), (3, 7)]
+
+    face_polys = {
+        "x_min": [(xmin, ymin, zmin), (xmin, ymax, zmin), (xmin, ymax, zmax), (xmin, ymin, zmax)],
+        "x_max": [(xmax, ymin, zmin), (xmax, ymax, zmin), (xmax, ymax, zmax), (xmax, ymin, zmax)],
+        "y_min": [(xmin, ymin, zmin), (xmax, ymin, zmin), (xmax, ymin, zmax), (xmin, ymin, zmax)],
+        "y_max": [(xmin, ymax, zmin), (xmax, ymax, zmin), (xmax, ymax, zmax), (xmin, ymax, zmax)],
+        "z_min": [(xmin, ymin, zmin), (xmax, ymin, zmin), (xmax, ymax, zmin), (xmin, ymax, zmin)],
+        "z_max": [(xmin, ymin, zmax), (xmax, ymin, zmax), (xmax, ymax, zmax), (xmin, ymax, zmax)],
+    }
+
+    limits = (xmin, xmax, ymin, ymax, zmin, zmax)
+    return {"corners": corners, "edges": cube_edges, "face_polys": face_polys, "limits": limits}
+
+
+
+def draw_box_cube(ax, box_geom, faces_to_tint=(), face_colors=None, face_alpha=0.08,
+                  elev=18, azim=35, title=None, edge_lw=1.2):
+    corners = box_geom["corners"]
+    cube_edges = box_geom["edges"]
+    face_polys = box_geom["face_polys"]
+    xmin, xmax, ymin, ymax, zmin, zmax = box_geom["limits"]
+
+    # edges
+    for a, b in cube_edges:
+        ax.plot([corners[a, 0], corners[b, 0]],
+                [corners[a, 1], corners[b, 1]],
+                [corners[a, 2], corners[b, 2]],
+                linewidth=edge_lw)
+
+    # faces
+    if faces_to_tint:
+        polys = [face_polys[f] for f in faces_to_tint]
+        cols = [face_colors.get(f, "lightgray") for f in faces_to_tint] if face_colors else ["lightgray"]*len(polys)
+        pc = Poly3DCollection(polys, facecolors=cols, edgecolors="k", linewidths=0.8, alpha=face_alpha)
+        ax.add_collection3d(pc)
+
+    ax.set_xlim(xmin, xmax); ax.set_ylim(ymin, ymax); ax.set_zlim(zmin, zmax)
+    ax.set_xlabel("X"); ax.set_ylabel("Y"); ax.set_zlabel("Z")
+    ax.set_box_aspect((xmax - xmin, ymax - ymin, zmax - zmin))
+    ax.view_init(elev=elev, azim=azim)
+    if title:
+        ax.set_title(title)
+
+
+def scatter_nodes_by_label(ax, coords, node_ids, label_fn,
+                           label_to_color, point_size=10, alpha=0.85,
+                           sample_max=None, clip_box=None, clip_eps=2.0, verbose_clip=False):
+    node_ids = np.asarray(node_ids, dtype=int)
+    if node_ids.size == 0:
+        return {"dropped": 0, "kept": 0}
+
+    if sample_max is not None and node_ids.size > sample_max:
+        node_ids = np.random.choice(node_ids, size=int(sample_max), replace=False)
+
+    pts = coords[node_ids]
+
+    # optional clipping to box
+    if clip_box is not None:
+        xmin, xmax = float(clip_box["xmin"]), float(clip_box["xmax"])
+        ymin, ymax = float(clip_box["ymin"]), float(clip_box["ymax"])
+        zmin, zmax = float(clip_box["zmin"]), float(clip_box["zmax"])
+        m = (
+            (pts[:, 0] >= xmin - clip_eps) & (pts[:, 0] <= xmax + clip_eps) &
+            (pts[:, 1] >= ymin - clip_eps) & (pts[:, 1] <= ymax + clip_eps) &
+            (pts[:, 2] >= zmin - clip_eps) & (pts[:, 2] <= zmax + clip_eps)
+        )
+        dropped = int(np.sum(~m))
+        if verbose_clip and dropped:
+            print(f"[clip] Dropped {dropped}/{len(node_ids)} nodes outside box (eps={clip_eps}).")
+        node_ids = node_ids[m]
+        pts = pts[m]
+    else:
+        dropped = 0
+
+    if node_ids.size == 0:
+        return {"dropped": dropped, "kept": 0}
+
+    labels = np.array([label_fn(v) for v in node_ids], dtype=object)
+    for lab, col in label_to_color.items():
+        mm = labels == lab
+        if np.any(mm):
+            ax.scatter(pts[mm, 0], pts[mm, 1], pts[mm, 2], s=point_size, alpha=alpha, color=col)
+
+    return {"dropped": dropped, "kept": int(node_ids.size)}
+
+
+
+def plot_bc_3_cubes(
     G, res, box, coords_attr,
     faces_A=("x_min", "z_max"),
     faces_B=("x_max", "z_min"),
@@ -621,29 +725,8 @@ def plot_bc_three_views_custom(
     show_face_legend=True,
     show_vessel_legend=True
 ):
-    """3 cubes, each highlights TWO faces and shows BC nodes colored by vessel type."""
-    coords = _get_coords_array(G, coords_attr)
-
-    xmin, xmax = float(box["xmin"]), float(box["xmax"])
-    ymin, ymax = float(box["ymin"]), float(box["ymax"])
-    zmin, zmax = float(box["zmin"]), float(box["zmax"])
-
-    corners = np.array([
-        [xmin, ymin, zmin], [xmax, ymin, zmin], [xmax, ymax, zmin], [xmin, ymax, zmin],
-        [xmin, ymin, zmax], [xmax, ymin, zmax], [xmax, ymax, zmax], [xmin, ymax, zmax]
-    ])
-    cube_edges = [(0, 1), (1, 2), (2, 3), (3, 0),
-                  (4, 5), (5, 6), (6, 7), (7, 4),
-                  (0, 4), (1, 5), (2, 6), (3, 7)]
-
-    face_polys = {
-        "x_min": [(xmin, ymin, zmin), (xmin, ymax, zmin), (xmin, ymax, zmax), (xmin, ymin, zmax)],
-        "x_max": [(xmax, ymin, zmin), (xmax, ymax, zmin), (xmax, ymax, zmax), (xmax, ymin, zmax)],
-        "y_min": [(xmin, ymin, zmin), (xmax, ymin, zmin), (xmax, ymin, zmax), (xmin, ymin, zmax)],
-        "y_max": [(xmin, ymax, zmin), (xmax, ymax, zmin), (xmax, ymax, zmax), (xmin, ymax, zmax)],
-        "z_min": [(xmin, ymin, zmin), (xmax, ymin, zmin), (xmax, ymax, zmin), (xmin, ymax, zmin)],
-        "z_max": [(xmin, ymin, zmax), (xmax, ymin, zmax), (xmax, ymax, zmax), (xmin, ymax, zmax)],
-    }
+    coords = get_coords(G, coords_attr)  # <- usa tu función única
+    geom = cube_geometry_from_box(box)
 
     vessel_colors = {"arteriole": "red", "venule": "blue", "capillary": "gray", "unknown": "black"}
     cycle = plt.rcParams['axes.prop_cycle'].by_key()['color']
@@ -653,76 +736,39 @@ def plot_bc_three_views_custom(
         "z_min": cycle[2], "z_max": cycle[2],
     }
 
-    def node_label(v):
-        return bc_node_type_label(G, int(v))
+    def label_fn(v):  # reuse existing BC logic
+        return infer_node_type_from_incident_edges(G, int(v))
 
-    def draw_cube(ax, faces_to_tint, title):
-        for a, b in cube_edges:
-            ax.plot([corners[a, 0], corners[b, 0]],
-                    [corners[a, 1], corners[b, 1]],
-                    [corners[a, 2], corners[b, 2]], linewidth=1.2)
-
-        polys = [face_polys[f] for f in faces_to_tint]
-        cols = [face_colors[f] for f in faces_to_tint]
-        pc = Poly3DCollection(polys, facecolors=cols, edgecolors="k",
-                              linewidths=0.8, alpha=face_alpha)
-        ax.add_collection3d(pc)
-
-        ax.set_xlim(xmin, xmax); ax.set_ylim(ymin, ymax); ax.set_zlim(zmin, zmax)
-        ax.set_xlabel("X"); ax.set_ylabel("Y"); ax.set_zlabel("Z")
-        ax.set_box_aspect((xmax - xmin, ymax - ymin, zmax - zmin))
-        ax.view_init(elev=elev, azim=azim)
-        ax.set_title(title)
-
-    def scatter_bc_nodes(ax, faces_subset):
+    def nodes_for_faces(faces_subset):
         nodes = []
         for f in faces_subset:
             nodes.extend(list(res[f]["nodes"]))
-        nodes = np.asarray(nodes, dtype=int)
-        if len(nodes) == 0:
-            return
-
-        if sample_max is not None and len(nodes) > sample_max:
-            nodes = np.random.choice(nodes, size=sample_max, replace=False)
-
-        pts = coords[nodes]
-        clip_mask = (
-            (pts[:, 0] >= xmin - clip_eps) & (pts[:, 0] <= xmax + clip_eps) &
-            (pts[:, 1] >= ymin - clip_eps) & (pts[:, 1] <= ymax + clip_eps) &
-            (pts[:, 2] >= zmin - clip_eps) & (pts[:, 2] <= zmax + clip_eps)
-        )
-        if verbose_clip:
-            dropped = int(np.sum(~clip_mask))
-            if dropped > 0:
-                print(f"[plot clip] Dropped {dropped}/{len(nodes)} BC points outside box "
-                      f"(coords_attr='{coords_attr}'). Check coords_attr/units/eps.")
-
-        nodes = nodes[clip_mask]
-        pts = pts[clip_mask]
-        if len(nodes) == 0:
-            return
-
-        labels = np.array([node_label(v) for v in nodes], dtype=object)
-        for lab in ["arteriole", "venule", "capillary", "unknown"]:
-            m = labels == lab
-            if np.any(m):
-                ax.scatter(pts[m, 0], pts[m, 1], pts[m, 2],
-                           s=point_size, alpha=point_alpha, color=vessel_colors[lab])
+        return np.asarray(nodes, dtype=int)
 
     fig = plt.figure(figsize=(18, 6))
 
     ax1 = fig.add_subplot(1, 3, 1, projection="3d")
-    draw_cube(ax1, faces_A, f"View A: {faces_A[0]} + {faces_A[1]}")
-    scatter_bc_nodes(ax1, faces_A)
+    draw_box_cube(ax1, geom, faces_to_tint=faces_A, face_colors=face_colors, face_alpha=face_alpha,
+                  elev=elev, azim=azim, title=f"View A: {faces_A[0]} + {faces_A[1]}")
+    scatter_nodes_by_label(ax1, coords, nodes_for_faces(faces_A), label_fn, vessel_colors,
+                           point_size=point_size, alpha=point_alpha, sample_max=sample_max,
+                           clip_box=box, clip_eps=clip_eps, verbose_clip=verbose_clip)
 
     ax2 = fig.add_subplot(1, 3, 2, projection="3d")
-    draw_cube(ax2, faces_B, f"View B: {faces_B[0]} + {faces_B[1]}")
-    scatter_bc_nodes(ax2, faces_B)
+    draw_box_cube(ax2, geom, faces_to_tint=faces_B, face_colors=face_colors, face_alpha=face_alpha,
+                  elev=elev, azim=azim, title=f"View B: {faces_B[0]} + {faces_B[1]}")
+    scatter_nodes_by_label(ax2, coords, nodes_for_faces(faces_B), label_fn, vessel_colors,
+                           point_size=point_size, alpha=point_alpha, sample_max=sample_max,
+                           clip_box=box, clip_eps=clip_eps, verbose_clip=verbose_clip)
 
     ax3 = fig.add_subplot(1, 3, 3, projection="3d")
-    draw_cube(ax3, faces_C, f"View C: {faces_C[0]} + {faces_C[1]}")
-    scatter_bc_nodes(ax3, faces_C)
+    draw_box_cube(ax3, geom, faces_to_tint=faces_C, face_colors=face_colors, face_alpha=face_alpha,
+                  elev=elev, azim=azim, title=f"View C: {faces_C[0]} + {faces_C[1]}")
+    scatter_nodes_by_label(ax3, coords, nodes_for_faces(faces_C), label_fn, vessel_colors,
+                           point_size=point_size, alpha=point_alpha, sample_max=sample_max,
+                           clip_box=box, clip_eps=clip_eps, verbose_clip=verbose_clip)
 
+    # legends (igual que antes)
     if show_vessel_legend:
         vessel_handles = [
             Line2D([0], [0], marker='o', linestyle='', markersize=7,
@@ -739,6 +785,7 @@ def plot_bc_three_views_custom(
 
     plt.tight_layout()
     plt.show()
+    return fig
 
 
 def plot_bc_cube_net(
@@ -833,6 +880,8 @@ def plot_bc_cube_net(
     plt.show()
 
 
+
+
 # ====================================================================================================================
 # PLOTTING: SPATIAL NKIND / HDN / DIAMETER-BY-NKIND
 # ====================================================================================================================
@@ -842,9 +891,9 @@ def plot_nkinds_spatial(graph, coords_attr="coords", mode="edges", sample_edges=
     """
     Spatial plot with nkind color-coding.
     - mode="edges": color edges by graph.es['nkind'] (recommended)
-    - mode="nodes": color nodes by bc_node_nkind (slower)
+    - mode="nodes": color nodes by bc_node_common_nkind (slower)
     """
-    P = _get_coords_array(graph, coords_attr)
+    P = get_coords(graph, coords_attr)
 
     if ax is None:
         fig = plt.figure()
@@ -853,7 +902,7 @@ def plot_nkinds_spatial(graph, coords_attr="coords", mode="edges", sample_edges=
         fig = ax.figure
 
     if mode == "nodes":
-        labels = [bc_node_nkind(graph, v.index) for v in graph.vs]
+        labels = [bc_node_common_nkind(graph, v.index) for v in graph.vs]
         cols = [_nkind_label_and_color(k)[1] for k in labels]
         ax.scatter(P[:, 0], P[:, 1], P[:, 2], s=s, c=cols, alpha=alpha, depthshade=False)
 
@@ -897,7 +946,7 @@ def plot_high_degree_nodes(graph, coords_attr="coords", high_degree_threshold=4,
                            title=None, ax=None, s_all=3, s_hdn=30,
                            c_all="lightgray", c_hdn="black", alpha_all=0.35, alpha_hdn=0.95):
     """Shows where High Degree Nodes (HDN) are in 3D."""
-    P = _get_coords_array(graph, coords_attr)
+    P = get_coords(graph, coords_attr)
     deg = np.asarray(graph.degree(), dtype=int)
     hdn = np.where(deg >= int(high_degree_threshold))[0]
 
@@ -1073,7 +1122,7 @@ def microsegments_from_outgeom(data, require_attrs=("geom_start", "geom_end", "n
 def count_microsegments_by_nkind(ms, label_map=None, verbose=True):
     """Counts micro-segments per nkind."""
     if label_map is None:
-        label_map = vessel_type
+        label_map = EDGE_NKIND_TO_LABEL
 
     nk = ms["nkind"]
     out = {int(k): int(np.sum(nk == k)) for k in np.unique(nk)}
@@ -1185,6 +1234,9 @@ def vessel_density_slabs_in_box(ms, box, slab=50.0, axis="z",
 import numpy as np
 import matplotlib.pyplot as plt
 
+
+
+
 def edge_radius_consistency_report_MAX(
     data,
     sample=10000,             # Reducido un poco para que el loop de búsqueda sea rápido
@@ -1258,6 +1310,9 @@ def edge_radius_consistency_report_MAX(
     plt.show()
 
     return delta
+
+
+
 
 # ====================================================================================================================
 # RADII SANITY CHECKS (for microbloom / consistency)
@@ -1460,6 +1515,9 @@ def check_radii_endpoints_allow_swap(data, tol=1e-3, max_examples=15, use_coords
 
     return {"bad": bad, "swapped": swapped, "max_diff": max_diff, "examples": examples}
 
+
+
+
 def check_polyline_radii_variation(data, tol_rel=0.05, verbose=True):
     """
     For each edge polyline, checks relative variation of radii along points:
@@ -1603,59 +1661,6 @@ def classify_edge_endpoint_coords(data, tol=1e-6):
 
 
 
-def classify_edge_endpoint_coords(data, tol=1e-6):
-    G = data["graph"]
-    cv = np.asarray(data["vertex"]["coords_image"], float)
-
-    x = np.asarray(data["geom"]["x"], float)
-    y = np.asarray(data["geom"]["y"], float)
-    z = np.asarray(data["geom"]["z"], float)
-
-    counts = {"OK_DIRECT":0, "OK_SWAP":0, "BAD_BOTH":0, "BAD_AMBIG":0}
-    examples = {"OK_SWAP":[], "BAD_BOTH":[]}
-
-    for ei in range(G.ecount()):
-        e = G.es[ei]
-        u, v = int(e.source), int(e.target)
-        s, en = int(e["geom_start"]), int(e["geom_end"])
-        if en - s < 2:
-            continue
-
-        P0 = np.array([x[s], y[s], z[s]])
-        P1 = np.array([x[en-1], y[en-1], z[en-1]])
-
-        mu0 = np.allclose(P0, cv[u], atol=tol)
-        mv0 = np.allclose(P0, cv[v], atol=tol)
-        mu1 = np.allclose(P1, cv[u], atol=tol)
-        mv1 = np.allclose(P1, cv[v], atol=tol)
-
-        direct = mu0 and mv1
-        swap   = mv0 and mu1
-
-        if direct and not swap:
-            counts["OK_DIRECT"] += 1
-        elif swap and not direct:
-            counts["OK_SWAP"] += 1
-            if len(examples["OK_SWAP"]) < 10:
-                examples["OK_SWAP"].append((ei,u,v,s,en))
-        elif direct and swap:
-            counts["BAD_AMBIG"] += 1
-        else:
-            counts["BAD_BOTH"] += 1
-            if len(examples["BAD_BOTH"]) < 10:
-                # guarda distancias para debug
-                du0 = np.linalg.norm(P0-cv[u]); dv0=np.linalg.norm(P0-cv[v])
-                du1 = np.linalg.norm(P1-cv[u]); dv1=np.linalg.norm(P1-cv[v])
-                examples["BAD_BOTH"].append((ei,u,v,du0,dv0,du1,dv1,s,en))
-
-    print(counts)
-    print("Examples OK_SWAP (ei,u,v,s,en):", examples["OK_SWAP"])
-    print("Examples BAD_BOTH (ei,u,v,du0,dv0,du1,dv1,s,en):", examples["BAD_BOTH"])
-    return counts, examples
-
-
-# ============================================================================================================================================0
-
 # ====================================================================================================================
 # DEGREE CHECKS: distribution + by type + spatial mapping for any degree band
 # ====================================================================================================================
@@ -1674,7 +1679,7 @@ def degree_summary(graph, max_degree_to_print=None):
 
 def degree_summary_by_type(graph):
     deg = np.asarray(graph.degree(), dtype=int)
-    labels = np.array([bc_node_type_label(graph, v.index) for v in graph.vs], dtype=object)
+    labels = np.array([infer_node_type_from_incident_edges(graph, v.index) for v in graph.vs], dtype=object)
 
     out = {}
     print("\n=== Degree distribution by vessel-type (node label) ===")
@@ -1701,7 +1706,7 @@ def plot_degree_nodes_spatial(
     Shows in 3D the nodes whose degree is in [degree_min, degree_max].
     If by_type=True, colors selected nodes by type (arteriole red, venule blue, capillary gray).
     """
-    P = _get_coords_array(graph, coords_attr)
+    P = get_coords(graph, coords_attr)
     deg = np.asarray(graph.degree(), dtype=int)
 
     if degree_max is None:
@@ -1723,7 +1728,7 @@ def plot_degree_nodes_spatial(
     if not by_type:
         ax.scatter(P[sel, 0], P[sel, 1], P[sel, 2], s=s_sel, c="black", alpha=alpha_sel, depthshade=False)
     else:
-        labs = np.array([bc_node_type_label(graph, int(v)) for v in sel], dtype=object)
+        labs = np.array([infer_node_type_from_incident_edges(graph, int(v)) for v in sel], dtype=object)
         col = {"arteriole": "red", "venule": "blue", "capillary": "gray", "unknown": "black"}
         for lab in ["arteriole", "venule", "capillary", "unknown"]:
             m = labs == lab
@@ -1753,7 +1758,7 @@ def induced_subgraph_box(graph, box, coords_attr="coords_image", node_eps=0.0, e
     Returns:
       sub (igraph.Graph), sub_to_orig (np.array), orig_to_sub (dict)
     """
-    P = _get_coords_array(graph, coords_attr)
+    P = get_coords(graph, coords_attr)
 
     xmin, xmax = float(box["xmin"]), float(box["xmax"])
     ymin, ymax = float(box["ymin"]), float(box["ymax"])
@@ -1779,8 +1784,8 @@ def induced_subgraph_box(graph, box, coords_attr="coords_image", node_eps=0.0, e
     return sub, sub_to_orig, orig_to_sub
 
 
-def _nodes_by_label_in_subgraph(sub, vessel_type_map=vessel_type):
-    labels = [bc_node_type_label(sub, v.index, vessel_type_map=vessel_type_map) for v in sub.vs]
+def _nodes_by_label_in_subgraph(sub, vessel_type_map=EDGE_NKIND_TO_LABEL):
+    labels = [infer_node_type_from_incident_edges(sub, v.index, vessel_type_map=EDGE_NKIND_TO_LABEL) for v in sub.vs]
     out = {}
     for lab in ["arteriole", "venule", "capillary", "unknown"]:
         out[lab] = np.where(np.array(labels, dtype=object) == lab)[0]
@@ -1789,7 +1794,7 @@ def _nodes_by_label_in_subgraph(sub, vessel_type_map=vessel_type):
 
 def edge_disjoint_av_paths_in_box(
     graph, box, coords_attr="coords_image", node_eps=0.0,
-    vessel_type_map=vessel_type,
+    vessel_type_map=EDGE_NKIND_TO_LABEL,
     connect_cap=10**9,
 ):
     """
@@ -2019,7 +2024,7 @@ def check_endpoint_radii_vertex_vs_geom(data, tol=1e-3, verbose=True, max_print=
 
 def edge_disjoint_av_paths_in_box_with_used_edges(
     graph, box, coords_attr="coords_image", node_eps=0.0,
-    vessel_type_map=vessel_type,
+    vessel_type_map=EDGE_NKIND_TO_LABEL,
     connect_cap=10**9,
 ):
     """
@@ -2028,6 +2033,7 @@ def edge_disjoint_av_paths_in_box_with_used_edges(
 
     Note: this is ONE valid maximum-flow solution (not unique).
     """
+    validate_box(box)
     sub, sub_to_orig, _ = induced_subgraph_box(
         graph, box, coords_attr=coords_attr, node_eps=node_eps, edge_mode="both"
     )
@@ -2113,7 +2119,7 @@ def plot_redundancy_used_edges(graph, box, used_edges_orig, coords_attr="coords_
       - red: edges used by maxflow solution
     """
 
-    P = _get_coords_array(graph, coords_attr)
+    P = get_coords(graph, coords_attr)
 
     sub, sub_to_orig, _ = induced_subgraph_box(graph, box, coords_attr=coords_attr, node_eps=0.0, edge_mode="both")
     if sub is None or sub.ecount() == 0:
@@ -2169,6 +2175,7 @@ def analyze_hdn_pattern_adapted(data, xBox, yBox, zBox, degree_thr=4, face_eps=2
     - xBox, yBox, zBox: Listas [min, max]
     """
     G = data["graph"]
+    validate_box(box)
     
     # --- 1) Obtener coordenadas ---
     # Usamos coords_image del diccionario vertex
@@ -2195,7 +2202,7 @@ def analyze_hdn_pattern_adapted(data, xBox, yBox, zBox, degree_thr=4, face_eps=2
     def get_labels(indices):
         if "vertex_annotation" in data["vertex"]:
             # Asumimos que los labels están mapeados (ej: 1: arteriole, etc.)
-            # Si prefieres usar una función externa como bc_node_type_label, pásala aquí
+            # Si prefieres usar una función externa como infer_node_type_from_incident_edges, pásala aquí
             return np.asarray(data["vertex"]["vertex_annotation"])[indices]
         return np.array(["unknown"] * len(indices))
 
