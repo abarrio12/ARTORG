@@ -602,8 +602,8 @@ def cut_outgeom_gaia_like(data, xBox, yBox, zBox, tol=1e-6, min_straight_dist=1.
             "x": nx,
             "y": ny,
             "z": nz,
-            "lengths2": L2,       # per point (last of each edge = 0)
-            "lengths": Lp,        # per point (arclen)
+            "lengths2": L2,       # per point
+            "lengths": Lp,        
             "diameters": Dp,      # per point
         },
     }

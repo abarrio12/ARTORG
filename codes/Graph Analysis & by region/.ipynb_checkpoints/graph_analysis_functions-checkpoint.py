@@ -129,7 +129,23 @@ def make_box(
 # ====================================================================================================================
 #                                                   BASIC HELPERS
 # ====================================================================================================================
-
+def _get_coords_array(data, coords_attr):
+    """
+    Busca coordenadas primero en el diccionario 'vertex' 
+    y si no, intenta en el objeto graph.
+    """
+    G = data["graph"]
+    
+    # Intento 1: Buscar en el nuevo diccionario 'vertex'
+    if "vertex" in data and coords_attr in data["vertex"]:
+        return np.asarray(data["vertex"][coords_attr], dtype=float)
+    
+    # Intento 2: Buscar en los atributos de igraph (por si acaso)
+    if coords_attr in G.vs.attributes():
+        return np.asarray(G.vs[coords_attr], dtype=float)
+    
+    raise ValueError(f"No se encontró '{coords_attr}' ni en data['vertex'] ni en el grafo.")
+    
 def _get_coords_array(graph, coords_attr):
     if coords_attr not in graph.vs.attributes():
         raise ValueError(
@@ -1181,6 +1197,8 @@ def vessel_density_slabs_in_box(ms, box, slab=50.0, axis="z",
 
     return df
 
+import numpy as np
+import matplotlib.pyplot as plt
 
 def edge_radius_consistency_report_MAX(
     data,
@@ -1255,9 +1273,6 @@ def edge_radius_consistency_report_MAX(
     plt.show()
 
     return delta
-
-
-
 
 # ====================================================================================================================
 # RADII SANITY CHECKS (for microbloom / consistency)
@@ -2159,71 +2174,93 @@ def plot_redundancy_used_edges(graph, box, used_edges_orig, coords_attr="coords_
 # ====================================================================================================================
 #                                   HDN PATTERN: quantify face bias + type enrichment + d2s
 # ====================================================================================================================
+import numpy as np
 
-def analyze_hdn_pattern(graph, box, coords_attr="coords_image", degree_thr=4, face_eps=2.0, verbose=True):
+def analyze_hdn_pattern_adapted(data, xBox, yBox, zBox, degree_thr=4, face_eps=2.0, verbose=True):
     """
-    Quantify patterns for high-degree nodes (HDN):
-      - vessel-type enrichment among HDN vs all nodes in box
-      - bias to faces: fraction of HDN within face_eps of each face plane
-      - distance_to_surface stats (if present)
+    Versión adaptada a la estructura de diccionarios:
+    - data["graph"]: El objeto igraph
+    - data["vertex"]: Coordenadas y anotaciones de nodos
+    - xBox, yBox, zBox: Listas [min, max]
     """
-    P = _get_coords_array(graph, coords_attr)
-    deg = np.asarray(graph.degree(), int)
+    G = data["graph"]
+    
+    # --- 1) Obtener coordenadas ---
+    # Usamos coords_image del diccionario vertex
+    P = np.asarray(data["vertex"]["coords_image"], dtype=float)
+    deg = np.asarray(G.degree(), int)
 
-    xmin, xmax = float(box["xmin"]), float(box["xmax"])
-    ymin, ymax = float(box["ymin"]), float(box["ymax"])
-    zmin, zmax = float(box["zmin"]), float(box["zmax"])
+    xmin, xmax = float(xBox[0]), float(xBox[1])
+    ymin, ymax = float(yBox[0]), float(yBox[1])
+    zmin, zmax = float(zBox[0]), float(zBox[1])
 
+    # --- 2) Filtrar nodos dentro del Box ---
     inside = (
-        (P[:,0]>=xmin) & (P[:,0]<=xmax) &
-        (P[:,1]>=ymin) & (P[:,1]<=ymax) &
-        (P[:,2]>=zmin) & (P[:,2]<=zmax)
+        (P[:,0] >= xmin) & (P[:,0] <= xmax) &
+        (P[:,1] >= ymin) & (P[:,1] <= ymax) &
+        (P[:,2] >= zmin) & (P[:,2] <= zmax)
     )
-    nodes_in = np.where(inside)[0]
-    hdn = nodes_in[deg[nodes_in] >= int(degree_thr)]
+    nodes_in_indices = np.where(inside)[0]
+    
+    # High Degree Nodes (HDN)
+    hdn_indices = nodes_in_indices[deg[nodes_in_indices] >= int(degree_thr)]
 
-    labels_in  = np.array([bc_node_type_label(graph, int(v)) for v in nodes_in], dtype=object)
-    labels_hdn = np.array([bc_node_type_label(graph, int(v)) for v in hdn], dtype=object)
+    # --- 3) Manejo de Anotaciones (Node Types) ---
+    # Buscamos en vertex_annotation si existe
+    def get_labels(indices):
+        if "vertex_annotation" in data["vertex"]:
+            # Asumimos que los labels están mapeados (ej: 1: arteriole, etc.)
+            # Si prefieres usar una función externa como bc_node_type_label, pásala aquí
+            return np.asarray(data["vertex"]["vertex_annotation"])[indices]
+        return np.array(["unknown"] * len(indices))
 
-    def pct(labels, key):
-        if len(labels) == 0:
-            return 0.0
-        return float(100.0 * np.mean(labels == key))
+    labels_in = get_labels(nodes_in_indices)
+    labels_hdn = get_labels(hdn_indices)
 
+    def pct(labels, key_val):
+        if len(labels) == 0: return 0.0
+        return float(100.0 * np.mean(labels == key_val))
+
+    # --- 4) Sesgo de cara (Face Bias) ---
+    # ¿Están los HDN amontonados en las paredes del corte?
     face_bias = {
-        "x_min": float(np.mean(np.abs(P[hdn,0] - xmin) <= face_eps)) if len(hdn) else 0.0,
-        "x_max": float(np.mean(np.abs(P[hdn,0] - xmax) <= face_eps)) if len(hdn) else 0.0,
-        "y_min": float(np.mean(np.abs(P[hdn,1] - ymin) <= face_eps)) if len(hdn) else 0.0,
-        "y_max": float(np.mean(np.abs(P[hdn,1] - ymax) <= face_eps)) if len(hdn) else 0.0,
-        "z_min": float(np.mean(np.abs(P[hdn,2] - zmin) <= face_eps)) if len(hdn) else 0.0,
-        "z_max": float(np.mean(np.abs(P[hdn,2] - zmax) <= face_eps)) if len(hdn) else 0.0,
+        "x_min": float(np.mean(np.abs(P[hdn_indices,0] - xmin) <= face_eps)) if len(hdn_indices) else 0.0,
+        "x_max": float(np.mean(np.abs(P[hdn_indices,0] - xmax) <= face_eps)) if len(hdn_indices) else 0.0,
+        "y_min": float(np.mean(np.abs(P[hdn_indices,1] - ymin) <= face_eps)) if len(hdn_indices) else 0.0,
+        "y_max": float(np.mean(np.abs(P[hdn_indices,1] - ymax) <= face_eps)) if len(hdn_indices) else 0.0,
+        "z_min": float(np.mean(np.abs(P[hdn_indices,2] - zmin) <= face_eps)) if len(hdn_indices) else 0.0,
+        "z_max": float(np.mean(np.abs(P[hdn_indices,2] - zmax) <= face_eps)) if len(hdn_indices) else 0.0,
     }
 
-    d2s = np.asarray(graph.vs["distance_to_surface"], float) if "distance_to_surface" in graph.vs.attributes() else None
+    # --- 5) Distancia a la superficie ---
     d2s_stats = None
-    if d2s is not None and len(hdn):
-        vals = d2s[hdn]
-        d2s_stats = {"min": float(vals.min()), "mean": float(vals.mean()), "median": float(np.median(vals)), "max": float(vals.max())}
+    if "distance_to_surface" in data["vertex"] and len(hdn_indices):
+        vals = np.asarray(data["vertex"]["distance_to_surface"], float)[hdn_indices]
+        d2s_stats = {
+            "min": float(vals.min()), 
+            "mean": float(vals.mean()), 
+            "median": float(np.median(vals)), 
+            "max": float(vals.max())
+        }
 
+    # --- Resultado ---
     out = {
-        "n_nodes_in_box": int(len(nodes_in)),
-        "n_hdn": int(len(hdn)),
-        "type_pct_in_box": {k: pct(labels_in, k) for k in ["arteriole","venule","capillary","unknown"]},
-        "type_pct_hdn":    {k: pct(labels_hdn, k) for k in ["arteriole","venule","capillary","unknown"]},
-        "face_bias_frac_hdn": face_bias,  # fractions (0..1)
+        "n_nodes_in_box": int(len(nodes_in_indices)),
+        "n_hdn": int(len(hdn_indices)),
+        "face_bias_frac_hdn": face_bias,
         "distance_to_surface_stats_hdn": d2s_stats
     }
 
     if verbose:
-        print("\n=== HDN pattern analysis ===")
+        print("\n=== HDN pattern analysis (Box) ===")
         print(f"Nodes in box: {out['n_nodes_in_box']} | HDN (deg≥{degree_thr}): {out['n_hdn']}")
-        print("Type % (box):", out["type_pct_in_box"])
-        print("Type % (HDN):", out["type_pct_hdn"])
-        print("Face bias (fraction of HDN within eps):")
-        for k,v in out["face_bias_frac_hdn"].items():
-            print(f"  {k}: {v:.3f}")
-        if d2s_stats is not None:
-            print("HDN distance_to_surface stats:", d2s_stats)
+        if d2s_stats:
+            print(f"HDN distance_to_surface: Mean={d2s_stats['mean']:.2f}, Median={d2s_stats['median']:.2f}")
+        print("Face bias (fraction of HDN on boundaries):")
+        for face, val in face_bias.items():
+            if val > 0.1: # Resaltar si hay más del 10% en una cara
+                print(f"  [!] {face}: {val:.3f}")
+            else:
+                print(f"      {face}: {val:.3f}")
 
     return out
-

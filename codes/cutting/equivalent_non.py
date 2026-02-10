@@ -63,6 +63,7 @@ print("edges kept in non:", G_non_cut.ecount())
 # =============================================================================
 # Helpers: error stats
 # =============================================================================
+
 def error_stats(delta, name, tol=None):
     delta = np.asarray(delta, dtype=float)
     delta = delta[np.isfinite(delta)]
@@ -80,26 +81,39 @@ def error_stats(delta, name, tol=None):
         frac = np.mean(np.abs(delta) > tol)
         print(f"|Δ| > {tol:g}: {frac*100:.3f}%")
 
+
 # =============================================================================
 # 1) TORTUOUS internal length sanity: length == sum(lengths2)
 # =============================================================================
-if "length" in H.es.attributes() and "lengths2" in H.es.attributes():
+
+# 'cut' es el diccionario cargado del pickle
+# 'H' es el grafo que sacamos de cut["graph"]
+geom_data = cut.get("geom", {})
+
+# Verificamos si los datos existen en sus respectivos lugares
+if "length" in H.es.attributes() and "lengths2" in geom_data:
     dL = []
-    for e in H.es:
-        L = float(e["length"])
-        segs = e["lengths2"]  # typically list/array
-        if segs is None:
-            continue
-        segs = np.asarray(segs, dtype=float).ravel()
-        if segs.size == 0:
-            continue
+    all_lengths2 = geom_data["lengths2"]
+    
+    # IMPORTANTE: 
+    # Si lengths2 en geom es una lista de listas (un array por cada edge), 
+    # el acceso es directo:
+    for i, e in enumerate(H.es):
+        L_grafo = float(e["length"])
+        
+        # Accedemos a la geometría del i-ésimo arco mediante el índice
+        # Suponiendo que el orden en 'geom' coincide con el orden de H.es
+        segs = all_lengths2[i] 
+        
+        segs = np.asarray(segs, dtype=float)
         S = float(segs.sum())
-        if np.isfinite(L) and np.isfinite(S):
-            dL.append(L - S)
+        
+        if np.isfinite(L_grafo) and np.isfinite(S):
+            dL.append(L_grafo - S)
+            
     error_stats(dL, "H tortuous: length - sum(lengths2)", tol=1e-6)
 else:
-    print("\n[H] Missing 'length' or 'lengths2' -> skip tortuous length sanity.")
-
+    print("\n[H] 'length' no está en el Grafo o 'lengths2' no está en el dict Geom.")
 # =============================================================================
 # 2) TORTUOUS vs NON on COMMON EDGES (by connectivity key)
 # =============================================================================
