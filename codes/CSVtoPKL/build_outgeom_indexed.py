@@ -4,6 +4,7 @@ Pseudo-JSON layout (topology in igraph, heavy arrays in numpy under data["vertex
 Made by Ana (adapted to be RAM-safe).
 """
 
+
 import os
 import pickle
 import numpy as np
