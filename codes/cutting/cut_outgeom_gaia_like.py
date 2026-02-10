@@ -625,8 +625,8 @@ def cut_outgeom_gaia_like(data, xBox, yBox, zBox, tol=1e-6, min_straight_dist=1.
 # Example usage
 # --------------------------
 if __name__ == "__main__":
-    in_path = "/home/admin/Ana/MicroBrain/18_igraph_OutGeom.pkl"
-    out_path = "/home/admin/Ana/MicroBrain/output/18_igraph_Hcut3.pkl"
+    in_path = "/home/admin/Ana/MicroBrain/output/graph_18_OutGeom.pkl"
+    out_path = "/home/admin/Ana/MicroBrain/output/graph_18_OutGeom_Hcut3.pkl"
 
     data = pickle.load(open(in_path, "rb"))
 

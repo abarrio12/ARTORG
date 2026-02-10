@@ -1,3 +1,39 @@
+# ==============================================================================
+# AUTHOR: Ana Barrio
+# DATE: 6-02-26 
+# DESCRIPTION: Conversion from Graph (Pickle) to VTK PolyData (VTP).
+# ==============================================================================
+
+"""
+GRAPH TO VTK CONVERTER (VTP EXPORTER)
+
+This script transforms a graph-based structure (stored in a Pickle file) into 
+a VTK XML PolyData file (.vtp) for 3D visualization in software like ParaView.
+Usage for non tortuous graphs to export basic attributes. 
+
+LOGIC AND WORKFLOW:
+1. DATA LOADING:
+   It handles both raw igraph objects and dictionary-wrapped graphs, ensuring 
+   compatibility with different pipeline outputs.
+
+2. GEOMETRIC MAPPING:
+   - POINTS: Extracts the 'coords' attribute from each vertex to build the 
+     vtkPoints array. Each graph node becomes a spatial point in 3D.
+   - LINES: For each edge in the graph, it creates a 'vtkLine' connecting the 
+     source and target indices. This represents the logical connectivity 
+     of the network.
+
+3. ATTRIBUTE TRANSFER (Cell Data):
+   - It maps edge attributes (diameter, length, nkind) into VTK-compatible 
+     Float and Int arrays.
+   - These attributes are stored as 'Cell Data', meaning each line segment 
+     carries its own physical and classification properties.
+   - 'nkind' is set as the active scalar for immediate color-coding in ParaView.
+
+4. EXPORT:
+   The final PolyData object is serialized into a .vtp file using the 
+   vtkXMLPolyDataWriter, which is efficient and supports modern visualization tools.
+"""
 import pickle
 import numpy as np
 import vtk
