@@ -35,6 +35,19 @@ EDGE_NKIND_TO_LABEL = {
 
 FACES = ("x_min","x_max","y_min","y_max","z_min","z_max") 
 
+DEFAULT_DEPTH_BINS_UM = [
+    ("superficial",   0.0,  20.0),
+    ("superficial_2", 20.0, 50.0),
+    ("middle",        50.0, 200.0),
+    ("deep",          200.0, np.inf),
+]
+
+VESSEL_COLORS = {
+    "arteriole": "#ff2828ff",   
+    "venule": "#0072c4ff",      
+    "capillary": "#7f7f7fff",  
+}
+
 
 # ====================================================================================================================
 #                                                    LOAD / SAVE
@@ -143,7 +156,7 @@ def get_coords(graph, coords_attr):
     return P
 
 
-def validate_box(box):
+def validate_box_faces(box):
     """Raise if box misses required keys."""
     req = ("xmin","xmax","ymin","ymax","zmin","zmax")
     missing = [k for k in req if k not in box]
@@ -167,34 +180,34 @@ def _nkind_label_and_color(nkind):
     return "other", "purple"
 
 
-def _incident_edges_for_vertices(graph, vertices):
-    """Return unique incident edge IDs for a list of vertices."""
-    inc = set()
-    for v in vertices:
-        inc.update(graph.incident(int(v)))
-    return sorted(inc)
+def check_attr(graph, names, where="edge"):
+    """
+    Check that required attribute(s) exist in the graph.
 
+    names : str or list of str
+    where : 'edge'/'es' or 'vertex'/'vs'
+    """
+    if isinstance(names, str):
+        names = [names]
 
-def _degree_distribution(graph, nodes):
-    deg = np.asarray(graph.degree(), dtype=int)
-    nodes = np.asarray(nodes, dtype=int)
-    return Counter(deg[nodes]) if len(nodes) else Counter()
+    where = where.lower()
 
+    if where in ("edge", "es"):
+        existing = set(graph.es.attributes())
+        missing = [name for name in names if name not in existing]
+        if missing:
+            raise ValueError(f"Missing edge attribute(s): {missing}")
+        return
 
-def _distance_to_surface_stats(graph, nodes):
-    if "distance_to_surface" not in graph.vs.attributes():
-        return None
-    d = np.asarray(graph.vs["distance_to_surface"], dtype=float)
-    nodes = np.asarray(nodes, dtype=int)
-    if len(nodes) == 0:
-        return None
-    vals = d[nodes]
-    return {
-        "min": float(np.min(vals)),
-        "mean": float(np.mean(vals)),
-        "median": float(np.median(vals)),
-        "max": float(np.max(vals)),
-    }
+    if where in ("vertex", "vs"):
+        existing = set(graph.vs.attributes())
+        missing = [name for name in names if name not in existing]
+        if missing:
+            raise ValueError(f"Missing vertex attribute(s): {missing}")
+        return
+
+    raise ValueError("where must be one of: 'edge'/'es' or 'vertex'/'vs'")
+
 
 
 # ====================================================================================================================
@@ -203,43 +216,74 @@ def _distance_to_surface_stats(graph, nodes):
 
 def single_connected_component(graph):
     """
-    Analyze whether the graph consists of a single connected component.
-    Returns (is_single, n_components).
+    Ensure graph is single connected component. If not, keep the largest one.
+
+    Returns:
+        is_single (bool)
+        n_components (int)
+        graph (igraph.Graph)
     """
-    is_single = graph.is_connected()
-    components = graph.components()
-    n_components = len(components)
+    comps = graph.components()
+    n_components = len(comps)
+    is_single = (n_components == 1)
 
     if is_single:
         print("The graph is a single connected component.")
     else:
-        print("The graph has more than one connected component.")
-    print("Number of connected components:", n_components)
-    return is_single, n_components
+        print(f"The graph has {n_components} components. Keeping the largest one.")
+        graph = comps.giant()
+
+    return is_single, n_components, graph
 
 
-def get_edges_types(graph):
-    """Count how many edges belong to each nkind type."""
-    if "nkind" not in graph.es.attributes():
-        raise ValueError("Missing edge attribute 'nkind'.")
-    edge_types = graph.es["nkind"]
+
+def get_edges_types(graph, label_dict=EDGE_NKIND_TO_LABEL, return_dict=True):
+    """
+    Count how many edges belong to each nkind type.
+    Returns counts and proportions.
+    """
+    check_attr(graph, "nkind", "es")
+
+    edge_types = np.asarray(graph.es["nkind"], dtype=int)
     unique, counts = np.unique(edge_types, return_counts=True)
+
+    total = len(edge_types)
+
+    results = {}
+
     print("\nEdge types:\n")
-    for i, n in zip(unique, counts):
-        print(f" - {vessel_type.get(int(i), i)}, {i}, Count: {n}")
+
+    for k, n in zip(unique, counts):
+        name = label_dict.get(k, str(k)) if label_dict else str(k)
+        perc = 100 * n / total
+
+        print(f" - {name} (nkind={k}): {n} edges ({perc:.1f}%)")
+
+        results[k] = {
+            "name": name,
+            "count": int(n),
+            "percentage": float(perc)
+        }
+
+    if return_dict:
+        return results
+
     return unique, counts
 
 
-def get_diameter_nkind(graph):
-    """Compute mean edge diameter per nkind."""
-    if "diameter" not in graph.es.attributes():
-        raise ValueError("Missing edge attribute 'diameter'.")
-    if "nkind" not in graph.es.attributes():
-        raise ValueError("Missing edge attribute 'nkind'.")
+
+def get_avg_diameter_nkind(graph):                                              
+    """
+    Compute mean edge diameter (non tortuous) per nkind.
+    Reminder: In 18_graph.pkl the edge radii from non tortuous is computed as max(tortuous points/vertices radii)
+    Therefore, this diameter is 2*max(points radii)
+    """
+    check_attr(graph, ["diameter", "nkind"], "es")
+
     diam = np.asarray(graph.es["diameter"], dtype=float)
     nkind = np.asarray(graph.es["nkind"], dtype=int)
-
     unique = np.unique(nkind)
+
     mean_diameters = np.array([diam[nkind == k].mean() for k in unique])
 
     print("\nAverage diameter by nkind:\n")
@@ -248,25 +292,44 @@ def get_diameter_nkind(graph):
     return unique, mean_diameters
 
 
-def diameter_stats(graph, label_dict=None, ranges=None, plot=False):
-    """
-    Compute statistics of edge diameters grouped by nkind, and optionally plot them.
-    Returns stats_dict (always).
-    """
-    if "diameter" not in graph.es.attributes():
-        raise ValueError("Missing edge attribute 'diameter'.")
-    if "nkind" not in graph.es.attributes():
-        raise ValueError("Missing edge attribute 'nkind'.")
 
-    diam = np.array(graph.es["diameter"], dtype=float)
-    nkind = np.array(graph.es["nkind"], dtype=int)
+
+def diameter_stats_nkind(
+    graph,
+    label_dict=None,
+    ranges=None,
+    plot=True,
+    verbose=False,
+):
+    """
+    Compute diameter statistics grouped by nkind.
+
+    Returns
+    -------
+    stats_dict : dict
+        { nkind: {
+            "name": str,
+            "n": int,
+            "mean": float,
+            "median": float,
+            "p5": float,
+            "p95": float,
+            "perc_in_range": float|None,
+            "range": (low, high)|None
+        } }
+    """
+    check_attr(graph, ["diameter", "nkind"], "es")
+
+    diam = np.asarray(graph.es["diameter"], dtype=float)
+    nkind = np.asarray(graph.es["nkind"], dtype=int)
 
     stats_dict = {}
-    print("\n=== Diameter statistics ===\n")
-
     for k in np.unique(nkind):
         subset = diam[nkind == k]
-        vname = label_dict.get(k, str(k)) if label_dict else str(k)
+        if subset.size == 0:
+            continue
+
+        name = label_dict.get(int(k), str(k)) if label_dict else str(k)
 
         mean = float(np.mean(subset))
         median = float(np.median(subset))
@@ -274,68 +337,55 @@ def diameter_stats(graph, label_dict=None, ranges=None, plot=False):
         p95 = float(np.percentile(subset, 95))
 
         perc_in_range = None
-        if ranges and k in ranges:
+        rng = None
+        if ranges is not None and k in ranges:
             low, high = ranges[k]
-            perc_in_range = float(np.mean((subset >= low) & (subset <= high)) * 100)
-        else:
-            low, high = None, None
+            rng = (float(low), float(high))
+            perc_in_range = float(np.mean((subset >= low) & (subset <= high)) * 100.0)
 
-        stats_dict[k] = {
-            "name": vname,
+        stats_dict[int(k)] = {
+            "name": name,
+            "n": int(subset.size),
             "mean": mean,
             "median": median,
             "p5": p5,
             "p95": p95,
             "perc_in_range": perc_in_range,
-            "range": (low, high)
+            "range": rng,
         }
 
-        print(f"{vname} (nkind={k}):")
-        print(f"  Mean diameter:     {mean:.2f} µm")
-        print(f"  Median diameter:   {median:.2f} µm")
-        print(f"  P5–P95 range:      {p5:.2f} – {p95:.2f} µm")
-        if perc_in_range is not None:
-            print(f"  % in normal range ({low}–{high} µm): {perc_in_range:.1f}%")
-        print()
+    # Optional: pretty console output
+    if verbose:
+        print("\n=== Diameter statistics (by nkind) ===\n")
+        for k in sorted(stats_dict.keys()):
+            s = stats_dict[k]
+            print(f"{s['name']} (nkind={k}, n={s['n']}):")
+            print(f"  mean:   {s['mean']:.2f} µm")
+            print(f"  median: {s['median']:.2f} µm")
+            print(f"  p5–p95: {s['p5']:.2f} – {s['p95']:.2f} µm")
+            if s["perc_in_range"] is not None:
+                lo, hi = s["range"]
+                print(f"  % in range ({lo}–{hi}): {s['perc_in_range']:.1f}%")
+            print()
 
+    # Optional: one general plot
     if plot:
-        plt.figure(figsize=(8, 5))
-        nkinds_sorted = sorted(stats_dict.keys())
-        names = [stats_dict[k]["name"] for k in nkinds_sorted]
-        means = [stats_dict[k]["mean"] for k in nkinds_sorted]
-        p5s = [stats_dict[k]["p5"] for k in nkinds_sorted]
-        p95s = [stats_dict[k]["p95"] for k in nkinds_sorted]
-
-        x = np.arange(len(nkinds_sorted))
-        plt.bar(x, means, color="steelblue", edgecolor="black", label="Mean")
-        plt.errorbar(
-            x, means,
-            yerr=[np.array(means) - np.array(p5s), np.array(p95s) - np.array(means)],
-            fmt="none", ecolor="red", capsize=5, label="P5–P95"
+        plot_violin_box_by_category(
+            diam,
+            nkind,
+            label_dict=EDGE_NKIND_TO_LABEL,
+            xlabel="Vessel type",
+            ylabel="Diameter (µm)",
+            title="Diameter distribution by vessel type"
         )
-
-        if ranges:
-            for i, k in enumerate(nkinds_sorted):
-                low, high = ranges.get(k, (None, None))
-                if low is not None:
-                    plt.fill_between([i - 0.4, i + 0.4], low, high, color="orange", alpha=0.2)
-
-        plt.xticks(x, names)
-        plt.xlabel("Vessel type")
-        plt.ylabel("Diameter (µm)")
-        plt.title("Edge diameter statistics by vessel type")
-        plt.legend()
-        plt.show()
 
     return stats_dict
 
 
-def get_length_nkind(graph):
+
+def get_avg_length_nkind(graph):
     """Compute mean edge length per nkind."""
-    if "length" not in graph.es.attributes():
-        raise ValueError("Missing edge attribute 'length'.")
-    if "nkind" not in graph.es.attributes():
-        raise ValueError("Missing edge attribute 'nkind'.")
+    check_attr(graph, ["length", "nkind"], "es")
         
     length_att = np.array(graph.es["length"], dtype=float)
     nkind = np.array(graph.es["nkind"], dtype=int)
@@ -350,60 +400,94 @@ def get_length_nkind(graph):
     return unique, l
 
 
-def get_degrees(graph, threshold=4):
+
+def get_degrees(data, threshold=4):
     """
-    Compute node degrees and identify high-degree nodes based on a threshold.
-    Adds:
-      graph.vs["degree"]
-      graph.vs["high_degree_node"] (degree if high, else 0)
-    Returns (unique_degrees, high_degree_nodes)
+    Compute node degrees & high degree nodes (>4) from data["graph"] and store results in data["vertex"].
+
+    Parameters
+    ----------
+    data : dict
+        Must contain:
+            data["graph"]  -> igraph.Graph
+            data["vertex"] -> dict aligned with graph vertices
+    threshold : int
+        Degree threshold to define high-degree nodes.
+    verbose : bool
+        If True, prints summary.
+
+    Returns
+    -------
+    unique_degrees : np.ndarray
+    high_degree_idx : np.ndarray
+        Indices (in current graph) of high-degree nodes.
     """
+
+    graph = data["graph"]
+    vertex = data["vertex"]
+
     degrees = np.array(graph.degree(), dtype=int)
-    graph.vs["degree"] = degrees
+
+    vertex["degree"] = degrees
 
     degree_hd = np.where(degrees >= int(threshold), degrees, 0)
-    graph.vs["high_degree_node"] = degree_hd
+    vertex["high_degree_node"] = degree_hd
 
     high_degree = np.where(degrees >= int(threshold))[0]
 
     print("\nDegrees of nodes:", np.unique(degrees))
     print(f"High-degree nodes (>= {threshold}): {len(high_degree)}")
+    
     return np.unique(degrees), high_degree
 
 
-def get_location_degrees(graph, node_list):
-    """Print distance_to_surface stats for a list of node indices."""
-    if "distance_to_surface" not in graph.vs.attributes():
-        raise ValueError("graph.vs['distance_to_surface'] missing.")
-    dist = graph.vs["distance_to_surface"]
-    node_list = list(map(int, node_list))
-
-    distances = np.array([dist[i] for i in node_list], dtype=float)
-    print(f"\nHigh-degree nodes analyzed: {len(node_list)}")
-
-    for i in node_list[:10]:
-        print(f"Node {i} -> distance to surface = {dist[i]:.2f} µm")
-
-    print("\nDistance-to-surface statistics (µm):")
-    print(f"  Min:   {distances.min():.2f}")
-    print(f"  Mean:  {distances.mean():.2f}")
-    print(f"  Median:{np.median(distances):.2f}")
-    print(f"  Max:   {distances.max():.2f}")
-
-    superficial = np.sum(distances < 20)
-    superficial_2 = np.sum((distances >= 20) & (distances < 50))
-    middle = np.sum((distances >= 50) & (distances < 200))
-    deep = np.sum(distances >= 200)
-
-    print("\nClassification by depth:")
-    print(f"  Superficial (<20 µm):        {superficial}  ({100*superficial/len(distances):.1f}%)")
-    print(f"  Superficial_2 (20–50 µm):    {superficial_2}  ({100*superficial_2/len(distances):.1f}%)")
-    print(f"  Middle (50–200 µm):          {middle}       ({100*middle/len(distances):.1f}%)")
-    print(f"  Deep (>200 µm):              {deep}         ({100*deep/len(distances):.1f}%)")
-
-    return distances
 
 
+def distance_to_surface_summary(
+    graph,
+    nodes,
+    depth_attr="distance_to_surface",
+    depth_bins=DEFAULT_DEPTH_BINS_UM,
+):
+    """
+    Compute summary stats and named depth-bin distribution for graph.vs[depth_attr]
+    over the provided nodes.
+
+    Assumes depth_attr is measured from the surface/top (smaller = more superficial).
+    """
+    if depth_attr not in graph.vs.attributes():
+        raise ValueError(f"graph.vs['{depth_attr}'] missing.")
+
+    nodes = np.asarray(nodes, dtype=int)
+    if nodes.size == 0:
+        return None
+
+    d = np.asarray(graph.vs[depth_attr], dtype=float)
+    vals = d[nodes]
+
+    out = {
+        "n": int(vals.size),
+        "min": float(np.min(vals)),
+        "mean": float(np.mean(vals)),
+        "median": float(np.median(vals)),
+        "max": float(np.max(vals)),
+        "bins": {},
+    }
+
+    n = vals.size
+    for label, low, high in depth_bins:
+        mask = (vals >= low) & (vals < high)
+        c = int(np.sum(mask))
+        out["bins"][label] = {
+            "range_um": [float(low), float(high)],
+            "count": c,
+            "proportion": float(c / n),
+        }
+
+    return out
+
+
+                                                                # NOTA: ESTOS CODIGOS REALMENTE TIENEN SENTIDO?? OSEA QUÉ INFO SACO? 
 def find_duplicated_edges(graph):
     """Detect duplicated edges regardless of direction."""
     edges = graph.get_edgelist()
@@ -431,8 +515,8 @@ def find_loops(graph):
 # BC DETECTION (faces-only)
 # ====================================================================================================================
 
-def bc_nodes_on_plane(graph, axis, value, box, coords_attr, eps=2.0):
-    """
+def bc_nodes_on_plane(graph, axis, value, box, coords_attr, eps=2.0):   # QUE SE SUPONE QUE ESTOY CALCULANDO AQUÍ? COMO Q EN OTRAS COORDS? YO SOLO TRABAJO EN IMG
+    """                                                                 # cambiar el nombre tb porque no se entiende nada
     Returns node indices that are:
       (1) on the plane within eps
       (2) inside the box in the other coordinates (with eps margin)
@@ -469,7 +553,7 @@ def bc_nodes_on_box_faces(graph, box, coords_attr, eps=0.5):
     }
 
 
-def bc_node_common_nkind(graph, node_id):
+def bc_node_common_nkind(graph, node_id):                                       #  LO VEO COMO MUY COMPLICADO NO ? OSEA EL RETURN? podría unir con infer node?
     """Return most common nkind among incident edges of node."""
     if "nkind" not in graph.es.attributes():
         raise ValueError("Missing edge attribute 'nkind'.")
@@ -488,7 +572,7 @@ def infer_node_type_from_incident_edges(graph, node_id, vessel_type_map=EDGE_NKI
     return vessel_type_map.get(int(nk), f"nkind_{nk}")
 
 
-def analyze_bc_faces(graph, box, coords_attr, eps=2.0, degree_thr=4, verbose=True):
+def analyze_bc_faces(graph, box, coords_attr, eps=2.0, degree_thr=4, verbose=True):    # QUÉ ES VERBOSE? 
     """
     BC ANALYSIS PER FACE
     Returns dict: face -> metrics
@@ -496,7 +580,7 @@ def analyze_bc_faces(graph, box, coords_attr, eps=2.0, degree_thr=4, verbose=Tru
     faces = bc_nodes_on_box_faces(graph, box, coords_attr, eps=eps)
     degrees = np.asarray(graph.degree(), dtype=int)
     has_d2s = ("distance_to_surface" in graph.vs.attributes())
-    validate_box(box)
+    validate_box_faces(box)
 
     results = {}
 
@@ -602,6 +686,67 @@ def plot_hist_by_category(attribute_toplot, category, label_dict=None,
         plt.xlabel(xlabel)
         plt.ylabel("Density")
         plt.legend([f"Mean = {mean_value:.2f}"])
+
+    plt.tight_layout()
+    plt.show()
+
+
+
+def plot_violin_box_by_category(values, category, label_dict=None,
+                                xlabel="Category", ylabel="Value",
+                                title="Distribution by category"):
+
+    values = np.asarray(values, float)
+    category = np.asarray(category)
+
+    cats = np.unique(category)
+    try:
+        cats = np.array(sorted(cats, key=lambda x: int(x)))
+    except Exception:
+        cats = np.array(sorted(cats, key=lambda x: str(x)))
+
+    data = [values[category == c] for c in cats]
+    labels = [label_dict.get(int(c), str(c)) if label_dict else str(c) for c in cats]
+
+    fig, ax = plt.subplots(figsize=(9, 5))
+    positions = np.arange(1, len(cats) + 1)
+
+    # --- Violin ---
+    parts = ax.violinplot(data, positions=positions,
+                          showmeans=False, showmedians=False, showextrema=False)
+
+    for i, pc in enumerate(parts['bodies']):
+        name = labels[i].lower()
+        color = VESSEL_COLORS.get(name, "lightgray")
+        pc.set_facecolor(color)
+        pc.set_alpha(0.6)
+
+    # --- Boxplot ---
+    ax.boxplot(data,
+               positions=positions,
+               widths=0.18,
+               showfliers=False,
+               patch_artist=False,
+               medianprops=dict(color="aqua", linewidth=2))
+
+    # --- Scatter jittered ---
+    for i, subset in enumerate(data):
+        x_center = positions[i]
+        jitter = np.random.normal(x_center, 0.03, size=len(subset))
+        ax.scatter(jitter, subset,
+                   color="black",
+                   s=12,
+                   alpha=0.3)
+
+    ax.set_xticks(positions)
+    ax.set_xticklabels(labels)
+    ax.set_xlabel(xlabel)
+    ax.set_ylabel(ylabel)
+    ax.set_title(title)
+
+    # Estética más limpia
+    ax.spines['top'].set_visible(False)
+    ax.spines['right'].set_visible(False)
 
     plt.tight_layout()
     plt.show()
@@ -1021,7 +1166,7 @@ def plot_diameter_by_nkind(graph, bins=40, show_boxplot=True, title=None, ax=Non
 # BC TABLES (faces-only)
 # ====================================================================================================================
 
-def bc_faces_table(res, box_name="Box"):
+def bc_faces_table(res, box_name="Box"):                                # ESTO ME DA LA MISMA INFO QUE CUBE NET NO? PA Q LO QUIERO? 
     """
     Create a pandas table from analyze_bc_faces() results (faces only).
     Columns: Face, count, % arteriole/venule/capillary/unknown, high degree %
@@ -1051,7 +1196,7 @@ def bc_faces_table(res, box_name="Box"):
 # GAIA-STYLE MICRO-SEGMENTS + VESSEL DENSITY (requires OutGeom-like data dict)
 # ====================================================================================================================
 
-def microsegments_from_outgeom(data, require_attrs=("geom_start", "geom_end", "nkind")):
+def microsegments_from_outgeom(data, require_attrs=("geom_start", "geom_end", "nkind")):    # PARA QUE ME SIRVE ESTO? YO DEL OUTGEOM YA TENGO LOS LENGTHS2 Y ASI NO? 
     """
     Build micro-segments between consecutive polyline points for each igraph edge.
     Expects OutGeom-like:
@@ -1095,7 +1240,7 @@ def microsegments_from_outgeom(data, require_attrs=("geom_start", "geom_end", "n
             dx = x[i + 1] - x[i]
             dy = y[i + 1] - y[i]
             dz = z[i + 1] - z[i]
-            L = float(np.sqrt(dx * dx + dy * dy + dz * dz))
+            L = float(np.sqrt(dx * dx + dy * dy + dz * dz))                                    # YO PARA QUÉ QUIERO MIDS? 
             if L <= 0:
                 continue
 
@@ -1111,10 +1256,10 @@ def microsegments_from_outgeom(data, require_attrs=("geom_start", "geom_end", "n
                 r1s.append(np.nan)
 
     return {
-        "midpoints": np.asarray(mids, float),
+        "midpoints": np.asarray(mids, float),                   
         "lengths": np.asarray(lens, float),
         "nkind": np.asarray(nk, int),
-        "r0": np.asarray(r0s, float),
+        "r0": np.asarray(r0s, float),                                                          
         "r1": np.asarray(r1s, float),
     }
 
@@ -1135,7 +1280,7 @@ def count_microsegments_by_nkind(ms, label_map=None, verbose=True):
     return out
 
 
-def vessel_density_slabs_in_box(ms, box, slab=50.0, axis="z",
+def vessel_density_slabs_in_box(ms, box, slab=50.0, axis="z",                               # REPASAR, YO CREO QUE NO ESTÁ BIEN. PORQ HAY DOS METODOS ?? 
                                use_volume_fraction=False, verbose=True):
     """
     Compute vessel density inside a box, split into slabs along an axis.
@@ -1219,7 +1364,7 @@ def vessel_density_slabs_in_box(ms, box, slab=50.0, axis="z",
 
         for k in kinds:
             vv = float(np.sum(amount[m & (nk == k)]))
-            row[f"{vessel_type.get(k, k)}_{metric}"] = (vv / tissue_vol) if tissue_vol > 0 else np.nan
+            row[f"{EDGE_NKIND_TO_LABEL.get(k, k)}_{metric}"] = (vv / tissue_vol) if tissue_vol > 0 else np.nan
 
         rows.append(row)
 
@@ -1237,7 +1382,7 @@ import matplotlib.pyplot as plt
 
 
 
-def edge_radius_consistency_report_MAX(
+def edge_radius_consistency_report_MAX(                                 # NOTA: EXTREMADAMENTE COMPLICADO, LARGO, NO NECESITO TANTA INFO, HACERLO PARA MUCHOS MENOS EDGES
     data,
     sample=10000,             # Reducido un poco para que el loop de búsqueda sea rápido
     seed=0,
@@ -1318,8 +1463,8 @@ def edge_radius_consistency_report_MAX(
 # RADII SANITY CHECKS (for microbloom / consistency)
 # ====================================================================================================================
 
-def check_polyline_radii_match_endnodes(
-    data,
+def check_polyline_radii_match_endnodes(                                             # ADAPTAR A ATRIBUTOS QUE TENGO AHORA, NO HACE FALTA TANTA PARAFERNALIA 
+    data,                                                                           # SACAR LOS PUNTOS CON LOS INDICES Y COMPARAR, OJO CON LOS ACCESOS A RADII
     node_r_attr_candidates=("radii", "radius", "radius_point"),
     tol=1e-3,
     verbose=True
@@ -1389,7 +1534,11 @@ def check_polyline_radii_match_endnodes(
 
 # ============================================================================================================================================0
 
-def check_radii_endpoints_allow_swap(data, tol=1e-3, max_examples=15, use_coords_check=False, coords_tol=1e-6):
+
+
+#  LOS TRES SIGUIENTES CODIGOS PODRÍA ELIMINARLOS, NO TIENEN MUCHO SENTIDO NI TP ME DAN APENAS INFO DE ANALISIS DE BOX 
+
+def check_radii_endpoints_allow_swap(data, tol=1e-3, max_examples=15, use_coords_check=False, coords_tol=1e-6):   # QUITARLO, METER COMPROBACIÓN DE ORDEN COMO CHECK EN CODIGO ANTERIOR 
     """
     Compara radii de vértices vs radii de geom en endpoints de cada edge.
     Permite geometría invertida (swap start/end) y reporta cuántos swaps hay.
@@ -1660,7 +1809,7 @@ def classify_edge_endpoint_coords(data, tol=1e-6):
 
 
 
-
+# ESTOS CHECKS QUE INFO ME DAN?????? OSEA ME INTERESA ALGO MÁS ALLÁ DE HDN ? QUE YA LO HE COMPROBADO
 # ====================================================================================================================
 # DEGREE CHECKS: distribution + by type + spatial mapping for any degree band
 # ====================================================================================================================
@@ -1784,7 +1933,7 @@ def induced_subgraph_box(graph, box, coords_attr="coords_image", node_eps=0.0, e
     return sub, sub_to_orig, orig_to_sub
 
 
-def _nodes_by_label_in_subgraph(sub, vessel_type_map=EDGE_NKIND_TO_LABEL):
+def _nodes_by_label_in_subgraph(sub, vessel_type_map=EDGE_NKIND_TO_LABEL):              # YA TENGO UN CODIGO Q HACE ESTO NO? PARA QUÉ QUIERO OTRO?????
     labels = [infer_node_type_from_incident_edges(sub, v.index, vessel_type_map=EDGE_NKIND_TO_LABEL) for v in sub.vs]
     out = {}
     for lab in ["arteriole", "venule", "capillary", "unknown"]:
@@ -1877,11 +2026,15 @@ def edge_disjoint_av_paths_in_box(
         "note": "edge-disjoint paths via maxflow (edge-splitting, cap=1 per original edge)"
     }
 
-    # ====================================================================================================================
+
+
+
+
+# ====================================================================================================================
 #                            NEW-PKL ONLY HELPERS (data["graph"], data["vertex"], data["geom"])
 # ====================================================================================================================
 
-def select_largest_component_data(data, verbose=True):
+def select_largest_component_data(data, verbose=True):            # LO PUEDO ELIMINAR, SIMPLEMENTE AÑADIR EN SINGLE CONNECTED, QUE ESCOJA EL BCC
     """
     NEW-PKL ONLY.
     Input: data = {"graph":G, "vertex":{...}, "geom":{...}}
@@ -1920,7 +2073,7 @@ def select_largest_component_data(data, verbose=True):
     return {"graph": H, "vertex": V2, "geom": data["geom"]}
 
 
-def attach_vertex_attrs_from_data(data, verbose=False):
+def attach_vertex_attrs_from_data(data, verbose=False):                         # ESTO NO LO NECESITO, SOLAMENTE TENGO QUE ACTUALIZAR LOS ACCESOS EN LOS OTROS
     """
     NEW-PKL ONLY.
     Copies heavy per-vertex arrays from data["vertex"] into graph.vs attributes,
@@ -1958,6 +2111,9 @@ def attach_vertex_attrs_from_data(data, verbose=False):
 # ====================================================================================================================
 #                                  RADII CHECK: vertex endpoints vs geom endpoints
 # ====================================================================================================================
+
+
+                                                # TIENE SENTIDO OTRO CODIGO A PARTE? SOLICITADO POR GAIA, PERO PODRÍA METERLO DONDE COMPRUEBO EL MAX Y YA NO? 
 
 def check_endpoint_radii_vertex_vs_geom(data, tol=1e-3, verbose=True, max_print=10):
     """
@@ -2022,6 +2178,8 @@ def check_endpoint_radii_vertex_vs_geom(data, tol=1e-3, verbose=True, max_print=
 #                             REDUNDANCY: return used subgraph edges (for viz)
 # ====================================================================================================================
 
+
+                                                        # NO TIENE SENTIDO ESTE CODIGO AQUI? PARA QUE QUEIRO ESTE CODIGO? "GAIA SOLICITED"
 def edge_disjoint_av_paths_in_box_with_used_edges(
     graph, box, coords_attr="coords_image", node_eps=0.0,
     vessel_type_map=EDGE_NKIND_TO_LABEL,
@@ -2033,7 +2191,7 @@ def edge_disjoint_av_paths_in_box_with_used_edges(
 
     Note: this is ONE valid maximum-flow solution (not unique).
     """
-    validate_box(box)
+    validate_box_faces(box)
     sub, sub_to_orig, _ = induced_subgraph_box(
         graph, box, coords_attr=coords_attr, node_eps=node_eps, edge_mode="both"
     )
@@ -2111,6 +2269,8 @@ def edge_disjoint_av_paths_in_box_with_used_edges(
     }
 
 
+
+                                                                                            # LO MISMO DE ANTES, PARA Q USO ESTO ? Q INFO DA? GAIA
 def plot_redundancy_used_edges(graph, box, used_edges_orig, coords_attr="coords_image",
                               sample_edges=8000, title=None):
     """
@@ -2167,6 +2327,10 @@ def plot_redundancy_used_edges(graph, box, used_edges_orig, coords_attr="coords_
 # ====================================================================================================================
 import numpy as np
 
+
+
+                                                                                                # TENDRÍA SENTIDO METERLO EN HDN LOCALIZATION? GAIA
+                                                                                                # QUITAR LAS ADAPTACIONES ESTAS DE ATTRIBUTES
 def analyze_hdn_pattern_adapted(data, xBox, yBox, zBox, degree_thr=4, face_eps=2.0, verbose=True):
     """
     Versión adaptada a la estructura de diccionarios:
@@ -2175,7 +2339,7 @@ def analyze_hdn_pattern_adapted(data, xBox, yBox, zBox, degree_thr=4, face_eps=2
     - xBox, yBox, zBox: Listas [min, max]
     """
     G = data["graph"]
-    validate_box(box)
+    validate_box_faces(box)
     
     # --- 1) Obtener coordenadas ---
     # Usamos coords_image del diccionario vertex
