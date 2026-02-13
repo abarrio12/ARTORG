@@ -77,11 +77,12 @@ def reorient_edge_geometry_to_vertices(
     verbose=True,
 ):
     """
-    Fuerza que, para cada edge (u,v):
-      - geom_start  corresponda al endpoint más cercano a coords_image[u]
-      - geom_end-1  corresponda al endpoint más cercano a coords_image[v]
+    Forces that, for each edge (u,v):
 
-    Si no es así, invierte IN-PLACE la geometría (x,y,z) y los atributos point-wise.
+    - geom_start corresponds to the endpoint closest to coords_image[u]
+    - geom_end-1 corresponds to the endpoint closest to coords_image[v]
+
+    If not, invert the geometry (x,y,z) and point attributes IN-PLACE.
 
     Parameters
     ----------
@@ -206,7 +207,7 @@ e_nkind[e_vein == 1] = 3
 e_diam = (2.0 * e_rad).astype(np.float32)
 
 # Build graph
-# NOTE: igraph needs edges as list of tuples; unavoidable conversion here
+# NOTE: igraph needs edges as list of tuples
 G = ig.Graph(n=nV, edges=edges.tolist(), directed=False)
 
 # Minimal vertex attrs (scalars only)
@@ -256,7 +257,7 @@ for i0 in range(0, nE, CHUNK_EDGES):
 # Enforce geometry orientation
 # ============================
 
-edgesG = np.asarray(G.get_edgelist(), dtype=np.int64)  # (nE,2) en el orden interno de G
+edgesG = np.asarray(G.get_edgelist(), dtype=np.int64)  # (nE,2) in internal order of G
 
 flip = reorient_edge_geometry_to_vertices(
     edges=edgesG,
@@ -292,20 +293,20 @@ data = {
     # heavy per-vertex arrays live OUTSIDE igraph
     "vertex": {
         "id": vid,                       # (nV,)
-        "coords": coords_atlas,          # (nV,3) atlas/um
-        "coords_image": coords_img,      # (nV,3) voxel
+        "coords": coords_atlas,          # (nV,3) voxels
+        "coords_image": coords_img,      # (nV,3) voxels
         "vertex_annotation": v_ann,      # (nV,)
-        "distance_to_surface": v_dist,   # (nV,)
-        "radii": v_radii,                # (nV,)
+        "distance_to_surface": v_dist,   # (nV,) voxels
+        "radii": v_radii,                # (nV,) micrometers (Franca gt2CSV, conversion factor 1.63, isotropic assumed)
     },
 
     # heavy per-geometry-point arrays
     "geom": {
-        "x": x,                          # (nP,)
-        "y": y,                          # (nP,)
-        "z": z,                          # (nP,)
+        "x": x,                          # (nP,) voxels
+        "y": y,                          # (nP,) voxels
+        "z": z,                          # (nP,) voxels
         "annotation": ann_geom,          # (nP,)
-        "radii": r_geom,                 # (nP,)
+        "radii": r_geom,                 # (nP,) micrometers (Franca gt2CSV, conversion factor 1.63, isotropic assumed)
     },
 }
 

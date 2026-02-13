@@ -80,51 +80,6 @@ def dump_graph(graph, out_path):
     print(f"\nGraph successfully saved to: {out_path}")
 
 
-import numpy as np
-
-def convert_to_um(data, sx = 1.625, sy = 1.625, sz = 2.5,
-                                 coords_key="coords_image",
-                                 lengths2_key=("geom", "lengths2"),
-                                 inplace=False):
-    """
-    Convierte coords (vox->µm) y recalcula lengths2 en µm para voxel anisotrópico.
-    sx,sy,sz en µm/voxel.
-    """
-    if not inplace:
-        # copia shallow; si quieres deep copy dímelo
-        data = dict(data)
-        data[coords_key] = dict(data[coords_key])
-        if "geom" in data:
-            data["geom"] = dict(data["geom"])
-
-    x = np.asarray(data[coords_key]["x"], float)
-    y = np.asarray(data[coords_key]["y"], float)
-    z = np.asarray(data[coords_key]["z"], float)
-
-    # convertir coords a µm
-    x_um = x * sx
-    y_um = y * sy
-    z_um = z * sz
-
-    data[coords_key]["x"] = x_um
-    data[coords_key]["y"] = y_um
-    data[coords_key]["z"] = z_um
-
-    # recalcular lengths2 en µm
-    dx = np.diff(x_um)
-    dy = np.diff(y_um)
-    dz = np.diff(z_um)
-    L2_um = np.sqrt(dx*dx + dy*dy + dz*dz)
-
-    # guardar en la ruta lengths2_key
-    d = data
-    for k in lengths2_key[:-1]:
-        if k not in d:
-            d[k] = {}
-        d = d[k]
-    d[lengths2_key[-1]] = L2_um
-
-    return data
 
 
 def sync_vertex_attributes(data):
@@ -214,6 +169,54 @@ def make_box(
 
 
 
+def convert_attr_to_um(data, sx=1.625, sy=1.625, sz=2.5):
+    """
+    Convert dataset from voxel units to micrometers.
+
+    - Geometry coordinates -> µm
+    - Recompute lengths2 in µm (anisotropic-safe)
+    - Convert distance_to_surface using in-plane resolution (1.625 µm/voxel)
+
+    Original voxel values are preserved.
+    """
+
+    # -------------------------
+    # GEOMETRY (anisotropic)
+    # -------------------------
+    g = data["geom"]
+
+    x_vox = np.asarray(g["x"], float)
+    y_vox = np.asarray(g["y"], float)
+    z_vox = np.asarray(g["z"], float)
+
+    # Convert coordinates to µm
+    x_um = x_vox * sx
+    y_um = y_vox * sy
+    z_um = z_vox * sz
+
+    g["x_um"] = x_um
+    g["y_um"] = y_um
+    g["z_um"] = z_um
+
+    # Recompute lengths2 in µm 
+    dx = np.diff(x_um)
+    dy = np.diff(y_um)
+    dz = np.diff(z_um)
+
+    g["lengths2"] = np.sqrt(dx*dx + dy*dy + dz*dz) 
+    
+    # -------------------------
+    # DISTANCE TO SURFACE (assumes isotropic)
+    # -------------------------
+    G = data["graph"]
+
+    if "distance_to_surface" in G.vs.attributes():
+        d_vox = np.asarray(G.vs["distance_to_surface"], float)
+
+        # Multiply by in-plane resolution (1.625 µm/voxel)
+        G.vs["distance_to_surface_um"] = (d_vox * sx).tolist()
+
+    return data
 
 
 
@@ -242,21 +245,6 @@ def validate_box_faces(box):
     if missing:
         raise ValueError(f"box missing keys: {missing}. Required: {list(req)}")
 
-
-def _nkind_label_and_color(nkind):
-    """
-    Requested scheme:
-      arteriole = red
-      venule   = blue
-      capillary= gray
-    """
-    if nkind == 2:
-        return "arteriole", "red"
-    if nkind == 3:
-        return "venule", "blue"
-    if nkind == 4:
-        return "capillary", "gray"
-    return "other", "purple"
 
 
 def check_attr(graph, names, where="edge"):
@@ -324,6 +312,22 @@ def loop_edge_stats(G):
 
 
 
+def get_geom_from_data(data, want_radii=False):
+    G = data["graph"]
+    g = data["geom"]
+    x = np.asarray(g["x"], float)
+    y = np.asarray(g["y"], float)
+    z = np.asarray(g["z"], float)
+    L2 = np.asarray(g["lengths2"], float)
+    r  = np.asarray(g["radii"], float) if (want_radii and "radii" in g) else None
+    return G, x, y, z, L2, r
+
+def get_range_from_data(data, eid):
+    G = data["graph"]
+    return int(G.es[eid]["geom_start"]), int(G.es[eid]["geom_end"])
+
+def get_edge_attr_from_data(data, eid, name):
+    return data["graph"].es[eid][name]
 
 
 
@@ -585,8 +589,8 @@ def distance_to_surface_stats(
     if nodes.size == 0:
         return None
 
-    d_vox = np.asarray(graph.vs[depth_attr], dtype=float)
-    vals = d_vox * res_um_per_vox[0]
+    d = np.asarray(graph.vs[depth_attr], dtype=float)
+    vals = d[nodes]
 
     out = {
         "n": int(vals.size),
@@ -1489,28 +1493,23 @@ class OutGeomBackend(PolylineBackend):
 
 
 
-def microsegments(backend, nkind_attr="nkind", want_radii=False):
-    x, y, z = backend.x, backend.y, backend.z
-    L2 = backend.lengths2  # puede ser None
-    r = backend.r if want_radii else None
+def microsegments(source, get_geom = get_geom_from_data, get_range = get_range_from_data, get_edge_attr = get_edge_attr_from_data,
+                       nkind_attr="nkind", want_radii=False):
+    
+    # Note: 
+    G, x, y, z, L2, r = get_geom(source, want_radii=want_radii)
 
     mids, lens, nk, r0s, r1s = [], [], [], [], []
 
-    for eid in range(backend.G.ecount()):
-        s, t = backend.edge_geom_range(eid)
+    for eid in range(G.ecount()):
+        s, t = get_range(source, eid)
         if (t - s) < 2:
             continue
 
-        nkind_e = int(backend.edge_attr(eid, nkind_attr))
+        nkind_e = int(get_edge_attr(source, eid, nkind_attr))
 
         for i in range(s, t - 1):
-            # longitud: usa lengths2 si existe, si no recalcula
-            if L2 is not None:
-                L = float(L2[i])
-            else:
-                dx, dy, dz = x[i+1]-x[i], y[i+1]-y[i], z[i+1]-z[i]
-                L = float(np.sqrt(dx*dx + dy*dy + dz*dz))
-
+            L = float(L2[i])  
             if L <= 0:
                 continue
 
@@ -1518,7 +1517,7 @@ def microsegments(backend, nkind_attr="nkind", want_radii=False):
             lens.append(L)
             nk.append(nkind_e)
 
-            if r is not None:
+            if want_radii and r is not None:
                 r0s.append(float(r[i])); r1s.append(float(r[i+1]))
             else:
                 r0s.append(np.nan); r1s.append(np.nan)
@@ -1530,6 +1529,7 @@ def microsegments(backend, nkind_attr="nkind", want_radii=False):
         "r0": np.asarray(r0s, float),
         "r1": np.asarray(r1s, float),
     }
+
 
 
 # Sanity check 
@@ -1648,8 +1648,9 @@ def vessel_density_slabs_in_box(ms, box, slab=50.0, axis="z",                   
 
 
 
-
-
+# ======================================================================================================================================================
+#                                                               GAIA COMPLIANCE
+# ======================================================================================================================================================
 import numpy as np
 import matplotlib.pyplot as plt
 

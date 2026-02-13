@@ -48,78 +48,7 @@ def segment_box_intersection(p0, p1, xBox, yBox, zBox):
 
 
 
-def restore_edges_gaia_like(cut, store_points=False):
-    """
-    Reconstruye atributos estilo Gaia en cut["graph"].es:
-      - points (opcional)
-      - lengths2 (n-1)
-      - length (sum)
-      - diameters (n)
-      - lengths (n)  -> aquí usamos geom["lengths"] (arclen)
-    """
-    H = cut["graph"]
-    x = cut["geom"]["x"]
-    y = cut["geom"]["y"]
-    z = cut["geom"]["z"]
-
-    # ya los tienes globales (recalculados en el cut)
-    L2p = cut["geom"].get("lengths2", None)     # per point (n) con último=0
-    Lp  = cut["geom"].get("lengths", None)      # per point (n) arclen
-    Dp  = cut["geom"].get("diameters", None)    # per point (n)
-
-    if L2p is None or Lp is None or Dp is None:
-        raise ValueError("Faltan geom['lengths2'] o geom['lengths'] o geom['diameters'] en el cut.")
-
-    edge_points   = []
-    edge_lengths2 = []
-    edge_lengths  = []
-    edge_diams    = []
-    edge_len      = []
-
-    for ei in range(H.ecount()):
-        s = int(H.es[ei]["geom_start"])
-        en = int(H.es[ei]["geom_end"])
-
-        if en - s < 2:
-            edge_len.append(0.0)
-            edge_lengths2.append([])
-            edge_diams.append([])
-            edge_lengths.append([])
-            edge_points.append([] if store_points else None)
-            continue
-
-        # lengths2 Gaia: n-1 (quitamos el último 0)
-        l2 = np.asarray(L2p[s:en-1], dtype=float).tolist()
-        edge_lengths2.append(l2)
-        edge_len.append(float(np.sum(l2)))
-
-        # diameters per point
-        edge_diams.append(np.asarray(Dp[s:en], dtype=float).tolist())
-
-        # lengths per point (arclen)
-        edge_lengths.append(np.asarray(Lp[s:en], dtype=float).tolist())
-
-        # points (opcional, pesa)
-        if store_points:
-            pts = list(zip(map(float, x[s:en]), map(float, y[s:en]), map(float, z[s:en])))
-            edge_points.append(pts)
-        else:
-            edge_points.append(None)
-
-    # set attrs like Gaia
-    if store_points:
-        H.es["points"] = edge_points
-    H.es["lengths2"] = edge_lengths2
-    H.es["diameters"] = edge_diams
-    H.es["lengths"] = edge_lengths
-    H.es["length"] = edge_len
-
-    return cut
-
-# --------------------------
-# Optional: analyze long vessels cut
-# --------------------------
-def analyze_cut_edges(data, xBox, yBox, zBox, res_um, long_factor=2.0):
+def analyze_long_vessel(data, xBox, yBox, zBox, long_factor=2.0):
     G = data["graph"]
 
     x = data["geom"]["x"]
@@ -134,9 +63,8 @@ def analyze_cut_edges(data, xBox, yBox, zBox, res_um, long_factor=2.0):
         (coords_v[:, 2] >= zBox[0]) & (coords_v[:, 2] <= zBox[1])
     )
 
-    box_size_vox = np.array([xBox[1]-xBox[0], yBox[1]-yBox[0], zBox[1]-zBox[0]], dtype=float)
-    box_size_um = box_size_vox * np.asarray(res_um, float)
-    long_threshold_um = float(long_factor) * float(box_size_um.mean())
+    box_size = np.array([xBox[1]-xBox[0], yBox[1]-yBox[0], zBox[1]-zBox[0]], dtype=float)
+    long_threshold_um = float(long_factor) * float(box_size.mean())
 
     n_crossing = 0
     n_long_crossing = 0
@@ -155,34 +83,31 @@ def analyze_cut_edges(data, xBox, yBox, zBox, res_um, long_factor=2.0):
 
         P = np.column_stack([x[s:en], y[s:en], z[s:en]]).astype(np.float64)
         dP = np.diff(P, axis=0)
-        dP_um = dP * np.asarray(res_um, float)
-        L_um = float(np.sum(np.linalg.norm(dP_um, axis=1)))
+        L = float(np.sum(np.linalg.norm(dP, axis=1)))
 
         n_crossing += 1
-        if L_um > long_threshold_um:
+        if L > long_threshold_um:
             n_long_crossing += 1
 
-    print("Box size (µm):", box_size_um)
+    print("Box size (µm):", box_size)
     print("Long vessel threshold (µm):", long_threshold_um)
     print("Edges crossing box:", n_crossing)
     print("Long edges crossing box:", n_long_crossing)
     return n_crossing, n_long_crossing
 
 
-def check_box_margin_simple(data, xBox, yBox, zBox, res_um, margin_um=10.0):
+
+def check_box_margin_simple(data, xBox, yBox, zBox, margin_um=10.0):
     V = np.asarray(data["vertex"]["coords_image"], dtype=np.float64)
     minV = V.min(axis=0)
     maxV = V.max(axis=0)
-
-    margin_vox = margin_um / np.asarray(res_um, dtype=float)
-
     ok = (
-        (xBox[0] - minV[0] >= margin_vox[0]) and
-        (maxV[0] - xBox[1] >= margin_vox[0]) and
-        (yBox[0] - minV[1] >= margin_vox[1]) and
-        (maxV[1] - yBox[1] >= margin_vox[1]) and
-        (zBox[0] - minV[2] >= margin_vox[2]) and
-        (maxV[2] - zBox[1] >= margin_vox[2])
+        (xBox[0] - minV[0] >= margin_um[0]) and
+        (maxV[0] - xBox[1] >= margin_um[0]) and
+        (yBox[0] - minV[1] >= margin_um[1]) and
+        (maxV[1] - yBox[1] >= margin_um[1]) and
+        (zBox[0] - minV[2] >= margin_um[2]) and
+        (maxV[2] - zBox[1] >= margin_um[2])
     )
 
     if not ok:
@@ -191,7 +116,7 @@ def check_box_margin_simple(data, xBox, yBox, zBox, res_um, margin_um=10.0):
 
 
 # --------------------------
-# Main cut (Gaia-like info but global arrays)
+# Main cut (info in global arrays, not in edge/vertex)
 # --------------------------
 def cut_outgeom_gaia_like(data, xBox, yBox, zBox, tol=1e-6, min_straight_dist=1.0):
     G = data["graph"]
@@ -314,19 +239,18 @@ def cut_outgeom_gaia_like(data, xBox, yBox, zBox, tol=1e-6, min_straight_dist=1.
         return ww
 
     # --------------------------
-    # new geom arrays (p) + Gaia-like pointwise traces (global arrays)
+    # new geom arrays (p)
     # --------------------------
     new_x, new_y, new_z = [], [], []
     new_ann = []
     new_r = []
 
-    # Gaia definitions stored globally:
+    # Gaia definitions store:
     # lengths2: distance to next point (npoints-1), stored as npoints with last=0
     # length(edge) = sum(lengths2[s:en])
     # diameters: per point (len=npoints)
-    # lengths: per point (len=npoints) -> we store arclen (cumulative)
+
     new_lengths2 = []
-    new_lengths = []
     new_diameters = []
 
     def append_geom_block(P_keep, A_keep, R_keep):
@@ -351,22 +275,20 @@ def cut_outgeom_gaia_like(data, xBox, yBox, zBox, tol=1e-6, min_straight_dist=1.
 
         if n < 2:
             new_lengths2.extend([0.0] * n)
-            new_lengths.extend([0.0] * n)
             return start_idx, start_idx + n
 
         dP = np.diff(P_keep, axis=0)
         seg = np.linalg.norm(dP, axis=1).astype(np.float32)                  # (n-1,)
         lengths2_per_point = np.concatenate([seg, [0.0]]).astype(np.float32) # (n,)
-        arclen = np.concatenate([[0.0], np.cumsum(seg)]).astype(np.float32)  # (n,)
 
         new_lengths2.extend(lengths2_per_point.tolist())
-        new_lengths.extend(arclen.tolist())
         return start_idx, start_idx + n
 
     new_geom_start, new_geom_end = [], []
     new_edges = []
     new_edge_attr = {a: [] for a in e_attrs if a not in ["geom_start", "geom_end"]}
     orig_eid = []
+
     # --------------------------
     # iterate edges
     # --------------------------
@@ -523,7 +445,6 @@ def cut_outgeom_gaia_like(data, xBox, yBox, zBox, tol=1e-6, min_straight_dist=1.
                 "y": np.empty(0, np.float64),
                 "z": np.empty(0, np.float64),
                 "lengths2": np.empty(0, np.float32),
-                "lengths": np.empty(0, np.float32),
                 "diameters": np.empty(0, np.float32),
             },
         }
@@ -547,14 +468,9 @@ def cut_outgeom_gaia_like(data, xBox, yBox, zBox, tol=1e-6, min_straight_dist=1.
 
     # pointwise arrays
     L2 = np.asarray(new_lengths2, dtype=np.float32)
-    Lp = np.asarray(new_lengths, dtype=np.float32)
     Dp = np.asarray(new_diameters, dtype=np.float32)
 
-    # sanity lengths
-    nP = len(nx)
-    if len(L2) != nP or len(Lp) != nP or len(Dp) != nP:
-        raise RuntimeError("geom pointwise arrays length mismatch with x/y/z.")
-
+    
     # recompute length(edge) as sum(lengths2)  (Gaia definition)
     edge_len = np.zeros(H.ecount(), dtype=np.float64)
     for ei in range(H.ecount()):
@@ -566,7 +482,19 @@ def cut_outgeom_gaia_like(data, xBox, yBox, zBox, tol=1e-6, min_straight_dist=1.
             edge_len[ei] = float(np.sum(L2[s:en]))
     H.es["length"] = edge_len.tolist()
 
-    # recompute tortuosity for cut (still useful)
+    # sanity: edge_len equals sum(L2[s:en])
+    max_abs = 0.0
+    for ei in range(min(H.ecount(), 2000)):
+        s = int(H.es[ei]["geom_start"])
+        en = int(H.es[ei]["geom_end"])
+        if en - s < 2:
+            continue
+        via_L2 = float(np.sum(L2[s:en]))
+        max_abs = max(max_abs, abs(edge_len[ei] - via_L2))
+    print("[sanity] max |edge_len - sum(L2)| =", max_abs)
+
+
+    # recompute tortuosity for cut
     lt = np.zeros(H.ecount(), dtype=np.float64)
     sd = np.zeros(H.ecount(), dtype=np.float64)
     for ei in range(H.ecount()):
@@ -583,7 +511,6 @@ def cut_outgeom_gaia_like(data, xBox, yBox, zBox, tol=1e-6, min_straight_dist=1.
     tort = np.full(H.ecount(), np.nan, dtype=np.float64)
     m = sd >= float(min_straight_dist)
     tort[m] = lt[m] / sd[m]
-    H.es["length_tortuous"] = lt.tolist()
     H.es["tortuosity"] = tort.tolist()
 
     # delete isolated + keep arrays aligned
@@ -595,6 +522,7 @@ def cut_outgeom_gaia_like(data, xBox, yBox, zBox, tol=1e-6, min_straight_dist=1.
         for k in H_vertex:
             H_vertex[k] = H_vertex[k][keep]
 
+
     out = {
         "graph": H,
         "vertex": H_vertex,
@@ -602,8 +530,7 @@ def cut_outgeom_gaia_like(data, xBox, yBox, zBox, tol=1e-6, min_straight_dist=1.
             "x": nx,
             "y": ny,
             "z": nz,
-            "lengths2": L2,       # per point
-            "lengths": Lp,        
+            "lengths2": L2,       # per point        
             "diameters": Dp,      # per point
         },
     }
@@ -646,8 +573,8 @@ if __name__ == "__main__":
 
     print("BOX (voxels):", xBox, yBox, zBox)
 
-    analyze_cut_edges(data, xBox, yBox, zBox, res_um=res, long_factor=2.0)
-    check_box_margin_simple(data, xBox, yBox, zBox, res_um=res, margin_um=10.0)
+    analyze_long_vessel(data, xBox, yBox, zBox, long_factor=2.0)
+    check_box_margin_simple(data, xBox, yBox, zBox, margin_um=10.0)
 
     cut = cut_outgeom_gaia_like(
         data,
@@ -674,3 +601,6 @@ if __name__ == "__main__":
     print("Saved:", out_path,
           "Vertices:", cut["graph"].vcount(),
           "Edges:", cut["graph"].ecount())
+
+
+
