@@ -177,7 +177,7 @@ z = geom_xyz[:, 2]
 # geometry point-wise annotation + radii
 ann_geom = pd.read_csv(folder + "edge_geometry_annotation.csv", header=None, dtype=np.int32).to_numpy().reshape(-1)
 r_geom   = pd.read_csv(folder + "edge_geometry_radii.csv", header=None, dtype=np.float32).to_numpy().reshape(-1)
-
+r_atlas_geom   = pd.read_csv(folder + "edge_geometry_radii_atlas.csv", header=None, dtype=np.float32).to_numpy().reshape(-1)
 print("CSVs loaded")
 print(f"nV={nV:,}  nE={nE:,}  nP={x.shape[0]:,}")
 
@@ -213,7 +213,6 @@ G = ig.Graph(n=nV, edges=edges.tolist(), directed=False)
 
 # Minimal vertex attrs (scalars only)
 G.vs["id"] = vid.tolist()
-G.vs[""]
 
 # Edge attrs (scalars + indices)
 G.es["nkind"] = e_nkind.tolist()
@@ -300,7 +299,7 @@ data = {
         "vertex_annotation": v_ann,      # (nV,)
         "distance_to_surface": v_dist,   # (nV,) voxels
         "radii": v_radii,                # (nV,)
-        "radii_atlas": v_radii_atlas, 
+        "radii_atlas": v_radii_atlas,    # (nV,) voxels of atlas
     },
 
     # heavy per-geometry-point arrays
@@ -309,7 +308,8 @@ data = {
         "y": y,                          # (nP,) voxels
         "z": z,                          # (nP,) voxels
         "annotation": ann_geom,          # (nP,)
-        "radii": r_geom,                 # (nP,) 
+        "radii": r_geom,                 # (nP,) voxels
+        "radii_atlas_geom": r_atlas_geom # (nP,) voxels of atlas 
     },
 }
 

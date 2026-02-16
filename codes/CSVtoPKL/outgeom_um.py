@@ -1,5 +1,5 @@
 """
-Build vascular graph (from OutGeom pseudo-json) from pkl with voxel data IN MICROMETERS (µm) !!!!
+Convert PKL voxel data (from OutGeom pseudo-json) to MICROMETERS !!!!
 - coords_image (vertex) is in voxels of image and has to be converted to µm
 - tortuous geometry (points) x/y/z also in voxels of image and converted to µm
 - lengths2 (distance between points of the tortuous) computed in µm (per-point) 
@@ -14,6 +14,8 @@ We rescale coords_image first, then compute length2_real in micrometers by apply
 distance to the new in micrometer coordinates of points and then length_real (of the non tortuous edge)
 as the sum(lengths2_real)
 
+
+ACLARAR QUE USO RADII ATLAS Y NO RADII, PORQUE LA CONVERSION DE RADII NO LA CONOZCO 
 
 data
  ├── geom         (vox)
@@ -31,12 +33,9 @@ data
        ├── length_R
        └── tortuosity_R
 
----------------------------------------
-!!! IMPORTANT !!!  RADII UNITS TBD 
----------------------------------------
 
 Author: Ana Barrio
-Date: Feb 2026
+Date: 16 Feb 2026
 """
 
 
@@ -51,8 +50,12 @@ def convert_outgeom_pkl_to_um(
     
 ):
     
-    # Paris conversion factor voxels to image 
+    # Paris conversion factor voxels to micrometers (source resolution)
     sx, sy, sz = map(float, res_um_per_vox)
+
+    # sink image resolution (25,25,25) µm --> 1 voxel = 25 µm
+    # radii atlas in voxels of the 25 µm atlas grid
+    sink_resolution = 25
 
     data = pickle.load(open(in_path, "rb"))
     G = data["graph"]
@@ -89,20 +92,23 @@ def convert_outgeom_pkl_to_um(
     # -----------------------------------------
 
     if "coords_image" in v:
-        C = np.asarray(v["coords_image"], dtype=np.float64)  # shape (N,3) vox
-        v_R["coords_image_R"] = (C * np.array([sx, sy, sz])).astype(np.float32)
+        C_img_vox = np.asarray(v["coords_image"], dtype=np.float64)  # shape (N,3) vox
+        v_R["coords_image_R"] = (C_img_vox * np.array([sx, sy, sz])).astype(np.float32)
 
+    if "radii_atlas" in v:
+        R_atlas_vox = np.asarray(v["radii_atlas"], dtype=np.float64)  # shape (N,) vox
+        v_R["radii_atlas_R"] = (R_atlas_vox * sink_resolution).astype(np.float32)
     
     # --------------------------
     # distance_to_surface: vox -> approx in µm using sx due to isotropic assumption (Paris)
     # --------------------------
     if "distance_to_surface" in v:
-        d_vox = np.asarray(v["distance_to_surface"], dtype=np.float64)
-        v_R["distance_to_surface_R"] = (d_vox * sx).astype(np.float32, copy=False)  # sx = 1.625
+        dist_surf_vox = np.asarray(v["distance_to_surface"], dtype=np.float64)
+        v_R["distance_to_surface_R"] = (dist_surf_vox * sx).astype(np.float32, copy=False)  # sx = 1.625
 
 
     # --------------------------
-    # geom['lengths2'] in µm (per-point)
+    # Geometry in µm (per-point)
     # --------------------------
 
     dist_x = np.diff(x_um)   # same as x2-x1
@@ -114,11 +120,6 @@ def convert_outgeom_pkl_to_um(
     lengths2_list_R = euclidean_seg_R.astype(np.float32)    # (nP-1,)
     
     g_R["lengths2_R"] = lengths2_list_R
-
-    
-    if "radii" in g and "diameters" not in g:
-        g_R["diameters_R"] = (2.0 * np.asarray(g["radii"], np.float32)).astype(np.float32)   # <<<<<<<<<<<<<<<< CAREFUL RADII IN WHAT UNIT???????
-
 
     # --------------------------
     # Edge length in µm : sum(lengths2[s:en])
@@ -141,6 +142,15 @@ def convert_outgeom_pkl_to_um(
         if en - s >= 2:
             edge_length_R[i] = float(np.sum(lengths2_R[s:en]))
     G.es["length_R"] = edge_length_R.astype(np.float32).tolist()
+
+    # --------------------------
+    # Radii geometry in µm 
+    # --------------------------
+    if "radii_atlas_geom" in g:  
+        r_atlas_vox = np.asarray(g["radii_atlas_geom"], dtype=np.float64)  # (nP,) in atlas vox
+        g_R["radii_atlas_geom_R"] = (r_atlas_vox * sink_resolution).astype(np.float32)  # µm
+        g_R["diameters_atlas_geom_R"] = (2.0 * g_R["radii_atlas_geom_R"]).astype(np.float32)
+
 
     # --------------------------
     # Tortuosity (adimensional)
@@ -191,7 +201,6 @@ if __name__ == "__main__":
     convert_outgeom_pkl_to_um(
         in_path=in_path,
         out_path=out_path,
-        res_um_per_vox=(1.625, 1.625, 2.5),
-        convert_vertex_coords_attr=("coords_image",), 
+        res_um_per_vox=(1.625, 1.625, 2.5), 
         min_straight_dist_um=1.0,
     )
