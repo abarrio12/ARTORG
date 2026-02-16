@@ -1,37 +1,50 @@
 """
-Convert PKL voxel data (from OutGeom pseudo-json) to MICROMETERS !!!!
-- coords_image (vertex) is in voxels of image and has to be converted to µm
-- tortuous geometry (points) x/y/z also in voxels of image and converted to µm
-- lengths2 (distance between points of the tortuous) computed in µm (per-point) 
-- length (sum of lengths2) computed in µm 
-- distance_to_surface converted to µm (using sx, XY resolution) --> isotropic assumed in Paris code 
-(https://github.com/ClearAnatomics/ClearMap/blob/v3.1.x/ClearMap/Analysis/graphs/vasc_graph_doc.rst)
+Convert OutGeom PKL from voxel space to micrometers (µm), WITHOUT overwriting the original voxel arrays.
+The new attributes are stored in separate keys with suffix "_R" (for "real-world" units), while the original voxel-based attributes remain unchanged.
 
+What gets converted:
+- vertex["coords_image"] (image voxels)          -> vertex_R["coords_image_R"] in µm
+- geom["x","y","z"] (tortuous polyline points)   -> geom_R["x_R","y_R","z_R"] in µm
+- geom_R["lengths2_R"]                           -> per-segment lengths in µm (between consecutive polyline points)
+- graph edge length_R                            -> per-edge length in µm (sum of lengths2_R within geom_start:geom_end)
+- graph tortuosity_R                             -> unitless (length_R / straight_distance)
 
-Idea: we are using coordinates image (in voxels). We want to analyze in micrometers, so we go from 
-one measurement system to the other by rescaling with the image resolution (micrometers/voxels). 
-We rescale coords_image first, then compute length2_real in micrometers by applying euclidian 
-distance to the new in micrometer coordinates of points and then length_real (of the non tortuous edge)
-as the sum(lengths2_real)
+Important note about radii:
+- We convert radii using *radii_atlas* (atlas voxel grid, 25 µm/voxel), because this conversion is well-defined:
+    radius_um = radii_atlas_vox * 25  
 
+- We intentionally do NOT convert the original 'radii' (in image voxel space) from edge_geometry_radii.csv here, because its mapping
+  to physical units (µm) depends on the exact resampling/scaling used upstream (shape-based resample factor in the Paris/ClearMap pipeline),
+  and is not guaranteed to be a simple multiplication by the raw image resolution.
 
-ACLARAR QUE USO RADII ATLAS Y NO RADII, PORQUE LA CONVERSION DE RADII NO LA CONOZCO 
+Outputs are stored in:
+- data["vertex_R"] and data["geom_R"]  (µm)
+while keeping:
+- data["vertex"] and data["geom"]      (voxels)
+unchanged.
+
+Structure of the output PKL in physical units (µm) will be:
 
 data
- ├── geom         (vox)
- ├── vertex       (vox)
- ├── geom_R       (µm only)
+ ├── geom                  # original voxel data (unchanged) "non-tortuous graph"
+ ├── vertex                # original voxel data (unchanged) "non-tortuous graph"
+ │
+ ├── geom_R                # physical units (µm)
  │     ├── x_R
  │     ├── y_R
  │     ├── z_R
- │     ├── lengths2_R
- │     └── diameters_R
- ├── vertex_R     (µm only)
+ │     ├── lengths2_R                  # per-segment arc lengths (µm)
+ │     ├── radii_atlas_geom_R          # µm (atlas radii × 25)
+ │     └── diameters_atlas_geom_R      # µm
+ │
+ ├── vertex_R              # physical units (µm)
  │     ├── coords_image_R
- │     └── distance_to_surface_R
+ │     ├── distance_to_surface_R
+ │     └── radii_atlas_R              # µm (atlas radii × 25)
+ │
  └── graph
-       ├── length_R
-       └── tortuosity_R
+       ├── length_R                   # tortuous arc length (µm)
+       └── tortuosity_R               # dimensionless
 
 
 Author: Ana Barrio
