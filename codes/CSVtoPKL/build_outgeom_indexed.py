@@ -151,6 +151,7 @@ coords_img   = pd.read_csv(folder + "coordinates.csv", header=None, dtype=np.flo
 v_radii = pd.read_csv(folder + "radii.csv", header=None, dtype=np.float32).to_numpy().reshape(-1)
 v_ann   = pd.read_csv(folder + "annotation.csv", header=None, dtype=np.int32).to_numpy().reshape(-1)
 v_dist  = pd.read_csv(folder + "distance_to_surface.csv", header=None, dtype=np.float32).to_numpy().reshape(-1)
+v_radii_atlas = pd.read_csv(folder + "radii_atlas.csv", header=None, dtype=np.float32).to_numpy().reshape(-1)
 
 # edges (topology)
 edges = pd.read_csv(folder + "edges.csv", header=None, dtype=np.int64).to_numpy()  # (nE,2)
@@ -212,6 +213,7 @@ G = ig.Graph(n=nV, edges=edges.tolist(), directed=False)
 
 # Minimal vertex attrs (scalars only)
 G.vs["id"] = vid.tolist()
+G.vs[""]
 
 # Edge attrs (scalars + indices)
 G.es["nkind"] = e_nkind.tolist()
@@ -297,7 +299,8 @@ data = {
         "coords_image": coords_img,      # (nV,3) voxels
         "vertex_annotation": v_ann,      # (nV,)
         "distance_to_surface": v_dist,   # (nV,) voxels
-        "radii": v_radii,                # (nV,) micrometers (Franca gt2CSV, conversion factor 1.63, isotropic assumed)
+        "radii": v_radii,                # (nV,)
+        "radii_atlas": v_radii_atlas, 
     },
 
     # heavy per-geometry-point arrays
@@ -306,7 +309,7 @@ data = {
         "y": y,                          # (nP,) voxels
         "z": z,                          # (nP,) voxels
         "annotation": ann_geom,          # (nP,)
-        "radii": r_geom,                 # (nP,) micrometers (Franca gt2CSV, conversion factor 1.63, isotropic assumed)
+        "radii": r_geom,                 # (nP,) 
     },
 }
 
