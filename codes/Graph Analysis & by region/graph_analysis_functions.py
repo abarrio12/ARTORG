@@ -82,64 +82,45 @@ def dump_graph(graph, out_path):
 
 def activate_space_inplace(data, space="vox"):
     """
-    Makes analysis code unit-agnostic.
-    After activation, functions always use:
-
-        data["geom"]
-        data["vertex"]
-        G.es["length"]
-        G.es["tortuosity"]
-
-    regardless of original storage.
+    Minimal: makes existing code work unchanged.
+    - space='vox' uses original data
+    - space='um' swaps in the *_R fields as the default ones
     """
-
     G = data["graph"]
 
     if space == "vox":
-        # Nothing to change (original already in place)
         return data
 
-    elif space == "um":
-
-        if "geom_R" not in data or "vertex_R" not in data:
-            raise ValueError("Micrometer data not found (geom_R / vertex_R missing).")
-
-        # ---- Replace geom ----
-        gR = data["geom_R"]
-        g_new = {}
-
-        # Strip _R suffix automatically
-        for k, v in gR.items():
-            if k.endswith("_R"):
-                g_new[k[:-2]] = v
-            else:
-                g_new[k] = v
-
-        data["geom"] = g_new
-
-        # ---- Replace vertex ----
-        vR = data["vertex_R"]
-        v_new = {}
-
-        for k, v in vR.items():
-            if k.endswith("_R"):
-                v_new[k[:-2]] = v
-            else:
-                v_new[k] = v
-
-        data["vertex"] = v_new
-
-        # ---- Replace edge attributes ----
-        if "length_R" in G.es.attributes():
-            G.es["length"] = G.es["length_R"]
-
-        if "tortuosity_R" in G.es.attributes():
-            G.es["tortuosity"] = G.es["tortuosity_R"]
-
-        return data
-
-    else:
+    if space != "um":
         raise ValueError("space must be 'vox' or 'um'")
+
+    # --- checks ---
+    if "geom_R" not in data or "vertex_R" not in data:
+        raise ValueError("Missing geom_R / vertex_R in data (did you load the *_um.pkl?)")
+
+    gR = data["geom_R"]
+    vR = data["vertex_R"]
+
+    # --- swap geom ---
+    for a, b in [("x", "x_R"), ("y", "y_R"), ("z", "z_R"), ("lengths2", "lengths2_R")]:
+        if b in gR:
+            data["geom"][a] = gR[b]
+
+    # --- swap vertex ---
+    for a, b in [("coords_image", "coords_image_R"),
+                 ("distance_to_surface", "distance_to_surface_R"),
+                 ("radii_atlas", "radii_atlas_R")]:
+        if b in vR:
+            data["vertex"][a] = vR[b]
+
+    # --- swap edge attrs ---
+    if "length_R" in G.es.attributes():
+        G.es["length"] = G.es["length_R"]
+    if "tortuosity_R" in G.es.attributes():
+        G.es["tortuosity"] = G.es["tortuosity_R"]
+
+    return data
+
 
 
 def sync_vertex_attributes(data):
@@ -228,6 +209,13 @@ def make_box(
     return box
 
 
+def box_vox_to_um(box_vox, res_um_per_vox=res_um_per_vox):
+    r = np.asarray(res_um_per_vox, float)
+    return {
+        "xmin": box_vox["xmin"] * r[0], "xmax": box_vox["xmax"] * r[0],
+        "ymin": box_vox["ymin"] * r[1], "ymax": box_vox["ymax"] * r[1],
+        "zmin": box_vox["zmin"] * r[2], "zmax": box_vox["zmax"] * r[2],
+    }
 
 
 
@@ -829,7 +817,7 @@ def analyze_bc_faces(
     graph,
     box,
     coords_attr="coords_image",
-    eps=2.0,
+    eps=2.0, # OJO con eps: antes era “2 vox”. En µm sería aprox 2 * sx (o define eps por eje si quieres).
     degree_thr=4,
     compute_types=True,
     compute_depth=True,
