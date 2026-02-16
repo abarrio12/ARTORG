@@ -85,7 +85,7 @@ def convert_outgeom_pkl_to_um(
     # -----------------------------------------
 
     # check all keys are within the geometry, if not problem in build_outgeom_indexed.py
-    if not {"x", "y", "z"} <= g:
+    if not {"x", "y", "z"} <= set(g.keys()):
         raise KeyError("data['geom'] must contain x,y,z. Check your building the graph code")
 
     x_vox = np.asarray(g["x"], dtype=np.float64)
@@ -208,8 +208,8 @@ def convert_outgeom_pkl_to_um(
 
 
 if __name__ == "__main__":
-    in_path = "/home/admin/Ana/MicroBrain/output/graph_18_OutGeom.pkl"
-    out_path = "/home/admin/Ana/MicroBrain/output/graph_18_OutGeom_um.pkl"
+    in_path = "/home/admin/Ana/MicroBrain/output/graph_18_OutGeom_Hcut3.pkl"
+    out_path = "/home/admin/Ana/MicroBrain/output/graph_18_OutGeom_Hcut3_um.pkl"
 
     convert_outgeom_pkl_to_um(
         in_path=in_path,

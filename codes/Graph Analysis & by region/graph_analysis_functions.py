@@ -80,6 +80,66 @@ def dump_graph(graph, out_path):
     print(f"\nGraph successfully saved to: {out_path}")
 
 
+def activate_space_inplace(data, space="vox"):
+    """
+    Makes analysis code unit-agnostic.
+    After activation, functions always use:
+
+        data["geom"]
+        data["vertex"]
+        G.es["length"]
+        G.es["tortuosity"]
+
+    regardless of original storage.
+    """
+
+    G = data["graph"]
+
+    if space == "vox":
+        # Nothing to change (original already in place)
+        return data
+
+    elif space == "um":
+
+        if "geom_R" not in data or "vertex_R" not in data:
+            raise ValueError("Micrometer data not found (geom_R / vertex_R missing).")
+
+        # ---- Replace geom ----
+        gR = data["geom_R"]
+        g_new = {}
+
+        # Strip _R suffix automatically
+        for k, v in gR.items():
+            if k.endswith("_R"):
+                g_new[k[:-2]] = v
+            else:
+                g_new[k] = v
+
+        data["geom"] = g_new
+
+        # ---- Replace vertex ----
+        vR = data["vertex_R"]
+        v_new = {}
+
+        for k, v in vR.items():
+            if k.endswith("_R"):
+                v_new[k[:-2]] = v
+            else:
+                v_new[k] = v
+
+        data["vertex"] = v_new
+
+        # ---- Replace edge attributes ----
+        if "length_R" in G.es.attributes():
+            G.es["length"] = G.es["length_R"]
+
+        if "tortuosity_R" in G.es.attributes():
+            G.es["tortuosity"] = G.es["tortuosity_R"]
+
+        return data
+
+    else:
+        raise ValueError("space must be 'vox' or 'um'")
 
 
 def sync_vertex_attributes(data):
@@ -166,57 +226,6 @@ def make_box(
               f"x={sx:.2f}, y={sy:.2f}, z={sz:.2f}")
 
     return box
-
-
-
-def convert_attr_to_um(data, sx=1.625, sy=1.625, sz=2.5):
-    """
-    Convert dataset from voxel units to micrometers.
-
-    - Geometry coordinates -> µm
-    - Recompute lengths2 in µm (anisotropic-safe)
-    - Convert distance_to_surface using in-plane resolution (1.625 µm/voxel)
-
-    Original voxel values are preserved.
-    """
-
-    # -------------------------
-    # GEOMETRY (anisotropic)
-    # -------------------------
-    g = data["geom"]
-
-    x_vox = np.asarray(g["x"], float)
-    y_vox = np.asarray(g["y"], float)
-    z_vox = np.asarray(g["z"], float)
-
-    # Convert coordinates to µm
-    x_um = x_vox * sx
-    y_um = y_vox * sy
-    z_um = z_vox * sz
-
-    g["x_um"] = x_um
-    g["y_um"] = y_um
-    g["z_um"] = z_um
-
-    # Recompute lengths2 in µm 
-    dx = np.diff(x_um)
-    dy = np.diff(y_um)
-    dz = np.diff(z_um)
-
-    g["lengths2"] = np.sqrt(dx*dx + dy*dy + dz*dz) 
-    
-    # -------------------------
-    # DISTANCE TO SURFACE (assumes isotropic)
-    # -------------------------
-    G = data["graph"]
-
-    if "distance_to_surface" in G.vs.attributes():
-        d_vox = np.asarray(G.vs["distance_to_surface"], float)
-
-        # Multiply by in-plane resolution (1.625 µm/voxel)
-        G.vs["distance_to_surface_um"] = (d_vox * sx).tolist()
-
-    return data
 
 
 
