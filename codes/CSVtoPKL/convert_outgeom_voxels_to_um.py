@@ -33,7 +33,7 @@ data
  │     ├── x_R
  │     ├── y_R
  │     ├── z_R
- │     ├── lengths2_R                  # per-segment arc lengths (µm)
+ │     ├── lengths2_R                  # per-segment lengths (µm), last = 0
  │     ├── radii_atlas_geom_R          # µm (atlas radii × 25)
  │     └── diameters_atlas_geom_R      # µm
  │
@@ -130,7 +130,7 @@ def convert_outgeom_pkl_to_um(
 
     euclidean_seg_R = np.sqrt(dist_x*dist_x + dist_y*dist_y + dist_z*dist_z).astype(np.float32)      # (nP-1,)
     
-    lengths2_list_R = euclidean_seg_R.astype(np.float32)    # (nP-1,)
+    lengths2_list_R = np.concatenate([euclidean_seg_R, [0.0]]).astype(np.float32)  # (nP,) 
     
     g_R["lengths2_R"] = lengths2_list_R
 
