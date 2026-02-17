@@ -12,6 +12,17 @@ Faces-only BC + Gaia-style vessel density + radii sanity + redundancy via edge-d
 ✅ Degree distribution checks + spatial maps for any degree band
 """
 
+# SPACE CONVENTION (IMPORTANT)
+# ---------------------------
+# - `space` selects which coordinates are used:
+#     space="vox" -> coords_image (voxels)
+#     space="um"  -> coords_image_R (micrometers)
+#
+# - `eps` is ALWAYS interpreted as VOXELS.
+#   If space="um", eps is automatically converted to µm using res_um_per_vox[axis].
+#   So: to work in µm, change ONLY `space` (not eps).
+
+
 import pickle
 import numpy as np
 import matplotlib.pyplot as plt
@@ -61,6 +72,119 @@ FACES_DEF = {
     "z_min": (2, "zmin"),
     "z_max": (2, "zmax"),
 }
+
+
+# ====================================================================================================================
+#                                                    SPACE HELPERS (voxels vs micrometers)
+# ====================================================================================================================
+def resolve_vertex(data, space="vox"):
+    return data["vertex"] if space == "vox" else data["vertex_R"]
+
+def resolve_geom(data, space="vox"):
+    return data["geom"] if space == "vox" else data["geom_R"]
+
+def resolve_coords_attr(space="vox"):
+    return "coords_image" if space == "vox" else "coords_image_R"
+
+def resolve_depth_attr(space="vox"):
+    return "distance_to_surface" if space == "vox" else "distance_to_surface_R"
+def resolve_length_attr(space="vox"):
+    return "length" if space == "vox" else "length_R"
+
+def resolve_tortuosity_attr(space="vox"):
+    return "tortuosity" if space == "vox" else "tortuosity_R"
+
+def resolve_lengths2(data, space="vox"):
+    if space == "vox":
+        return np.asarray(data["geom"]["lengths2"], float)
+    else:
+        return np.asarray(data["geom_R"]["lengths2_R"], float)
+
+def resolve_geom_coords(data, space="vox"):
+    if space == "vox":
+        g = data["geom"]
+        return (
+            np.asarray(g["x"], float),
+            np.asarray(g["y"], float),
+            np.asarray(g["z"], float),
+        )
+    else:
+        g = data["geom_R"]
+        return (
+            np.asarray(g["x_R"], float),
+            np.asarray(g["y_R"], float),
+            np.asarray(g["z_R"], float),
+        )
+    
+def resolve_eps(eps=2.0, space="vox", res_um_per_vox=res_um_per_vox, ref_vox_eps=2.0, axis=0):
+    '''
+    Convention:
+    - eps is ALWAYS specified in VOXELS
+    - If space="um", eps is converted: eps_um = eps_vox * res_um_per_vox[axis].
+    '''
+    eps = float(eps)
+    if space == "um":
+        eps *= float(res_um_per_vox[axis])
+    return eps
+
+def resolve_space_and_attrs(
+    graph,
+    space=None,
+    coords_attr=None,
+    depth_attr=None,
+    require_space=True,
+    require_coords=True,
+    require_depth=False,
+):
+    """
+    Enforce the space/attribute contract.
+
+    Rules:
+    - If require_space: space must be "vox" or "um" (no defaults).
+    - If coords_attr is None: infer from space (coords_image vs coords_image_R).
+    - If depth_attr is None: infer from space (distance_to_surface vs distance_to_surface_R).
+    - Validate that chosen attrs exist in graph.vs.
+
+    Returns
+    -------
+    space, coords_attr, depth_attr
+    """
+    if require_space:
+        if space not in ("vox", "um"):
+            raise ValueError("space must be explicitly set to 'vox' or 'um' (no default).")
+    else:
+        if space is not None and space not in ("vox", "um"):
+            raise ValueError("space must be None, 'vox', or 'um'.")
+
+    # infer attrs only if space is provided
+    if coords_attr is None:
+        if require_coords:
+            if space is None:
+                raise ValueError("coords_attr is None and space is None. Provide one of them.")
+            coords_attr = resolve_coords_attr(space=space)
+
+    if depth_attr is None:
+        if require_depth:
+            if space is None:
+                raise ValueError("depth_attr is None and space is None. Provide one of them.")
+            depth_attr = resolve_depth_attr(space=space)
+        else:
+            # optional depth: only infer if space is given
+            if space is not None:
+                depth_attr = resolve_depth_attr(space=space)
+
+    # validate attrs
+    if require_coords and coords_attr is not None and coords_attr not in graph.vs.attributes():
+        raise ValueError(f"coords_attr='{coords_attr}' not found in graph.vs. "
+                         f"Available: {graph.vs.attributes()}")
+
+    if require_depth and depth_attr is not None and depth_attr not in graph.vs.attributes():
+        raise ValueError(f"depth_attr='{depth_attr}' not found in graph.vs. "
+                         f"Available: {graph.vs.attributes()}")
+
+    return space, coords_attr, depth_attr
+
+
 
 # ====================================================================================================================
 #                                                    LOAD / SAVE
@@ -135,9 +259,9 @@ def sync_vertex_attributes(data):
 
 
 
-def make_box(
+def make_box_in_vox(
     center_vox,
-    box_um,
+    box_size_um,
     res_um_per_vox = res_um_per_vox,
     as_float=True,
     sanity_check=True
@@ -174,13 +298,13 @@ def make_box(
     """
 
     center_vox = np.asarray(center_vox, dtype=float)
-    box_um = np.asarray(box_um, dtype=float)
+    box_um = np.asarray(box_size_um, dtype=float)
     res_um_per_vox = np.asarray(res_um_per_vox, dtype=float)
 
     if center_vox.shape != (3,):
         raise ValueError("center_vox must be length-3 (x,y,z) in voxels")
     if box_um.shape != (3,):
-        raise ValueError("box_um must be length-3 (µm)")
+        raise ValueError("box_size_um must be length-3 (µm)")
     if res_um_per_vox.shape != (3,):
         raise ValueError("res_um_per_vox must be length-3 (µm/voxel)")
 
@@ -209,12 +333,17 @@ def make_box(
     return box
 
 
-def box_vox_to_um(box_vox, res_um_per_vox=res_um_per_vox):
-    r = np.asarray(res_um_per_vox, float)
+def make_box_in_um(center_vox, box_size_um, res_um_per_vox=res_um_per_vox):
+    '''
+    Return a box dict in µm from center in voxels (from Paraview), box size in µm, and resolution.
+    Note: this is just a helper to build the box in micrometers if !!! coords_attr='coords_image_R' !!!!
+    '''
+    center_um = np.asarray(center_vox) * res_um_per_vox
+    box_um = np.array(box_size_um, dtype=float)
     return {
-        "xmin": box_vox["xmin"] * r[0], "xmax": box_vox["xmax"] * r[0],
-        "ymin": box_vox["ymin"] * r[1], "ymax": box_vox["ymax"] * r[1],
-        "zmin": box_vox["zmin"] * r[2], "zmax": box_vox["zmax"] * r[2],
+        "xmin": float(center_um[0] - box_um[0]/2), "xmax": float(center_um[0] + box_um[0]/2),
+        "ymin": float(center_um[1] - box_um[1]/2), "ymax": float(center_um[1] + box_um[1]/2),
+        "zmin": float(center_um[2] - box_um[2]/2), "zmax": float(center_um[2] + box_um[2]/2),
     }
 
 
@@ -309,15 +438,27 @@ def loop_edge_stats(G):
 
 
 
-def get_geom_from_data(data, want_radii=False):
+def get_geom_from_data(data, space="vox", want_radii=False):
+
     G = data["graph"]
-    g = data["geom"]
-    x = np.asarray(g["x"], float)
-    y = np.asarray(g["y"], float)
-    z = np.asarray(g["z"], float)
-    L2 = np.asarray(g["lengths2"], float)
-    r  = np.asarray(g["radii"], float) if (want_radii and "radii" in g) else None
+
+    if space == "vox":
+        g = data["geom"]
+        x = np.asarray(g["x"], float)
+        y = np.asarray(g["y"], float)
+        z = np.asarray(g["z"], float)
+        L2 = np.asarray(g["lengths2"], float)
+        r = np.asarray(g["radii"], float) if want_radii and "radii" in g else None
+    else:
+        g = data["geom_R"]
+        x = np.asarray(g["x_R"], float)
+        y = np.asarray(g["y_R"], float)
+        z = np.asarray(g["z_R"], float)
+        L2 = np.asarray(g["lengths2_R"], float)
+        r = np.asarray(g["radii_atlas_geom_R"], float) if want_radii and "radii_atlas_geom_R" in g else None
+
     return G, x, y, z, L2, r
+
 
 def get_range_from_data(data, eid):
     G = data["graph"]
@@ -325,7 +466,6 @@ def get_range_from_data(data, eid):
 
 def get_edge_attr_from_data(data, eid, name):
     return data["graph"].es[eid][name]
-
 
 
 
@@ -401,21 +541,26 @@ def get_edges_types(graph, label_dict=EDGE_NKIND_TO_LABEL, return_dict=True):
 
 
 
-def get_avg_length_nkind(graph):
+def get_avg_length_nkind(graph, space="um"):
     """Compute mean edge length per nkind."""
-    check_attr(graph, ["length", "nkind"], "es")
-        
-    length_att = np.array(graph.es["length"], dtype=float)
+    length_attr = resolve_length_attr(space=space)
+    check_attr(graph, [length_attr, "nkind"], "es")
+
+    length_att = np.array(graph.es[length_attr], dtype=float)
     nkind = np.array(graph.es["nkind"], dtype=int)
 
     unique = np.unique(nkind)
     l = []
-    print("\nAverage length by nkind:\n")
+    unit = "µm" if space == "um" else "vox"
+
+    print(f"\nAverage length by nkind (space={space}):\n")
     for k in unique:
         mean_l = float(np.mean(length_att[nkind == k]))
         l.append(mean_l)
-        print(f"nkind = {k}: average length (att) = {mean_l:.6f} µm")
+        print(f"nkind = {k}: average length ({length_attr}) = {mean_l:.6f} {unit}")
+
     return unique, l
+
 
 
 
@@ -446,7 +591,6 @@ def diameter_stats_nkind(
     label_dict=None,
     ranges=None,
     plot=True,
-    verbose=False,
 ):
     """
     Compute diameter statistics grouped by nkind.
@@ -502,9 +646,8 @@ def diameter_stats_nkind(
         }
 
     # Console output
-    if verbose:
-        print("\n=== Diameter statistics (by nkind) ===\n")
-        for k in sorted(stats_dict.keys()):
+    print("\n=== Diameter statistics (by nkind) ===\n")
+    for k in sorted(stats_dict.keys()):
             s = stats_dict[k]
             print(f"{s['name']} (nkind={k}, n={s['n']}):")
             print(f"  mean:   {s['mean']:.2f} µm")
@@ -562,34 +705,63 @@ def get_degrees(graph, threshold=4):
 
 
 
-
 def distance_to_surface_stats(
     graph,
     nodes,
-    depth_attr="distance_to_surface",
-    depth_bins=DEFAULT_DEPTH_BINS_UM,
+    space="vox",  # "vox" or "um"
+    depth_attr_vox="distance_to_surface",
+    depth_attr_um="distance_to_surface_R",
+    depth_bins_um=DEFAULT_DEPTH_BINS_UM,
+    res_um_per_vox=res_um_per_vox,
 ):
     """
-    Compute summary stats and named depth-bin distribution for graph.vs[depth_attr]
-    over the provided nodes.
+    Stats + depth-bin counts for distance-to-surface.
 
+    - space="vox": uses graph.vs[depth_attr_vox] (vox). Converts the UM bins -> VOX using XY resolution.
+    - space="um" : uses graph.vs[depth_attr_um]  (µm). Uses bins in µm directly.
 
-    Note: distance_to_surface is stored in VOXELS and was computed assuming isotropic voxels.
-    Since our image resolution is anisotropic (1.625, 1.625, 2.5 µm),
-    we approximate the physical depth by multiplying with the XY resolution (1.625 µm/voxel).
-    This keeps consistency across regions, although it is an approximation.
+    Note: Your conversion script defines:
+      distance_to_surface_R = distance_to_surface * sx
+    where sx = res_um_per_vox[0] (XY resolution).
+    So we use that same convention here.
     """
-
-    check_attr(graph, depth_attr, "vs")
-
     nodes = np.asarray(nodes, dtype=int)
     if nodes.size == 0:
         return None
 
-    d = np.asarray(graph.vs[depth_attr], dtype=float)
-    vals = d[nodes]
+    if space == "um":
+        depth_attr = depth_attr_um
+        unit = "µm"
+        # bins already in µm
+        bins = depth_bins_um
+        check_attr(graph, depth_attr, "vs")
+        vals = np.asarray(graph.vs[depth_attr], dtype=float)[nodes]
+
+        range_key = "range_um"
+
+    elif space == "vox":
+        depth_attr = depth_attr_vox
+        unit = "vox"
+        check_attr(graph, depth_attr, "vs")
+        vals = np.asarray(graph.vs[depth_attr], dtype=float)[nodes]
+
+        # Convert µm bins -> vox bins using XY scaling (sx), to stay consistent with your outgeom_um.py
+        sx = float(res_um_per_vox[0])
+        bins = []
+        for label, low_um, high_um in depth_bins_um:
+            low_v = float(low_um) / sx
+            high_v = float(high_um) / sx if np.isfinite(high_um) else np.inf
+            bins.append((label, low_v, high_v))
+
+        range_key = "range_vox"
+
+    else:
+        raise ValueError("space must be 'vox' or 'um'")
 
     out = {
+        "space": space,
+        "unit": unit,
+        "depth_attr": depth_attr,
         "n": int(vals.size),
         "min": float(np.min(vals)),
         "mean": float(np.mean(vals)),
@@ -599,11 +771,11 @@ def distance_to_surface_stats(
     }
 
     n = vals.size
-    for label, low, high in depth_bins:
+    for label, low, high in bins:
         mask = (vals >= low) & (vals < high)
         c = int(np.sum(mask))
         out["bins"][label] = {
-            "range_um": [float(low), float(high)],
+            range_key: [float(low), float(high)],
             "count": c,
             "proportion": float(c / n),
         }
@@ -614,23 +786,49 @@ def distance_to_surface_stats(
 
 def analyze_hdn_pattern_in_box(
     graph,
+    space=None,
+    coords_attr=None,
+    depth_attr=None,
     degree_thr=4,
-    box=None,                          # dict xmin/xmax/ymin/ymax/zmin/zmax (vox) optional
-    coords_attr="coords_image",
-    depth_attr="distance_to_surface",
-    depth_bins=(("0–20", 0, 20), ("20–50", 20, 50), ("50–200", 50, 200), (">200", 200, np.inf)),
-    vessel_type_map=EDGE_NKIND_TO_LABEL,              # nkind->label
-    verbose=True,
+    box=None,  # must be in SAME units as coords_attr/space
+    depth_bins_um=(("0–20", 0, 20), ("20–50", 20, 50), ("50–200", 50, 200), (">200", 200, np.inf)),
+    vessel_type_map=EDGE_NKIND_TO_LABEL,
+    eps_vox=2.0,  # ALWAYS in vox; converted internally if space="um"
 ):
     """
-    Summarize HDN pattern: abundance, type composition, depth, wall bias, spatial concentration.
-    Returns a dict (and optionally prints a readable summary).
+    HDN fingerprint (no prints). Strict unit compliance.
+
+    Contract:
+    - You MUST set space to "vox" or "um" (no default).
+    - If coords_attr is None, it is inferred from space.
+    - If depth_attr is None, it is inferred from space.
+    - box must be in SAME units as coords_attr/space.
+    - eps_vox is ALWAYS specified in vox; if space="um" it's converted per axis when applied.
+
+    Returns dict with:
+      - counts, type composition
+      - spatial centroid/concentration (if coords available)
+      - depth stats in µm (if depth available)
+      - face bias (if box provided)
     """
-    # --- HDN indices ---
+    space, coords_attr, depth_attr = resolve_space_and_attrs(
+        graph,
+        space=space,
+        coords_attr=coords_attr,
+        depth_attr=depth_attr,
+        require_space=True,
+        require_coords=True,
+        require_depth=False,  # depth is optional
+    )
+
     deg = np.asarray(graph.degree(), dtype=int)
     hdn = np.where(deg >= int(degree_thr))[0]
 
     out = {
+        "space": space,
+        "coords_attr": coords_attr,
+        "depth_attr": depth_attr,
+        "eps_vox": float(eps_vox),
         "degree_thr": int(degree_thr),
         "n_nodes": int(graph.vcount()),
         "n_hdn": int(hdn.size),
@@ -638,113 +836,99 @@ def analyze_hdn_pattern_in_box(
     }
 
     if hdn.size == 0:
-        if verbose:
-            print(f"[HDN] No HDN found for deg >= {degree_thr}.")
+        out["spatial"] = None
+        out["hdn_type_composition"] = None
+        out["depth_hdn"] = None
+        out["face_bias_hdn"] = None
         return out
 
-    # --- Coords for spatial pattern ---
-    if coords_attr in graph.vs.attributes():
-        P = np.asarray(graph.vs[coords_attr], float)
-        Ph = P[hdn]
+    # --- spatial pattern (coords required) ---
+    P = np.asarray(graph.vs[coords_attr], float)
+    Ph = P[hdn]
 
-        # Concentration: compare average distance to centroid (HDN vs all)
-        c_all = P.mean(axis=0)
-        c_hdn = Ph.mean(axis=0)
-        d_all = np.linalg.norm(P - c_all, axis=1)
-        d_hdn = np.linalg.norm(Ph - c_hdn, axis=1)
+    c_all = P.mean(axis=0)
+    c_hdn = Ph.mean(axis=0)
+    d_all = np.linalg.norm(P - c_all, axis=1)
+    d_hdn = np.linalg.norm(Ph - c_hdn, axis=1)
 
-        out["spatial"] = {
-            "centroid_all": c_all.tolist(),
-            "centroid_hdn": c_hdn.tolist(),
-            "centroid_shift": (c_hdn - c_all).tolist(),
-            "mean_dist_to_centroid_all": float(d_all.mean()),
-            "mean_dist_to_centroid_hdn": float(d_hdn.mean()),
-            "concentration_ratio_hdn_over_all": float(d_hdn.mean() / d_all.mean()) if d_all.mean() else None,
-        }
-        # Interpretation: ratio < 1 => HDN more concentrated than all nodes
-    else:
-        out["spatial"] = None
+    out["spatial"] = {
+        "centroid_all": c_all.tolist(),
+        "centroid_hdn": c_hdn.tolist(),
+        "centroid_shift": (c_hdn - c_all).tolist(),
+        "mean_dist_to_centroid_all": float(d_all.mean()),
+        "mean_dist_to_centroid_hdn": float(d_hdn.mean()),
+        "concentration_ratio_hdn_over_all": float(d_hdn.mean() / d_all.mean()) if d_all.mean() else None,
+    }
 
-    # --- Type composition (by incident edges' nkind) ---
+    # --- type composition ---
     type_comp = None
     if vessel_type_map is not None and ("nkind" in graph.es.attributes()):
-        labels = np.array([infer_node_type_from_incident_edges(graph, v, vessel_type_map) for v in hdn], dtype=object)
+        labels = np.array(
+            [infer_node_type_from_incident_edges(graph, int(v), vessel_type_map) for v in hdn],
+            dtype=object,
+        )
         uniq, cnt = np.unique(labels, return_counts=True)
         type_comp = {str(u): {"count": int(c), "proportion": float(c / labels.size)} for u, c in zip(uniq, cnt)}
     out["hdn_type_composition"] = type_comp
 
-    # --- Depth (distance_to_surface) summary + bins ---
+    # --- depth (always reported in µm) ---
     depth_out = None
-    if depth_attr in graph.vs.attributes():
-        d = np.asarray(graph.vs[depth_attr], float)
-        vals = d[hdn] * res_um_per_vox[0]   # distance to surface in voxels by default. Passing to micrometers.
+    if depth_attr is not None and depth_attr in graph.vs.attributes():
+        d = np.asarray(graph.vs[depth_attr], float)[hdn]
+
+        if space == "vox":
+            # Paris convention: distance_to_surface stored in vox, isotropic assumption -> scale by XY
+            vals_um = d * float(res_um_per_vox[0])
+        else:
+            vals_um = d
+
         depth_out = {
-            "n": int(vals.size),
-            "min": float(vals.min()),
-            "mean": float(vals.mean()),
-            "median": float(np.median(vals)),
-            "max": float(vals.max()),
+            "unit": "µm",
+            "n": int(vals_um.size),
+            "min": float(np.min(vals_um)),
+            "mean": float(np.mean(vals_um)),
+            "median": float(np.median(vals_um)),
+            "max": float(np.max(vals_um)),
             "bins": {},
         }
-        n = vals.size
-        for label, low, high in depth_bins:
-            mask = (vals >= low) & (vals < high)
-            c = int(mask.sum())
-            depth_out["bins"][label] = {"range_um": [float(low), float(high)], "count": c, "proportion": float(c / n)}
+
+        n = vals_um.size
+        for label, low, high in depth_bins_um:
+            mask = (vals_um >= float(low)) & (vals_um < float(high))
+            c = int(np.sum(mask))
+            depth_out["bins"][label] = {
+                "range_um": [float(low), float(high)],
+                "count": c,
+                "proportion": float(c / n) if n else 0.0,
+            }
+
     out["depth_hdn"] = depth_out
 
-    # --- Wall/face bias (requires box + coords) ---
+    # --- face bias (box must be same units as coords_attr/space) ---
     face_bias = None
-    if box is not None and coords_attr in graph.vs.attributes():
+    if box is not None:
+        validate_box_faces(box)
         xmin, xmax = float(box["xmin"]), float(box["xmax"])
         ymin, ymax = float(box["ymin"]), float(box["ymax"])
         zmin, zmax = float(box["zmin"]), float(box["zmax"])
-        # eps: 2 vox por defecto (ajusta según resolución)
-        eps = 2.0
+
+        # eps is ALWAYS in vox; convert to the coordinate unit if needed
+        eps_x = resolve_eps(eps_vox, space=space, axis=0)
+        eps_y = resolve_eps(eps_vox, space=space, axis=1)
+        eps_z = resolve_eps(eps_vox, space=space, axis=2)
 
         face_bias = {
-            "x_min": float(np.mean(np.abs(P[hdn, 0] - xmin) <= eps)),
-            "x_max": float(np.mean(np.abs(P[hdn, 0] - xmax) <= eps)),
-            "y_min": float(np.mean(np.abs(P[hdn, 1] - ymin) <= eps)),
-            "y_max": float(np.mean(np.abs(P[hdn, 1] - ymax) <= eps)),
-            "z_min": float(np.mean(np.abs(P[hdn, 2] - zmin) <= eps)),
-            "z_max": float(np.mean(np.abs(P[hdn, 2] - zmax) <= eps)),
+            "x_min": float(np.mean(np.abs(Ph[:, 0] - xmin) <= eps_x)),
+            "x_max": float(np.mean(np.abs(Ph[:, 0] - xmax) <= eps_x)),
+            "y_min": float(np.mean(np.abs(Ph[:, 1] - ymin) <= eps_y)),
+            "y_max": float(np.mean(np.abs(Ph[:, 1] - ymax) <= eps_y)),
+            "z_min": float(np.mean(np.abs(Ph[:, 2] - zmin) <= eps_z)),
+            "z_max": float(np.mean(np.abs(Ph[:, 2] - zmax) <= eps_z)),
         }
         face_bias["max_face_bias"] = float(max(face_bias.values()))
+
     out["face_bias_hdn"] = face_bias
-
-    # --- Pretty print (optional) ---
-    if verbose:
-        print(f"\n=== HDN fingerprint (deg ≥ {degree_thr}) ===")
-        print(f"HDN: {out['n_hdn']} / {out['n_nodes']}  ({100*out['hdn_fraction']:.2f}%)")
-
-        if out["hdn_type_composition"] is not None:
-            print("\nHDN node-type composition (inferred from incident edge nkind):")
-            for k, v in sorted(out["hdn_type_composition"].items(), key=lambda kv: -kv[1]["proportion"]):
-                print(f"  {k:10s}: {v['count']:4d}  ({100*v['proportion']:.1f}%)")
-
-        if out["depth_hdn"] is not None:
-            dh = out["depth_hdn"]
-            print(f"\nHDN depth ({depth_attr}) µm: median={dh['median']:.2f}, mean={dh['mean']:.2f}, min={dh['min']:.2f}, max={dh['max']:.2f}")
-            print("Depth bins:")
-            for lab, b in dh["bins"].items():
-                print(f"  {lab:>7s}: {b['count']:4d} ({100*b['proportion']:.1f}%)")
-
-        if out["face_bias_hdn"] is not None:
-            fb = out["face_bias_hdn"]
-            print("\nFace bias (fraction of HDN within ~2 vox of each face):")
-            for face in ["x_min","x_max","y_min","y_max","z_min","z_max"]:
-                print(f"  {face}: {fb[face]:.3f}")
-            print(f"  max_face_bias: {fb['max_face_bias']:.3f}")
-
-        if out["spatial"] is not None:
-            sp = out["spatial"]
-            r = sp["concentration_ratio_hdn_over_all"]
-            if r is not None:
-                print(f"\nSpatial concentration ratio (HDN/all) = {r:.3f}  (<1 => HDN more concentrated)")
-
     return out
-
 
                                                                
 
@@ -816,37 +1000,39 @@ def infer_node_type_from_incident_edges(graph, node_id, vessel_type_map = EDGE_N
 def analyze_bc_faces(
     graph,
     box,
-    coords_attr="coords_image",
-    eps=2.0, # OJO con eps: antes era “2 vox”. En µm sería aprox 2 * sx (o define eps por eje si quieres).
+    space=None,
+    coords_attr=None,
+    eps=2.0,            # ALWAYS in vox
     degree_thr=4,
-    compute_types=True,
-    compute_depth=True,
     return_node_ids=False,
-    verbose=True,
 ):
-    """
-    BC analysis PER FACE (faces-only).
-    Returns dict: face -> metrics
-    """
     validate_box_faces(box)
 
-    deg = np.asarray(graph.degree(), dtype=int)
-    has_d2s = compute_depth and ("distance_to_surface" in graph.vs.attributes())
-    has_nkind = compute_types and ("nkind" in graph.es.attributes())
+    space, coords_attr, depth_attr = resolve_space_and_attrs(
+        graph,
+        space=space,
+        coords_attr=coords_attr,
+        depth_attr=None,
+        require_space=True,
+        require_coords=True,
+        require_depth=False,
+    )
 
-    if verbose:
-        print("\n=== BC ANALYSIS (PER FACE) ===")
-        print(f"Graph: {graph.vcount()} vertices, {graph.ecount()} edges")
-        print(f"coords_attr='{coords_attr}' | eps={eps} | degree_thr={degree_thr}")
+    deg = np.asarray(graph.degree(), dtype=int)
+    has_nkind = "nkind" in graph.es.attributes()
+
+    # depth optional (only if present)
+    depth_attr = resolve_depth_attr(space=space)
+    has_d2s = depth_attr in graph.vs.attributes()
 
     results = {}
 
     for face, (axis, key) in FACES_DEF.items():
         value = float(box[key])
-        nodes = bc_nodes_on_face(graph, axis, value, box, coords_attr, eps=eps).astype(int)
+        eps_face = resolve_eps(eps, space=space, axis=axis)  # convert only if space="um"
+        nodes = bc_nodes_on_face(graph, axis, value, box, coords_attr, eps=eps_face).astype(int)
         n = int(nodes.size)
 
-        # Degree metrics
         deg_counts = Counter(deg[nodes]) if n else Counter()
         high_mask = (deg[nodes] >= int(degree_thr)) if n else np.array([], dtype=bool)
         high_n = int(high_mask.sum()) if n else 0
@@ -858,7 +1044,6 @@ def analyze_bc_faces(
             "high_degree_percent": float(100.0 * high_n / n) if n else 0.0,
         }
 
-        # Type metrics (optional)
         if has_nkind and n:
             labels = [infer_node_type_from_incident_edges(graph, int(v)) for v in nodes]
             tc = Counter(labels)
@@ -868,33 +1053,18 @@ def analyze_bc_faces(
             out["type_counts"] = {}
             out["type_percent"] = {}
 
-        # Depth metrics (optional)
-        out["distance_to_surface_stats"] = distance_to_surface_stats(graph, nodes) if (has_d2s and n) else None
+        out["distance_to_surface_stats"] = (
+            distance_to_surface_stats(graph, nodes, space=space) if (has_d2s and n) else None
+        )
 
-        # Optional: return node ids (heavy)
         if return_node_ids:
             out["nodes"] = nodes
             out["high_degree_nodes"] = nodes[high_mask] if n else np.array([], dtype=int)
 
         results[face] = out
 
-        if verbose:
-            print(f"\n--- {face} ---")
-            print(f"BC nodes: {n}")
-            if n:
-                deg_str = ", ".join([f"{d}:{c}" for d, c in sorted(deg_counts.items())])
-                print(f"Degree (d:count): {deg_str}")
-                print(f"High-degree (>= {degree_thr}): {high_n} ({out['high_degree_percent']:.2f}%)")
-            if out["type_counts"]:
-                for k, v in sorted(out["type_counts"].items(), key=lambda kv: -kv[1]):
-                    print(f"  {k}: {v} ({out['type_percent'][k]:.1f}%)")
-            if out["distance_to_surface_stats"] is not None:
-                dstat = out["distance_to_surface_stats"]
-                print("distance_to_surface (µm): "
-                      f"min={dstat['min']:.2f}, mean={dstat['mean']:.2f}, "
-                      f"median={dstat['median']:.2f}, max={dstat['max']:.2f}")
-
     return results
+
 
 
 
@@ -1071,7 +1241,10 @@ def plot_violin_box_by_category(values, category, label_dict=None,
 
 
 def plot_bc_3_cubes_tinted(
-    G, box, coords_attr="coords_image", eps=2.0,
+    G, box,
+    coords_attr=None,
+    space=None,                 
+    eps=2.0,                     # eps ALWAYS specified in VOXELS 
     elev=18, azim=35,
     face_alpha=0.10,
     point_alpha=0.85,
@@ -1084,12 +1257,25 @@ def plot_bc_3_cubes_tinted(
       A: x_min + z_min
       B: x_max + z_max
       C: y_min + y_max
-    with tinted faces for easier visualization.
+
+    Conventions:
+    - `box` must be in the same units as coords_attr.
+    - `eps` is ALWAYS specified in VOXELS.
+      If space="um", eps is converted to µm per face axis using res_um_per_vox[axis].
     """
     validate_box_faces(box)
+    space, coords_attr, _ = resolve_space_and_attrs(
+        G,
+        space=space,
+        coords_attr=coords_attr,
+        depth_attr=None,
+        require_space=True,
+        require_coords=True,
+        require_depth=False,
+    )
     coords = get_coords(G, coords_attr).astype(float)
 
-    # --- cube geometry (corners, edges, face polygons) ---
+    # cube geometry
     xmin, xmax = float(box["xmin"]), float(box["xmax"])
     ymin, ymax = float(box["ymin"]), float(box["ymax"])
     zmin, zmax = float(box["zmin"]), float(box["zmax"])
@@ -1112,33 +1298,33 @@ def plot_bc_3_cubes_tinted(
         "z_max": [(xmin, ymin, zmax), (xmax, ymin, zmax), (xmax, ymax, zmax), (xmin, ymax, zmax)],
     }
 
-    # --- compute BC nodes per face (independiente de analyze_bc_faces) ---
+    # --- compute BC nodes per face with eps conversion per axis ---
     face_nodes = {}
     for face, (axis, key) in FACES_DEF.items():
+        value = float(box[key])
+        eps_face = resolve_eps(eps, space=space, axis=axis)  # <-- key fix
         face_nodes[face] = bc_nodes_on_face(
-            G, axis, float(box[key]), box, coords_attr, eps=eps
+            G, axis, value, box, coords_attr, eps=eps_face
         ).astype(int)
 
     def nodes_for_faces(faces_subset):
-        ids = np.unique(np.concatenate([face_nodes[f] for f in faces_subset])) if faces_subset else np.array([], int)
+        if not faces_subset:
+            return np.array([], dtype=int)
+        ids = np.unique(np.concatenate([face_nodes[f] for f in faces_subset if f in face_nodes]))
         if sample_max is not None and ids.size > sample_max:
             ids = np.random.choice(ids, size=int(sample_max), replace=False)
         return ids
 
     vessel_colors = {"arteriole": "red", "venule": "blue", "capillary": "gray", "unknown": "black"}
 
-    # face tint colors (suaves)
     face_colors = {
-        "x_min": "tab:orange",
-        "x_max": "tab:orange",
-        "y_min": "tab:green",
-        "y_max": "tab:green",
-        "z_min": "tab:purple",
-        "z_max": "tab:purple",
+        "x_min": "tab:orange", "x_max": "tab:orange",
+        "y_min": "tab:green",  "y_max": "tab:green",
+        "z_min": "tab:purple", "z_max": "tab:purple",
     }
 
     def draw_panel(ax, faces_subset, title):
-        # cube wireframe
+        # wireframe
         for a, b in edges:
             ax.plot([corners[a,0], corners[b,0]],
                     [corners[a,1], corners[b,1]],
@@ -1150,7 +1336,7 @@ def plot_bc_3_cubes_tinted(
         pc = Poly3DCollection(polys, facecolors=cols, edgecolors="k", linewidths=0.6, alpha=face_alpha)
         ax.add_collection3d(pc)
 
-        # scatter BC nodes (colored by inferred type)
+        # scatter BC nodes
         ids = nodes_for_faces(faces_subset)
         if ids.size:
             pts = coords[ids]
@@ -1165,9 +1351,9 @@ def plot_bc_3_cubes_tinted(
         ax.set_box_aspect((xmax-xmin, ymax-ymin, zmax-zmin))
         ax.view_init(elev=elev, azim=azim)
         ax.set_title(title)
-        ax.set_xlabel("X"); ax.set_ylabel("Y"); ax.set_zlabel("Z")
+        unit = "µm" if space == "um" else "vox"
+        ax.set_xlabel(f"X ({unit})"); ax.set_ylabel("Y"); ax.set_zlabel("Z")
 
-    # --- fixed face pairing as you requested ---
     faces_A = ("x_min", "z_min")
     faces_B = ("x_max", "z_max")
     faces_C = ("y_min", "y_max")
@@ -1191,7 +1377,8 @@ def plot_bc_3_cubes_tinted(
 
     plt.tight_layout()
     plt.show()
-    return 
+    return
+
 
 
 
@@ -1294,54 +1481,99 @@ def plot_bc_cube_net(
 # ====================================================================================================================
 # PLOTTING: SPATIAL NKIND / HDN / DIAMETER-BY-NKIND
 # ====================================================================================================================
+def plot_degree_nodes_spatial(
+    graph,
+    space=None,
+    coords_attr=None,
+    degree_min=4,
+    degree_max=None,
+    by_type=True,
+    s_all=2,
+    s_sel=30,
+    alpha_all=0.15,
+    alpha_sel=0.95,
+    title=None,
+):
+    """
+    3D plot of nodes whose degree is in [degree_min, degree_max].
 
-def plot_nkind_spatial_edges(graph, coords_attr="coords_image", sample_edges=8000,
-                                   title=None, ax=None, alpha=0.85, linewidth=0.6, seed=0):
+    Contract:
+    - You MUST set space to "vox" or "um" (no default).
+    - If coords_attr is None, it is inferred from space (coords_image vs coords_image_R).
+    - Units are displayed in axis labels and title.
+    - No prints.
+    """
+    # enforce explicit choice + infer coords_attr only from space
+    space, coords_attr, _ = resolve_space_and_attrs(
+        graph,
+        space=space,
+        coords_attr=coords_attr,
+        depth_attr=None,
+        require_space=True,
+        require_coords=True,
+        require_depth=False,
+    )
+
     P = get_coords(graph, coords_attr)
-    check_attr(graph, "nkind", "es")
+    deg = np.asarray(graph.degree(), dtype=int)
 
-    if ax is None:
-        fig = plt.figure()
-        ax = fig.add_subplot(111, projection="3d")
+    if degree_max is None:
+        sel = np.where(deg >= int(degree_min))[0]
+        crit = f"deg ≥ {int(degree_min)}"
     else:
-        fig = ax.figure
+        sel = np.where((deg >= int(degree_min)) & (deg <= int(degree_max)))[0]
+        crit = f"{int(degree_min)} ≤ deg ≤ {int(degree_max)}"
 
-    m = graph.ecount()
-    if sample_edges is None:
-        edge_ids = np.arange(m)
+    unit = "µm" if space == "um" else "vox"
+
+    fig = plt.figure()
+    ax = fig.add_subplot(111, projection="3d")
+
+    # background: all nodes
+    ax.scatter(
+        P[:, 0], P[:, 1], P[:, 2],
+        s=s_all, c="lightgray", alpha=alpha_all, depthshade=False
+    )
+
+    if sel.size == 0:
+        ax.set_title(title or f"No nodes with {crit} [{unit}]")
+        ax.set_xlabel(f"X ({unit})"); ax.set_ylabel(f"Y ({unit})"); ax.set_zlabel(f"Z ({unit})")
+        plt.tight_layout()
+        plt.show()
+        return fig, ax
+
+    if not by_type:
+        ax.scatter(
+            P[sel, 0], P[sel, 1], P[sel, 2],
+            s=s_sel, c="black", alpha=alpha_sel, depthshade=False
+        )
     else:
-        rng = np.random.default_rng(seed)
-        edge_ids = rng.choice(m, size=min(int(sample_edges), m), replace=False)
+        labs = np.array([infer_node_type_from_incident_edges(graph, int(v)) for v in sel], dtype=object)
+        col = {"arteriole": "red", "venule": "blue", "capillary": "gray", "unknown": "black"}
 
-    nk = np.asarray(graph.es["nkind"], dtype=int)
+        for lab in ["arteriole", "venule", "capillary", "unknown"]:
+            m = (labs == lab)
+            if np.any(m):
+                pts = P[sel[m]]
+                ax.scatter(
+                    pts[:, 0], pts[:, 1], pts[:, 2],
+                    s=s_sel, c=col[lab], alpha=alpha_sel, depthshade=False, label=lab
+                )
+        ax.legend(loc="best", title=f"{crit} nodes")
 
-    for eid in edge_ids:
-        e = graph.es[int(eid)]
-        u, v = e.tuple
-        lab = EDGE_NKIND_TO_LABEL.get(int(nk[int(eid)]), "unknown")
-        col = VESSEL_COLORS.get(lab, "black")
-
-        ax.plot([P[u,0], P[v,0]], [P[u,1], P[v,1]], [P[u,2], P[v,2]],
-                color=col, alpha=alpha, linewidth=linewidth)
-
-    ax.set_xlabel("X"); ax.set_ylabel("Y"); ax.set_zlabel("Z")
-    ax.set_title(title or "Spatial vessel-type map (edges)")
-
-    ax.legend(handles=[
-        Line2D([0],[0], color=VESSEL_COLORS["arteriole"], lw=2, label="arteriole"),
-        Line2D([0],[0], color=VESSEL_COLORS["venule"], lw=2, label="venule"),
-        Line2D([0],[0], color=VESSEL_COLORS["capillary"], lw=2, label="capillary"),
-    ], loc="best")
-
+    ax.set_xlabel(f"X ({unit})"); ax.set_ylabel(f"Y ({unit})"); ax.set_zlabel(f"Z ({unit})")
+    ax.set_title(title or f"Spatial distribution of {crit} [{unit}]")
     plt.tight_layout()
     plt.show()
     return fig, ax
 
 
 
+
 def plot_high_degree_nodes_by_type(
     graph,
-    coords_attr="coords_image",
+    space=None,
+    coords_attr=None,
     high_degree_threshold=4,
     title=None,
     ax=None,
@@ -1349,11 +1581,20 @@ def plot_high_degree_nodes_by_type(
     s_hdn=35,
     alpha_all=0.25,
     alpha_hdn=0.95,
-    vessel_colors=None
+    vessel_colors=None,
 ):
-    """3D scatter: all nodes in gray, HDN colored by inferred vessel type from incident edges."""
     if vessel_colors is None:
         vessel_colors = {"arteriole": "red", "venule": "blue", "capillary": "gray", "unknown": "black"}
+
+    space, coords_attr, _ = resolve_space_and_attrs(
+        graph,
+        space=space,
+        coords_attr=coords_attr,
+        depth_attr=None,
+        require_space=True,
+        require_coords=True,
+        require_depth=False,
+    )
 
     P = get_coords(graph, coords_attr)
     deg = np.asarray(graph.degree(), dtype=int)
@@ -1365,10 +1606,8 @@ def plot_high_degree_nodes_by_type(
     else:
         fig = ax.figure
 
-    # all nodes (background)
     ax.scatter(P[:, 0], P[:, 1], P[:, 2], s=s_all, c="lightgray", alpha=alpha_all, depthshade=False)
 
-    # HDN colored by inferred type
     if hdn.size:
         labels = np.array([infer_node_type_from_incident_edges(graph, int(v)) for v in hdn], dtype=object)
         for lab, col in vessel_colors.items():
@@ -1378,15 +1617,13 @@ def plot_high_degree_nodes_by_type(
                 ax.scatter(pts[:, 0], pts[:, 1], pts[:, 2],
                            s=s_hdn, c=col, alpha=alpha_hdn, depthshade=False, label=f"HDN {lab}")
 
-    ax.set_xlabel("X"); ax.set_ylabel("Y"); ax.set_zlabel("Z")
-    ax.set_title(title or f"HDN (deg ≥ {high_degree_threshold}) colored by inferred type")
+    unit = "µm" if space == "um" else "vox"
+    ax.set_xlabel(f"X ({unit})"); ax.set_ylabel(f"Y ({unit})"); ax.set_zlabel(f"Z ({unit})")
+    ax.set_title(title or f"HDN (deg ≥ {high_degree_threshold}) by inferred type [{unit}]")
     ax.legend(loc="best")
     plt.tight_layout()
     plt.show()
     return fig, ax
-
-
-
 
 
 
@@ -1424,69 +1661,6 @@ def bc_faces_table(res, box_name="Box"):
 # ====================================================================================================================
 # GAIA-STYLE MICRO-SEGMENTS + VESSEL DENSITY (requires OutGeom-like data dict)
 # ====================================================================================================================
-
-import numpy as np
-
-class PolylineBackend:
-    """
-    Minimum interface:
-      - coords arrays globales x,y,z (len = n_points)
-      - optional radii per point r (len = n_points) or None
-      - optional lengths2 per segment L2 (len = n_points-1) or None
-      - edge_geom_range(eid) -> (s,t) indices in global arrays
-      - edge_attr(eid, name) -> edge value (i.e nkind)
-    """
-    def __init__(self, G):
-        self.G = G
-
-    def edge_geom_range(self, eid): raise NotImplementedError
-    def edge_attr(self, eid, name): raise NotImplementedError
-    @property
-    def x(self): raise NotImplementedError
-    @property
-    def y(self): raise NotImplementedError
-    @property
-    def z(self): raise NotImplementedError
-    @property
-    def r(self): return None
-    @property
-    def lengths2(self): return None
-
-
-class OutGeomBackend(PolylineBackend):
-    def __init__(self, data):
-        super().__init__(data["graph"])
-        self.data = data
-        c = data["coords"]
-        self._x = np.asarray(c["x"], float)
-        self._y = np.asarray(c["y"], float)
-        self._z = np.asarray(c["z"], float)
-        self._r = np.asarray(data["radii_geom"], float) if "radii_geom" in data else None
-
-        # tu caso: lengths2 está aquí (ajusta si tu ruta es distinta)
-        self._L2 = None
-        if "geom" in data and "lengths2" in data["geom"]:
-            self._L2 = np.asarray(data["geom"]["lengths2"], float)
-
-    @property
-    def x(self): return self._x
-    @property
-    def y(self): return self._y
-    @property
-    def z(self): return self._z
-    @property
-    def r(self): return self._r
-    @property
-    def lengths2(self): return self._L2
-
-    def edge_geom_range(self, eid):
-        s = int(self.G.es[eid]["geom_start"])
-        t = int(self.G.es[eid]["geom_end"])
-        return s, t
-
-    def edge_attr(self, eid, name):
-        return self.G.es[eid][name]
-
 
 
 
@@ -1648,9 +1822,6 @@ def vessel_density_slabs_in_box(ms, box, slab=50.0, axis="z",                   
 # ======================================================================================================================================================
 #                                                               GAIA COMPLIANCE
 # ======================================================================================================================================================
-import numpy as np
-import matplotlib.pyplot as plt
-
 
 
 
@@ -2027,7 +2198,7 @@ def debug_edge(data, ei, k=3):
     for j in range(max(s, en-k), en):
         print(f"  j={j-(en-k):2d}  gr={gr[j]:.6g}  P=({x[j]:.3f},{y[j]:.3f},{z[j]:.3f})")
 
-        import numpy as np
+     
 
 def classify_edge_endpoint_coords(data, tol=1e-6):
     G = data["graph"]
@@ -2162,6 +2333,38 @@ def plot_degree_nodes_spatial(
     ax.set_title(title or f"Spatial distribution of {crit}")
     plt.show()
     return fig, ax
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 # ====================================================================================================================
@@ -2306,7 +2509,7 @@ def edge_disjoint_av_paths_in_box(
 #                            NEW-PKL ONLY HELPERS (data["graph"], data["vertex"], data["geom"])
 # ====================================================================================================================
 
-def select_largest_component_data(data, verbose=True):            # LO PUEDO ELIMINAR, SIMPLEMENTE AÑADIR EN SINGLE CONNECTED, QUE ESCOJA EL BCC
+def select_largest_component_data(data):            # LO PUEDO ELIMINAR, SIMPLEMENTE AÑADIR EN SINGLE CONNECTED, QUE ESCOJA EL BCC
     """
     NEW-PKL ONLY.
     Input: data = {"graph":G, "vertex":{...}, "geom":{...}}
@@ -2325,7 +2528,7 @@ def select_largest_component_data(data, verbose=True):            # LO PUEDO ELI
     keep = np.asarray(comps[np.argmax(comps.sizes())], dtype=int)
     H = G.induced_subgraph(keep)
 
-    if verbose:
+    
         print("\n=== GIANT COMPONENT (NEW-PKL) ===")
         print("Original:", G.vcount(), "V", G.ecount(), "E")
         print("GC      :", H.vcount(), "V", H.ecount(), "E")
