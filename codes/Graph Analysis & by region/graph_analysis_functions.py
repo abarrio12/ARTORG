@@ -1,37 +1,61 @@
 """
-graph_analysis_functions.py
-Faces-only BC + Gaia-style vessel density + radii sanity + redundancy via edge-disjoint paths
+Vascular graph analysis module.
 
-✅ Classic graph analysis (diameter/length/degrees/duplicates/loops)
-✅ BC detection + analysis PER FACE only (NO per-box totals)
-✅ Cube-net plot + 3D cube views for BC points
-✅ Spatial plots: nkind map + HDN map + diameter-by-nkind plots
-✅ Gaia-style vessel density using MICRO-SEGMENTS between polyline points (OutGeom-like data dict)
-✅ Sanity checks for polyline radii consistency
-✅ Redundancy: max number of EDGE-DISJOINT arteriole→venule paths inside the box (maxflow)
-✅ Degree distribution checks + spatial maps for any degree band
+This module includes:
+
+• Classic graph metrics:
+    - Edge length
+    - Diameter
+    - Degree distribution
+    - Loop and duplicate detection
+
+• Boundary condition (BC) detection:
+    - Face-specific analysis only (no per-box aggregation)
+    - Cube-net and 3D visualization
+
+• Spatial analysis:
+    - Vessel type maps
+    - High-degree node (HDN) analysis
+    - Diameter distribution by nkind
+
+• Gaia-style vessel density:
+    - Micro-segment based computation
+    - Volume fraction using atlas radii
+    - Slab-based analysis
+
+• Redundancy metric:
+    - Maximum number of edge-disjoint arteriole → venule paths (maxflow)
+
+SPACE CONVENTION
+----------------
+space="vox" → use voxel coordinates (coords_image)
+space="um"  → use micrometer coordinates (coords_image_R)
+
+IMPORTANT:
+- eps is ALWAYS specified in VOXELS.
+- If space="um", eps is automatically converted using resolution.
+- To switch units, change ONLY the "space" argument.
+
+Author: Ana Barrio
+Date: 17 Feb 2026
 """
 
-# SPACE CONVENTION (IMPORTANT)
-# ---------------------------
-# - `space` selects which coordinates are used:
-#     space="vox" -> coords_image (voxels)
-#     space="um"  -> coords_image_R (micrometers)
-#
-# - `eps` is ALWAYS interpreted as VOXELS.
-#   If space="um", eps is automatically converted to µm using res_um_per_vox[axis].
-#   So: to work in µm, change ONLY `space` (not eps).
 
+# ====================================================================================================================
+#                                                    IMPORTS
+# ====================================================================================================================
 
 import pickle
 import numpy as np
+import pandas as pd
 import matplotlib.pyplot as plt
+import igraph as ig
+
 from collections import Counter
 from mpl_toolkits.mplot3d.art3d import Poly3DCollection
 from matplotlib.lines import Line2D
-from matplotlib.patches import Patch, Rectangle
+from matplotlib.patches import Rectangle
 
-import igraph as ig
 
 
 # ====================================================================================================================
@@ -75,7 +99,7 @@ FACES_DEF = {
 
 
 # ====================================================================================================================
-#                                                    SPACE HELPERS (voxels vs micrometers)
+#                                           SPACE RESOLUTION HELPERS (voxels vs micrometers)
 # ====================================================================================================================
 def resolve_vertex(data, space="vox"):
     return data["vertex"] if space == "vox" else data["vertex_R"]
@@ -116,7 +140,8 @@ def resolve_geom_coords(data, space="vox"):
             np.asarray(g["z_R"], float),
         )
     
-def resolve_eps(eps=2.0, space="vox", res_um_per_vox=res_um_per_vox, ref_vox_eps=2.0, axis=0):
+
+def resolve_eps(eps=2.0, space="vox", res_um_per_vox=res_um_per_vox, axis=0):
     '''
     Convention:
     - eps is ALWAYS specified in VOXELS
@@ -126,6 +151,77 @@ def resolve_eps(eps=2.0, space="vox", res_um_per_vox=res_um_per_vox, ref_vox_eps
     if space == "um":
         eps *= float(res_um_per_vox[axis])
     return eps
+
+
+# ====================================================================================================================
+#                                                  ATTRIBUTE VALIDATION
+# ====================================================================================================================
+
+def check_attr(graph, names, where="edge"):
+    """
+    Check that required attribute(s) exist in the graph.
+
+    names : str or list of str
+    where : 'edge'/'es' or 'vertex'/'vs'
+    """
+    if isinstance(names, str):
+        names = [names]
+
+    where = where.lower()
+
+    if where in ("edge", "es"):
+        existing = set(graph.es.attributes())
+        missing = [name for name in names if name not in existing]
+        if missing:
+            raise ValueError(f"Missing edge attribute(s): {missing}. Available: {graph.es.attributes()}")
+        return
+
+    if where in ("vertex", "vs"):
+        existing = set(graph.vs.attributes())
+        missing = [name for name in names if name not in existing]
+        if missing:
+            raise ValueError(f"Missing vertex attribute(s): {missing}. Available: {graph.vs.attributes()}")
+        return
+
+    raise ValueError("'where' parameter must be one of: 'edge'/'es' or 'vertex'/'vs'")
+
+
+
+# ====================================================================================================================
+#                                              GEOMETRY ACCESS FROM DATA DICT 
+# ====================================================================================================================
+def get_geom_from_data(data, space="vox"):
+
+    G = data["graph"]
+
+    if space == "vox":
+        g = data["geom"]
+        x = np.asarray(g["x"], float)
+        y = np.asarray(g["y"], float)
+        z = np.asarray(g["z"], float)
+        L2 = np.asarray(g["lengths2"], float)
+        r = np.asarray(g["radii_atlas_geom"], float) if "radii_atlas_geom" in g else None
+    else:
+        g = data["geom_R"]
+        x = np.asarray(g["x_R"], float)
+        y = np.asarray(g["y_R"], float)
+        z = np.asarray(g["z_R"], float)
+        L2 = np.asarray(g["lengths2_R"], float)
+        r = np.asarray(g["radii_atlas_geom_R"], float) if "radii_atlas_geom_R" in g else None
+
+    return G, x, y, z, L2, r
+
+
+def get_range_from_data(data, eid):
+    G = data["graph"]
+    return int(G.es[eid]["geom_start"]), int(G.es[eid]["geom_end"])
+
+def get_edge_attr_from_data(data, eid, name):
+    return data["graph"].es[eid][name]
+
+# ====================================================================================================================
+#                                                  SYNC ATTRIBUTES INTO GRAPH
+# ====================================================================================================================
 
 def resolve_space_and_attrs(
     graph,
@@ -184,6 +280,36 @@ def resolve_space_and_attrs(
 
     return space, coords_attr, depth_attr
 
+def sync_vertex_attributes_safe(data, space="vox"):
+    """
+    Copy only per-vertex arrays into graph.vs, respecting space.
+    - coords Nx3 -> list of tuples (igraph friendly)
+    - 1D length nV -> list
+    """
+    G = data["graph"]
+    V = resolve_vertex(data, space=space)
+    nV = G.vcount()
+
+    copied = []
+    for k, arr in V.items():
+        a = np.asarray(arr)
+
+        # per-vertex 1D
+        if a.ndim == 1 and a.shape[0] == nV:
+            G.vs[k] = a.tolist()
+            copied.append(k)
+
+        # per-vertex Nx3 (coords)
+        elif a.ndim == 2 and a.shape[0] == nV and a.shape[1] == 3:
+            G.vs[k] = [tuple(map(float, row)) for row in a]
+            copied.append(k)
+
+        else:
+            # ignore non per-vertex arrays
+            continue
+    print(f"[sync_vertex_attributes_safe] copied {len(copied)} attrs:", copied)
+    return data
+
 
 
 # ====================================================================================================================
@@ -204,59 +330,10 @@ def dump_graph(graph, out_path):
     print(f"\nGraph successfully saved to: {out_path}")
 
 
-def activate_space_inplace(data, space="vox"):
-    """
-    Minimal: makes existing code work unchanged.
-    - space='vox' uses original data
-    - space='um' swaps in the *_R fields as the default ones
-    """
-    G = data["graph"]
 
-    if space == "vox":
-        return data
-
-    if space != "um":
-        raise ValueError("space must be 'vox' or 'um'")
-
-    # --- checks ---
-    if "geom_R" not in data or "vertex_R" not in data:
-        raise ValueError("Missing geom_R / vertex_R in data (did you load the *_um.pkl?)")
-
-    gR = data["geom_R"]
-    vR = data["vertex_R"]
-
-    # --- swap geom ---
-    for a, b in [("x", "x_R"), ("y", "y_R"), ("z", "z_R"), ("lengths2", "lengths2_R")]:
-        if b in gR:
-            data["geom"][a] = gR[b]
-
-    # --- swap vertex ---
-    for a, b in [("coords_image", "coords_image_R"),
-                 ("distance_to_surface", "distance_to_surface_R"),
-                 ("radii_atlas", "radii_atlas_R")]:
-        if b in vR:
-            data["vertex"][a] = vR[b]
-
-    # --- swap edge attrs ---
-    if "length_R" in G.es.attributes():
-        G.es["length"] = G.es["length_R"]
-    if "tortuosity_R" in G.es.attributes():
-        G.es["tortuosity"] = G.es["tortuosity_R"]
-
-    return data
-
-
-
-def sync_vertex_attributes(data):
-    """
-    Copy all arrays from data["vertex"] = pseudo json structure of pkl file 
-    into data["graph"].vs (keep compliance and escalability)
-    Must be aligned with current graph.
-    """
-    G = data["graph"]
-    for key, arr in data["vertex"].items():
-        G.vs[key] = arr
-
+# ====================================================================================================================
+#                                                    BOX BUILDERS
+# ====================================================================================================================
 
 
 def make_box_in_vox(
@@ -351,8 +428,10 @@ def make_box_in_um(center_vox, box_size_um, res_um_per_vox=res_um_per_vox):
 
 
 
+
+
 # ====================================================================================================================
-#                                                   BASIC HELPERS 
+#                                                   BASIC GRAPH HELPERS 
 # ====================================================================================================================
 
 def get_coords(graph, coords_attr):
@@ -372,38 +451,9 @@ def validate_box_faces(box):
         raise ValueError(f"box missing keys: {missing}. Required: {list(req)}")
 
 
-
-def check_attr(graph, names, where="edge"):
-    """
-    Check that required attribute(s) exist in the graph.
-
-    names : str or list of str
-    where : 'edge'/'es' or 'vertex'/'vs'
-    """
-    if isinstance(names, str):
-        names = [names]
-
-    where = where.lower()
-
-    if where in ("edge", "es"):
-        existing = set(graph.es.attributes())
-        missing = [name for name in names if name not in existing]
-        if missing:
-            raise ValueError(f"Missing edge attribute(s): {missing}",
-                             f"Available: {graph.es.attributes()}")
-        return
-
-    if where in ("vertex", "vs"):
-        existing = set(graph.vs.attributes())
-        missing = [name for name in names if name not in existing]
-        if missing:
-            raise ValueError(f"Missing vertex attribute(s): {missing}",
-                             f"Available: {graph.vs.attributes()}")
-        return
-
-    raise ValueError("where must be one of: 'edge'/'es' or 'vertex'/'vs'")
-
-
+# ====================================================================================================================
+#                                                  GRAPH STATS
+# ====================================================================================================================
 
 def duplicated_edge_stats(G):
     edges = G.get_edgelist()
@@ -438,52 +488,15 @@ def loop_edge_stats(G):
 
 
 
-def get_geom_from_data(data, space="vox", want_radii=False):
-
-    G = data["graph"]
-
-    if space == "vox":
-        g = data["geom"]
-        x = np.asarray(g["x"], float)
-        y = np.asarray(g["y"], float)
-        z = np.asarray(g["z"], float)
-        L2 = np.asarray(g["lengths2"], float)
-        r = np.asarray(g["radii"], float) if want_radii and "radii" in g else None
-    else:
-        g = data["geom_R"]
-        x = np.asarray(g["x_R"], float)
-        y = np.asarray(g["y_R"], float)
-        z = np.asarray(g["z_R"], float)
-        L2 = np.asarray(g["lengths2_R"], float)
-        r = np.asarray(g["radii_atlas_geom_R"], float) if want_radii and "radii_atlas_geom_R" in g else None
-
-    return G, x, y, z, L2, r
-
-
-def get_range_from_data(data, eid):
-    G = data["graph"]
-    return int(G.es[eid]["geom_start"]), int(G.es[eid]["geom_end"])
-
-def get_edge_attr_from_data(data, eid, name):
-    return data["graph"].es[eid][name]
-
-
-
-
-
-
-
-
-
 
 
 
 
 # ====================================================================================================================
-#                                               CLASSIC GRAPH ANALYSIS (biological metrics)
+#                                              CONNECTED COMPONENTS
 # ====================================================================================================================
 
-def single_connected_component(graph):
+def single_connected_component(data):
     """
     Ensure graph is single connected component. If not, keep the largest one.
 
@@ -492,19 +505,58 @@ def single_connected_component(graph):
         n_components (int)
         graph (igraph.Graph)
     """
-    comps = graph.components()
+    G = data["graph"]
+    comps = G.components()
     n_components = len(comps)
     is_single = (n_components == 1)
 
     if is_single:
         print("The graph is a single connected component.")
-    else:
-        print(f"The graph has {n_components} components. Keeping the largest one.")
-        graph = comps.giant()
+        return True, 1, data
+    
+    print(f"The graph has {n_components} components. Keeping the largest one.")
+    data2 = keep_giant_component_data(data)
+    return False, n_components, data2 
 
-    return is_single, n_components, graph
 
 
+def keep_giant_component_data(data):
+    """
+    Keep largest connected component and keep vertex arrays aligned.
+    Geom arrays remain global (OK because surviving edges still reference global indices).
+    """
+    G = data["graph"]
+    comps = G.components()
+    if len(comps) <= 1:
+        return data
+
+    keep = np.asarray(comps[np.argmax(comps.sizes())], dtype=int)
+    H = G.induced_subgraph(keep)
+    print("\n=== GIANT COMPONENT ===")
+    print("Original:", G.vcount(), "V", G.ecount(), "E")
+    print("Giant   :", H.vcount(), "V", H.ecount(), "E")
+
+    V2 = {}
+    V = data.get("vertex", {})
+    for k, arr in V.items():
+        arr = np.asarray(arr)
+        if arr.ndim == 1 and len(arr) == G.vcount():
+            V2[k] = arr[keep].copy()
+        elif arr.ndim == 2 and arr.shape[0] == G.vcount():
+            V2[k] = arr[keep, :].copy()
+        else:
+            V2[k] = arr  # no per-vertex
+
+    out = dict(data)
+    out["graph"] = H
+    out["vertex"] = V2
+    return out
+
+
+
+# ====================================================================================================================
+#                                              LENGTH & DIAMETER ANALYSIS 
+# ====================================================================================================================
 
 def get_edges_types(graph, label_dict=EDGE_NKIND_TO_LABEL, return_dict=True):
     """
@@ -673,7 +725,9 @@ def diameter_stats_nkind(
 
 
 
-
+# ====================================================================================================================
+#                                              DEGREES & HIGH-DEGREE NODES (HDN)
+# ====================================================================================================================
 
 
 def get_degrees(graph, threshold=4):
@@ -702,85 +756,6 @@ def get_degrees(graph, threshold=4):
     print(f"HDN (>= {threshold}): {hdn_idx.size}")
 
     return np.unique(deg), hdn_idx
-
-
-
-def distance_to_surface_stats(
-    graph,
-    nodes,
-    space="vox",  # "vox" or "um"
-    depth_attr_vox="distance_to_surface",
-    depth_attr_um="distance_to_surface_R",
-    depth_bins_um=DEFAULT_DEPTH_BINS_UM,
-    res_um_per_vox=res_um_per_vox,
-):
-    """
-    Stats + depth-bin counts for distance-to-surface.
-
-    - space="vox": uses graph.vs[depth_attr_vox] (vox). Converts the UM bins -> VOX using XY resolution.
-    - space="um" : uses graph.vs[depth_attr_um]  (µm). Uses bins in µm directly.
-
-    Note: Your conversion script defines:
-      distance_to_surface_R = distance_to_surface * sx
-    where sx = res_um_per_vox[0] (XY resolution).
-    So we use that same convention here.
-    """
-    nodes = np.asarray(nodes, dtype=int)
-    if nodes.size == 0:
-        return None
-
-    if space == "um":
-        depth_attr = depth_attr_um
-        unit = "µm"
-        # bins already in µm
-        bins = depth_bins_um
-        check_attr(graph, depth_attr, "vs")
-        vals = np.asarray(graph.vs[depth_attr], dtype=float)[nodes]
-
-        range_key = "range_um"
-
-    elif space == "vox":
-        depth_attr = depth_attr_vox
-        unit = "vox"
-        check_attr(graph, depth_attr, "vs")
-        vals = np.asarray(graph.vs[depth_attr], dtype=float)[nodes]
-
-        # Convert µm bins -> vox bins using XY scaling (sx), to stay consistent with your outgeom_um.py
-        sx = float(res_um_per_vox[0])
-        bins = []
-        for label, low_um, high_um in depth_bins_um:
-            low_v = float(low_um) / sx
-            high_v = float(high_um) / sx if np.isfinite(high_um) else np.inf
-            bins.append((label, low_v, high_v))
-
-        range_key = "range_vox"
-
-    else:
-        raise ValueError("space must be 'vox' or 'um'")
-
-    out = {
-        "space": space,
-        "unit": unit,
-        "depth_attr": depth_attr,
-        "n": int(vals.size),
-        "min": float(np.min(vals)),
-        "mean": float(np.mean(vals)),
-        "median": float(np.median(vals)),
-        "max": float(np.max(vals)),
-        "bins": {},
-    }
-
-    n = vals.size
-    for label, low, high in bins:
-        mask = (vals >= low) & (vals < high)
-        c = int(np.sum(mask))
-        out["bins"][label] = {
-            range_key: [float(low), float(high)],
-            "count": c,
-            "proportion": float(c / n),
-        }
-
-    return out
 
 
 
@@ -930,25 +905,98 @@ def analyze_hdn_pattern_in_box(
     out["face_bias_hdn"] = face_bias
     return out
 
-                                                               
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
 
 # ====================================================================================================================
-# BC DETECTION (faces-only)
+#                                             DISTANCE TO SURFACE ANALYSIS
+# ====================================================================================================================
+
+
+def distance_to_surface_stats(
+    graph,
+    nodes,
+    space="vox",  # "vox" or "um"
+    depth_attr_vox="distance_to_surface",
+    depth_attr_um="distance_to_surface_R",
+    depth_bins_um=DEFAULT_DEPTH_BINS_UM,
+    res_um_per_vox=res_um_per_vox,
+):
+    """
+    Stats + depth-bin counts for distance-to-surface.
+
+    - space="vox": uses graph.vs[depth_attr_vox] (vox). Converts the UM bins -> VOX using XY resolution.
+    - space="um" : uses graph.vs[depth_attr_um]  (µm). Uses bins in µm directly.
+
+    Note: Your conversion script defines:
+      distance_to_surface_R = distance_to_surface * sx
+    where sx = res_um_per_vox[0] (XY resolution).
+    So we use that same convention here.
+    """
+    nodes = np.asarray(nodes, dtype=int)
+    if nodes.size == 0:
+        return None
+
+    if space == "um":
+        depth_attr = depth_attr_um
+        unit = "µm"
+        # bins already in µm
+        bins = depth_bins_um
+        check_attr(graph, depth_attr, "vs")
+        vals = np.asarray(graph.vs[depth_attr], dtype=float)[nodes]
+
+        range_key = "range_um"
+
+    elif space == "vox":
+        depth_attr = depth_attr_vox
+        unit = "vox"
+        check_attr(graph, depth_attr, "vs")
+        vals = np.asarray(graph.vs[depth_attr], dtype=float)[nodes]
+
+        # Convert µm bins -> vox bins using XY scaling (sx), to stay consistent with your outgeom_um.py
+        sx = float(res_um_per_vox[0])
+        bins = []
+        for label, low_um, high_um in depth_bins_um:
+            low_v = float(low_um) / sx
+            high_v = float(high_um) / sx if np.isfinite(high_um) else np.inf
+            bins.append((label, low_v, high_v))
+
+        range_key = "range_vox"
+
+    else:
+        raise ValueError("space must be 'vox' or 'um'")
+
+    out = {
+        "space": space,
+        "unit": unit,
+        "depth_attr": depth_attr,
+        "n": int(vals.size),
+        "min": float(np.min(vals)),
+        "mean": float(np.mean(vals)),
+        "median": float(np.median(vals)),
+        "max": float(np.max(vals)),
+        "bins": {},
+    }
+
+    n = vals.size
+    for label, low, high in bins:
+        mask = (vals >= low) & (vals < high)
+        c = int(np.sum(mask))
+        out["bins"][label] = {
+            range_key: [float(low), float(high)],
+            "count": c,
+            "proportion": float(c / n),
+        }
+
+    return out
+
+
+
+
+                                                               
+
+
+# ====================================================================================================================
+#                                   BOUNDARY NODES ANALYSIS (BC NODES ON FACES)
 # ====================================================================================================================
 
 def bc_nodes_on_face(graph, axis, value, box, coords_attr, eps=2.0):   
@@ -1659,28 +1707,27 @@ def bc_faces_table(res, box_name="Box"):
 
 
 # ====================================================================================================================
-# GAIA-STYLE MICRO-SEGMENTS + VESSEL DENSITY (requires OutGeom-like data dict)
+#                                   MICRO-SEGMENTS + VESSEL DENSITY (requires OutGeom-like data dict)
 # ====================================================================================================================
 
-
-
-def microsegments(source, get_geom = get_geom_from_data, get_range = get_range_from_data, get_edge_attr = get_edge_attr_from_data,
-                       nkind_attr="nkind", want_radii=False):
-    
-    # Note: 
-    G, x, y, z, L2, r = get_geom(source, want_radii=want_radii)
+def microsegments(data, space="um", nkind_attr="nkind"):
+    """
+    Returns micro-segments in the requested space.
+    space='um' is the ONLY sensible option if you use slab in µm.
+    """
+    G, x, y, z, L2, r = get_geom_from_data(data, space=space)
 
     mids, lens, nk, r0s, r1s = [], [], [], [], []
 
     for eid in range(G.ecount()):
-        s, t = get_range(source, eid)
+        s, t = get_range_from_data(data, eid)
         if (t - s) < 2:
             continue
 
-        nkind_e = int(get_edge_attr(source, eid, nkind_attr))
+        nkind_e = int(get_edge_attr_from_data(data, eid, nkind_attr))
 
         for i in range(s, t - 1):
-            L = float(L2[i])  
+            L = float(L2[i])
             if L <= 0:
                 continue
 
@@ -1688,12 +1735,13 @@ def microsegments(source, get_geom = get_geom_from_data, get_range = get_range_f
             lens.append(L)
             nk.append(nkind_e)
 
-            if want_radii and r is not None:
+            if r is not None:
                 r0s.append(float(r[i])); r1s.append(float(r[i+1]))
             else:
                 r0s.append(np.nan); r1s.append(np.nan)
 
     return {
+        "space": space,
         "midpoints": np.asarray(mids, float),
         "lengths": np.asarray(lens, float),
         "nkind": np.asarray(nk, int),
@@ -1704,7 +1752,7 @@ def microsegments(source, get_geom = get_geom_from_data, get_range = get_range_f
 
 
 # Sanity check 
-def count_microsegments_by_nkind(ms, label_map=None, verbose=True):
+def count_microsegments_by_nkind(ms, label_map=None):
     """Counts micro-segments per nkind."""
     if label_map is None:
         label_map = EDGE_NKIND_TO_LABEL
@@ -1712,33 +1760,36 @@ def count_microsegments_by_nkind(ms, label_map=None, verbose=True):
     nk = ms["nkind"]
     out = {int(k): int(np.sum(nk == k)) for k in np.unique(nk)}
 
-    if verbose:
-        print("\n=== Micro-segment counts (Gaia-style) ===")
-        for k in sorted(out.keys()):
+    print("\n=== Micro-segment counts (Gaia-style) ===")
+    for k in sorted(out.keys()):
             print(f"  nkind={k} ({label_map.get(k, k)}): {out[k]}")
-        print(f"  TOTAL micro-segments: {len(nk)}")
+    print(f"  TOTAL micro-segments: {len(nk)}")
     return out
 
-
-def vessel_density_slabs_in_box(ms, box, slab=50.0, axis="z",                               # REPASAR, YO CREO QUE NO ESTÁ BIEN. PORQ HAY DOS METODOS ?? 
-                               use_volume_fraction=False, verbose=True):
+def vessel_vol_frac_slabs_in_box(ms, box, slab=50.0, axis="z"):
     """
-    Compute vessel density inside a box, split into slabs along an axis.
+    Volume fraction inside a box, split into slabs along an axis.
     Uses MICRO-SEGMENTS (midpoint inside box).
 
-    Metrics:
-      use_volume_fraction=False -> length density = sum(L) / tissue_vol  (1/µm^2)
-      use_volume_fraction=True  -> volume fraction = sum(pi*r^2*L) / tissue_vol (unitless) needs radii
+    Metric:
+      vol_frac = sum(pi * r_mean^2 * L) / tissue_vol    (unitless)
 
-    Returns pandas DataFrame with per-slab densities total + by nkind.
+    Requires:
+      ms["space"] == "um"
+      ms["r0"], ms["r1"] finite (atlas radii per point, in µm)
     """
-    import pandas as pd
+    if ms.get("space") != "um":
+        raise ValueError("Expected microsegments in µm (ms['space']=='um').")
 
     mids = ms["midpoints"]
-    L = ms["lengths"]
-    nk = ms["nkind"]
-    r0 = ms["r0"]
-    r1 = ms["r1"]
+    L    = ms["lengths"]
+    nk   = ms["nkind"]
+    r0   = ms["r0"]
+    r1   = ms["r1"]
+
+    # must have radii
+    if not (np.all(np.isfinite(r0)) and np.all(np.isfinite(r1))):
+        raise ValueError("microsegments radii contain NaN/inf. Build ms with atlas radii per point.")
 
     ax_i = {"x": 0, "y": 1, "z": 2}[axis]
     d = mids[:, ax_i]
@@ -1754,11 +1805,11 @@ def vessel_density_slabs_in_box(ms, box, slab=50.0, axis="z",                   
     )
 
     mids = mids[inside]
-    d = d[inside]
-    L = L[inside]
-    nk = nk[inside]
-    r0 = r0[inside]
-    r1 = r1[inside]
+    d    = d[inside]
+    L    = L[inside]
+    nk   = nk[inside]
+    r0   = r0[inside]
+    r1   = r1[inside]
 
     dmin = float({"x": xmin, "y": ymin, "z": zmin}[axis])
     dmax = float({"x": xmax, "y": ymax, "z": zmax}[axis])
@@ -1775,15 +1826,9 @@ def vessel_density_slabs_in_box(ms, box, slab=50.0, axis="z",                   
     else:
         A = (xmax - xmin) * (ymax - ymin)
 
-    if use_volume_fraction:
-        if not (np.all(np.isfinite(r0)) and np.all(np.isfinite(r1))):
-            raise ValueError("Need data['radii_geom'] in microsegments to compute volume fraction.")
-        rmean = 0.5 * (r0 + r1)
-        amount = np.pi * (rmean ** 2) * L
-        metric = "vol_frac"
-    else:
-        amount = L
-        metric = "len_density"
+    # volume per micro-segment
+    rmean = 0.5 * (r0 + r1)
+    amount = np.pi * (rmean ** 2) * L  # µm^3
 
     rows = []
     kinds = np.unique(nk)
@@ -1792,583 +1837,36 @@ def vessel_density_slabs_in_box(ms, box, slab=50.0, axis="z",                   
         lo, hi = float(edges[i]), float(edges[i + 1])
         m = (d >= lo) & (d < hi) if i < (len(edges) - 2) else (d >= lo) & (d <= hi)
 
-        tissue_vol = A * (hi - lo)
+        tissue_vol = A * (hi - lo)  # µm^3
         tot = float(np.sum(amount[m]))
 
         row = {
             "slab_lo": lo,
             "slab_hi": hi,
             "tissue_vol": tissue_vol,
-            f"total_{metric}": (tot / tissue_vol) if tissue_vol > 0 else np.nan
+            "total_vol_frac": (tot / tissue_vol) if tissue_vol > 0 else np.nan
         }
 
         for k in kinds:
             vv = float(np.sum(amount[m & (nk == k)]))
-            row[f"{EDGE_NKIND_TO_LABEL.get(k, k)}_{metric}"] = (vv / tissue_vol) if tissue_vol > 0 else np.nan
+            row[f"{EDGE_NKIND_TO_LABEL.get(int(k), k)}_vol_frac"] = (vv / tissue_vol) if tissue_vol > 0 else np.nan
 
         rows.append(row)
 
     df = pd.DataFrame(rows)
 
-    if verbose:
-        print(f"\n=== Vessel density slabs (axis={axis}, slab={slab} µm, metric={metric}) ===")
-        print(df)
+    print(f"\n=== Volume fraction slabs (axis={axis}, slab={slab} µm) ===")
+    print(df)
 
     return df
 
 
 
 
-# ======================================================================================================================================================
-#                                                               GAIA COMPLIANCE
-# ======================================================================================================================================================
-
-
-
-def edge_radius_consistency_report_MAX(                                 # NOTA: EXTREMADAMENTE COMPLICADO, LARGO, NO NECESITO TANTA INFO, HACERLO PARA MUCHOS MENOS EDGES
-    data,
-    sample=10000,             # Reducido un poco para que el loop de búsqueda sea rápido
-    seed=0,
-    bins=100,
-    tol_abs_list=(0.0, 1e-3, 1e-2, 5e-2, 1e-1),
-    use_abs_delta=True
-):
-    """
-    Compara el radio del eje (r_edge) contra el MÁXIMO de su geometría:
-        r_ref = max(geom['radii'][start : end])
-    """
-
-    G = data["graph"]
-    rg = np.asarray(data["geom"]["radii"], dtype=np.float32)
-
-    # 1. Obtener radios de los ejes
-    if "radius" in G.es.attributes():
-        r_edge = np.asarray(G.es["radius"], dtype=np.float32)
-    else:
-        raise ValueError("No se encontró G.es['radius'].")
-
-    gs = np.asarray(G.es["geom_start"], dtype=np.int64)
-    ge = np.asarray(G.es["geom_end"], dtype=np.int64)
-
-    nE = G.ecount()
-    # Muestreo
-    if sample is None or sample >= nE:
-        idx = np.arange(nE, dtype=np.int64)
-    else:
-        rng = np.random.default_rng(seed)
-        idx = rng.choice(nE, size=int(sample), replace=False)
-
-    # 2. CÁLCULO DE LA REFERENCIA POR MÁXIMO (Aquí está el cambio clave)
-    r_ref = np.zeros(len(idx), dtype=np.float32)
-    
-    print(f"Calculando el máximo de geometría para {len(idx)} ejes...")
-    for i, edge_idx in enumerate(idx):
-        start = gs[edge_idx]
-        end = ge[edge_idx]
-        if end > start:
-            # Buscamos el máximo en el segmento real de la geometría
-            r_ref[i] = np.max(rg[start:end])
-        else:
-            r_ref[i] = rg[start] # Caso de un solo punto
-
-    r_edge_i = r_edge[idx]
-
-    # 3. Diferencias
-    delta = (r_edge_i - r_ref).astype(np.float64)
-    delta_abs = np.abs(delta)
-
-    # Estadísticas básicas
-    print(f"\n--- REPORTE DE CONSISTENCIA (POLÍTICA: MÁXIMO) ---")
-    print(f"Δr stats: mean={np.mean(delta):.6g} | std={np.std(delta):.6g}")
-    print(f"|Δr| <= 0.0 (Coincidencia exacta): {100.0 * np.mean(delta_abs <= 1e-7):.2f}%")
-
-    # Porcentajes de error
-    print("\n% dentro de tolerancia ABSOLUTA:")
-    for t in tol_abs_list:
-        pct = 100.0 * np.mean(delta_abs <= t)
-        print(f"  |Δr| <= {t:g}: {pct:.2f}%")
-
-    # Histograma
-    plt.figure(figsize=(10,6))
-    plt.hist(delta, bins=bins, color='skyblue', edgecolor='black')
-    plt.axvline(0, color='red', linestyle='dashed', linewidth=1)
-    plt.xlabel("Error (Radio_Eje - Max_Geometría)")
-    plt.ylabel("Número de ejes")
-    plt.title("Distribución del error respecto al MÁXIMO")
-    plt.show()
-
-    return delta
-
-
 
 
 # ====================================================================================================================
-# RADII SANITY CHECKS (for microbloom / consistency)
-# ====================================================================================================================
-
-def check_polyline_radii_match_endnodes(                                             # ADAPTAR A ATRIBUTOS QUE TENGO AHORA, NO HACE FALTA TANTA PARAFERNALIA 
-    data,                                                                           # SACAR LOS PUNTOS CON LOS INDICES Y COMPARAR, OJO CON LOS ACCESOS A RADII
-    node_r_attr_candidates=("radii", "radius", "radius_point"),
-    tol=1e-3,
-    verbose=True
-):
-    """
-    Check that polyline endpoint radii match radii at end nodes A/B.
-    Needs:
-      data["graph"] with edge attrs geom_start/geom_end
-      data["radii_geom"] radii per polyline point
-      graph.vs has a node radii attribute (one of candidates)
-    """
-    G = data["graph"]
-    if "radii_geom" not in data:
-        raise ValueError("data['radii_geom'] missing.")
-    r_geom = np.asarray(data["radii_geom"], float)
-
-    node_attr = None
-    for cand in node_r_attr_candidates:
-        if cand in G.vs.attributes():
-            node_attr = cand
-            break
-    if node_attr is None:
-        raise ValueError(f"No node radius attr found in graph.vs. Tried: {node_r_attr_candidates}")
-
-    if "geom_start" not in G.es.attributes() or "geom_end" not in G.es.attributes():
-        raise ValueError("Edges must have 'geom_start' and 'geom_end' to check polyline endpoints.")
-
-    r_node = np.asarray(G.vs[node_attr], float)
-
-    bad = 0
-    max_diff = 0.0
-    examples = []
-
-    for e in range(G.ecount()):
-        s = int(G.es[e]["geom_start"])
-        t = int(G.es[e]["geom_end"])
-        if (t - s) < 2:
-            continue
-
-        a, b = G.es[e].tuple
-        rA = float(r_node[a])
-        rB = float(r_node[b])
-
-        r0 = float(r_geom[s])
-        r1 = float(r_geom[t - 1])
-
-        d0 = abs(r0 - rA)
-        d1 = abs(r1 - rB)
-        md = max(d0, d1)
-
-        if md > tol:
-            bad += 1
-            if len(examples) < 10:
-                examples.append((e, md, rA, r0, rB, r1))
-        max_diff = max(max_diff, md)
-
-    if verbose:
-        print("\n=== Radii check: polyline endpoints vs node radii ===")
-        print(f"Node radius attr used: '{node_attr}' | tol={tol}")
-        print(f"Mismatching edges: {bad} / {G.ecount()} | max diff: {max_diff:.6g}")
-        if examples:
-            print("Examples (edge, maxdiff, rA, r_poly0, rB, r_polyEnd):")
-            for ex in examples:
-                print(" ", ex)
-
-    return {"bad_edges": bad, "max_diff": max_diff, "examples": examples, "node_attr": node_attr}
-
-# ============================================================================================================================================0
-
-
-
-#  LOS TRES SIGUIENTES CODIGOS PODRÍA ELIMINARLOS, NO TIENEN MUCHO SENTIDO NI TP ME DAN APENAS INFO DE ANALISIS DE BOX 
-
-def check_radii_endpoints_allow_swap(data, tol=1e-3, max_examples=15, use_coords_check=False, coords_tol=1e-6):   # QUITARLO, METER COMPROBACIÓN DE ORDEN COMO CHECK EN CODIGO ANTERIOR 
-    """
-    Compara radii de vértices vs radii de geom en endpoints de cada edge.
-    Permite geometría invertida (swap start/end) y reporta cuántos swaps hay.
-
-    data format:
-      data["graph"]  -> igraph Graph (edges have geom_start/geom_end)
-      data["vertex"]["radii"] -> (nV,)
-      data["geom"]["radii"]   -> (nP,)
-      data["geom"]["x/y/z"]   -> (nP,)
-
-    Si use_coords_check=True, además intenta decidir orientación comparando P[0] con coords_image[u].
-    """
-    G = data["graph"]
-
-    # --- vertex radii ---
-    if "vertex" not in data or "radii" not in data["vertex"]:
-        raise KeyError("Falta data['vertex']['radii']")
-    vr = np.asarray(data["vertex"]["radii"], dtype=np.float32)
-
-    if len(vr) != G.vcount():
-        raise ValueError(f"vertex['radii'] len={len(vr)} != G.vcount()={G.vcount()}")
-
-    # --- geom radii ---
-    if "geom" not in data or "radii" not in data["geom"]:
-        raise KeyError("Falta data['geom']['radii']")
-    gr = np.asarray(data["geom"]["radii"], dtype=np.float32)
-
-    # optional geom coords for sanity / orientation check
-    x = np.asarray(data["geom"]["x"], dtype=np.float64) if "x" in data["geom"] else None
-    y = np.asarray(data["geom"]["y"], dtype=np.float64) if "y" in data["geom"] else None
-    z = np.asarray(data["geom"]["z"], dtype=np.float64) if "z" in data["geom"] else None
-    if x is not None and len(x) != len(gr):
-        raise ValueError(f"geom['x'] len={len(x)} != geom['radii'] len={len(gr)}")
-
-    coords_v = None
-    if use_coords_check:
-        if "coords_image" not in data["vertex"]:
-            raise KeyError("use_coords_check=True pero falta data['vertex']['coords_image']")
-        coords_v = np.asarray(data["vertex"]["coords_image"], dtype=np.float64)
-        if coords_v.shape[0] != G.vcount() or coords_v.shape[1] != 3:
-            raise ValueError("vertex['coords_image'] debe ser (nV,3)")
-
-        if x is None or y is None or z is None:
-            raise KeyError("use_coords_check=True requiere geom['x','y','z']")
-
-    bad = 0
-    swapped = 0
-    max_diff = 0.0
-    examples = []
-
-    for ei in range(G.ecount()):
-        s = int(G.es[ei]["geom_start"])
-        en = int(G.es[ei]["geom_end"])
-
-        if en - s < 2:
-            continue
-        if s < 0 or en > len(gr) or en <= s:
-            raise ValueError(f"Edge {ei}: geom_start/end fuera de rango: start={s}, end={en}, nP={len(gr)}")
-
-        u = int(G.es[ei].source)
-        v = int(G.es[ei].target)
-
-        # --- direct match (u->start, v->end) ---
-        du = float(abs(vr[u] - gr[s]))
-        dv = float(abs(vr[v] - gr[en - 1]))
-        d_direct = max(du, dv)
-
-        # --- swapped match (u->end, v->start) ---
-        du2 = float(abs(vr[u] - gr[en - 1]))
-        dv2 = float(abs(vr[v] - gr[s]))
-        d_swap = max(du2, dv2)
-
-        # decide best
-        d_best = d_direct
-        mode = "DIRECT"
-        if d_swap < d_direct:
-            d_best = d_swap
-            mode = "SWAP"
-            swapped += 1
-
-        # optional: compare to coordinates to see if geometry order matches u
-        coord_mode = None
-        if use_coords_check:
-            P0 = np.array([x[s], y[s], z[s]], dtype=np.float64)
-            Pend = np.array([x[en-1], y[en-1], z[en-1]], dtype=np.float64)
-            cu = coords_v[u]
-            # if P0 ~ cu => direct, if Pend ~ cu => swapped
-            if np.allclose(P0, cu, atol=coords_tol):
-                coord_mode = "DIRECT"
-            elif np.allclose(Pend, cu, atol=coords_tol):
-                coord_mode = "SWAP"
-            else:
-                coord_mode = "UNKNOWN"
-
-        max_diff = max(max_diff, d_best)
-
-        if d_best > tol:
-            bad += 1
-            if len(examples) < max_examples:
-                row = (
-                    ei, d_best,
-                    u, float(vr[u]), float(gr[s]),
-                    v, float(vr[v]), float(gr[en - 1]),
-                    mode
-                )
-                if use_coords_check:
-                    row = row + (coord_mode,)
-                examples.append(row)
-
-    print("=== Radii endpoint check (vertex vs geom endpoints, allow swap) ===")
-    msg = f"tol={tol} | bad_edges={bad}/{G.ecount()} | swapped_edges={swapped}/{G.ecount()} | max_diff={max_diff:.6g}"
-    if use_coords_check:
-        msg += f" | coords_tol={coords_tol}"
-    print(msg)
-
-    if examples:
-        if use_coords_check:
-            print("Examples: (edge, maxdiff, u, vr[u], gr[start], v, vr[v], gr[end], best_mode, coord_mode)")
-        else:
-            print("Examples: (edge, maxdiff, u, vr[u], gr[start], v, vr[v], gr[end], best_mode)")
-        for ex in examples:
-            print(" ", ex)
-
-    return {"bad": bad, "swapped": swapped, "max_diff": max_diff, "examples": examples}
-
-
-
-
-def check_polyline_radii_variation(data, tol_rel=0.05, verbose=True):
-    """
-    For each edge polyline, checks relative variation of radii along points:
-      rel = (max-min)/mean
-    Flags edges above tol_rel (e.g. 0.05 = 5%)
-    """
-    G = data["graph"]
-    data["radii_geom"] = data["geom"]["radii"]
-
-    if "radii_geom" not in data:
-        raise ValueError("data['radii_geom'] missing.")
-    r = np.asarray(data["radii_geom"], float)
-
-    if "geom_start" not in G.es.attributes() or "geom_end" not in G.es.attributes():
-        raise ValueError("Edges must have 'geom_start' and 'geom_end' to check polyline radii variation.")
-
-    bad = 0
-    worst = 0.0
-    examples = []
-
-    for e in range(G.ecount()):
-        s = int(G.es[e]["geom_start"])
-        t = int(G.es[e]["geom_end"])
-        if (t - s) < 2:
-            continue
-
-        rr = r[s:t]
-        if len(rr) < 2:
-            continue
-
-        m = float(np.nanmean(rr))
-        if not np.isfinite(m) or m == 0:
-            continue
-
-        rel = float((np.nanmax(rr) - np.nanmin(rr)) / m)
-        if rel > tol_rel:
-            bad += 1
-            if len(examples) < 10:
-                examples.append((e, rel, float(np.nanmin(rr)), float(np.nanmax(rr)), m))
-        worst = max(worst, rel)
-
-    if verbose:
-        print("\n=== Radii variation along polyline ===")
-        print(f"Bad edges (rel var > {tol_rel}): {bad} / {G.ecount()} | worst={worst:.3f}")
-        if examples:
-            print("Examples (edge, rel_var, rmin, rmax, rmean):")
-            for ex in examples:
-                print(" ", ex)
-
-    return {"bad_edges": bad, "worst_rel": worst, "examples": examples}
-
-
-
-def debug_edge(data, ei, k=3):
-    G = data["graph"]
-    cv = np.asarray(data["vertex"]["coords_image"], float)
-    vr = np.asarray(data["vertex"]["radii"], float)
-    x = np.asarray(data["geom"]["x"], float)
-    y = np.asarray(data["geom"]["y"], float)
-    z = np.asarray(data["geom"]["z"], float)
-    gr = np.asarray(data["geom"]["radii"], float)
-
-    e = G.es[ei]
-    u, v = int(e.source), int(e.target)
-    s, en = int(e["geom_start"]), int(e["geom_end"])
-    P0 = np.array([x[s], y[s], z[s]])
-    P1 = np.array([x[en-1], y[en-1], z[en-1]])
-
-    du0 = np.linalg.norm(P0 - cv[u]); dv0 = np.linalg.norm(P0 - cv[v])
-    du1 = np.linalg.norm(P1 - cv[u]); dv1 = np.linalg.norm(P1 - cv[v])
-
-    print(f"EDGE {ei} | u={u}, v={v} | npts={en-s}")
-    print("coords distances:")
-    print(f"  |Pstart-u|={du0:.6g}  |Pstart-v|={dv0:.6g}")
-    print(f"  |Pend-u|  ={du1:.6g}  |Pend-v|  ={dv1:.6g}")
-
-    print("endpoint radii:")
-    print(f"  vr[u]={vr[u]:.6g}  gr[start]={gr[s]:.6g}  gr[end]={gr[en-1]:.6g}")
-    print(f"  vr[v]={vr[v]:.6g}  gr[start]={gr[s]:.6g}  gr[end]={gr[en-1]:.6g}")
-
-    # mira algunos puntos cercanos al start/end por si el nodo no coincide exactamente con s/en-1
-    print("\nnear start radii:")
-    for j in range(s, min(en, s+k)):
-        print(f"  j={j-s:2d}  gr={gr[j]:.6g}  P=({x[j]:.3f},{y[j]:.3f},{z[j]:.3f})")
-    print("near end radii:")
-    for j in range(max(s, en-k), en):
-        print(f"  j={j-(en-k):2d}  gr={gr[j]:.6g}  P=({x[j]:.3f},{y[j]:.3f},{z[j]:.3f})")
-
-     
-
-def classify_edge_endpoint_coords(data, tol=1e-6):
-    G = data["graph"]
-    cv = np.asarray(data["vertex"]["coords_image"], float)
-
-    x = np.asarray(data["geom"]["x"], float)
-    y = np.asarray(data["geom"]["y"], float)
-    z = np.asarray(data["geom"]["z"], float)
-
-    counts = {"OK_DIRECT":0, "OK_SWAP":0, "BAD_BOTH":0, "BAD_AMBIG":0}
-    examples = {"OK_SWAP":[], "BAD_BOTH":[]}
-
-    for ei in range(G.ecount()):
-        e = G.es[ei]
-        u, v = int(e.source), int(e.target)
-        s, en = int(e["geom_start"]), int(e["geom_end"])
-        if en - s < 2:
-            continue
-
-        P0 = np.array([x[s], y[s], z[s]])
-        P1 = np.array([x[en-1], y[en-1], z[en-1]])
-
-        mu0 = np.allclose(P0, cv[u], atol=tol)
-        mv0 = np.allclose(P0, cv[v], atol=tol)
-        mu1 = np.allclose(P1, cv[u], atol=tol)
-        mv1 = np.allclose(P1, cv[v], atol=tol)
-
-        direct = mu0 and mv1
-        swap   = mv0 and mu1
-
-        if direct and not swap:
-            counts["OK_DIRECT"] += 1
-        elif swap and not direct:
-            counts["OK_SWAP"] += 1
-            if len(examples["OK_SWAP"]) < 10:
-                examples["OK_SWAP"].append((ei,u,v,s,en))
-        elif direct and swap:
-            counts["BAD_AMBIG"] += 1
-        else:
-            counts["BAD_BOTH"] += 1
-            if len(examples["BAD_BOTH"]) < 10:
-                # guarda distancias para debug
-                du0 = np.linalg.norm(P0-cv[u]); dv0=np.linalg.norm(P0-cv[v])
-                du1 = np.linalg.norm(P1-cv[u]); dv1=np.linalg.norm(P1-cv[v])
-                examples["BAD_BOTH"].append((ei,u,v,du0,dv0,du1,dv1,s,en))
-
-    print(counts)
-    print("Examples OK_SWAP (ei,u,v,s,en):", examples["OK_SWAP"])
-    print("Examples BAD_BOTH (ei,u,v,du0,dv0,du1,dv1,s,en):", examples["BAD_BOTH"])
-    return counts, examples
-
-
-
-# ESTOS CHECKS QUE INFO ME DAN?????? OSEA ME INTERESA ALGO MÁS ALLÁ DE HDN ? QUE YA LO HE COMPROBADO
-# ====================================================================================================================
-# DEGREE CHECKS: distribution + by type + spatial mapping for any degree band
-# ====================================================================================================================
-
-def degree_summary(graph, max_degree_to_print=None):
-    deg = np.asarray(graph.degree(), dtype=int)
-    c = Counter(deg.tolist())
-    print("\n=== Degree distribution (all nodes) ===")
-    for d in sorted(c.keys()):
-        if max_degree_to_print is not None and d > max_degree_to_print:
-            continue
-        print(f"  degree {d}: {c[d]}")
-    print(f"  max degree: {int(deg.max()) if deg.size else 0}")
-    return c
-
-
-def degree_summary_by_type(graph):
-    deg = np.asarray(graph.degree(), dtype=int)
-    labels = np.array([infer_node_type_from_incident_edges(graph, v.index) for v in graph.vs], dtype=object)
-
-    out = {}
-    print("\n=== Degree distribution by vessel-type (node label) ===")
-    for lab in ["arteriole", "venule", "capillary", "unknown"]:
-        m = labels == lab
-        c = Counter(deg[m].tolist())
-        out[lab] = c
-        total = int(np.sum(m))
-        print(f"\n  [{lab}] n={total}")
-        for d in sorted(c.keys()):
-            print(f"    degree {d}: {c[d]}")
-    return out
-
-
-def plot_degree_nodes_spatial(
-    graph, coords_attr="coords_image",
-    degree_min=4, degree_max=None,
-    by_type=True,
-    s_all=2, s_sel=30,
-    alpha_all=0.15, alpha_sel=0.95,
-    title=None
-):
-    """
-    Shows in 3D the nodes whose degree is in [degree_min, degree_max].
-    If by_type=True, colors selected nodes by type (arteriole red, venule blue, capillary gray).
-    """
-    P = get_coords(graph, coords_attr)
-    deg = np.asarray(graph.degree(), dtype=int)
-
-    if degree_max is None:
-        sel = np.where(deg >= int(degree_min))[0]
-        crit = f"deg ≥ {degree_min}"
-    else:
-        sel = np.where((deg >= int(degree_min)) & (deg <= int(degree_max)))[0]
-        crit = f"{degree_min} ≤ deg ≤ {degree_max}"
-
-    fig = plt.figure()
-    ax = fig.add_subplot(111, projection="3d")
-    ax.scatter(P[:, 0], P[:, 1], P[:, 2], s=s_all, c="lightgray", alpha=alpha_all, depthshade=False)
-
-    if len(sel) == 0:
-        ax.set_title(title or f"No nodes with {crit}")
-        plt.show()
-        return fig, ax
-
-    if not by_type:
-        ax.scatter(P[sel, 0], P[sel, 1], P[sel, 2], s=s_sel, c="black", alpha=alpha_sel, depthshade=False)
-    else:
-        labs = np.array([infer_node_type_from_incident_edges(graph, int(v)) for v in sel], dtype=object)
-        col = {"arteriole": "red", "venule": "blue", "capillary": "gray", "unknown": "black"}
-        for lab in ["arteriole", "venule", "capillary", "unknown"]:
-            m = labs == lab
-            if np.any(m):
-                ax.scatter(P[sel[m], 0], P[sel[m], 1], P[sel[m], 2],
-                           s=s_sel, c=col[lab], alpha=alpha_sel, depthshade=False, label=lab)
-        ax.legend(loc="best", title=f"{crit} nodes")
-
-    ax.set_xlabel("X"); ax.set_ylabel("Y"); ax.set_zlabel("Z")
-    ax.set_title(title or f"Spatial distribution of {crit}")
-    plt.show()
-    return fig, ax
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-# ====================================================================================================================
-# REDUNDANCY: edge-disjoint arteriole->venule paths inside the box
+#                                                    REDUNDANCY
 # ====================================================================================================================
 
 def induced_subgraph_box(graph, box, coords_attr="coords_image", node_eps=0.0, edge_mode="both"):
@@ -2408,392 +1906,115 @@ def induced_subgraph_box(graph, box, coords_attr="coords_image", node_eps=0.0, e
     return sub, sub_to_orig, orig_to_sub
 
 
-def _nodes_by_label_in_subgraph(sub, vessel_type_map=EDGE_NKIND_TO_LABEL):              # YA TENGO UN CODIGO Q HACE ESTO NO? PARA QUÉ QUIERO OTRO?????
-    labels = [infer_node_type_from_incident_edges(sub, v.index, vessel_type_map=EDGE_NKIND_TO_LABEL) for v in sub.vs]
+def _nodes_by_label_in_subgraph(sub, vessel_type_map=EDGE_NKIND_TO_LABEL):            
+    labels = [infer_node_type_from_incident_edges(sub, v.index, vessel_type_map=vessel_type_map) for v in sub.vs]
     out = {}
     for lab in ["arteriole", "venule", "capillary", "unknown"]:
         out[lab] = np.where(np.array(labels, dtype=object) == lab)[0]
     return out
 
 
-def edge_disjoint_av_paths_in_box(
-    graph, box, coords_attr="coords_image", node_eps=0.0,
-    vessel_type_map=EDGE_NKIND_TO_LABEL,
-    connect_cap=10**9,
-):
+
+def av_paths_in_box(graph, box, k=3,
+                           space=None, coords_attr=None,
+                           node_eps=0.0):
     """
-    Max number of EDGE-DISJOINT paths connecting any arteriole -> any venule
-    inside the induced subgraph of the box.
-
-    Robust for UNDIRECTED graphs:
-      - edge-splitting transformation: each original edge becomes a capacity-1 gadget.
-
-    Returns dict.
+    Returns up to k shortest A->V paths inside the box.
+    Much simpler than maxflow-based extraction.
     """
-    sub, _, _ = induced_subgraph_box(
-        graph, box, coords_attr=coords_attr, node_eps=node_eps, edge_mode="both"
-    )
-    if sub is None or sub.ecount() == 0:
-        return {"edge_disjoint_paths": 0, "nA": 0, "nV": 0,
-                "n_nodes_sub": 0, "n_edges_sub": 0, "note": "empty subgraph"}
 
-    groups = _nodes_by_label_in_subgraph(sub, vessel_type_map=vessel_type_map)
-    A = groups.get("arteriole", np.array([], dtype=int))
-    V = groups.get("venule", np.array([], dtype=int))
-
-    if len(A) == 0 or len(V) == 0:
-        return {"edge_disjoint_paths": 0, "nA": int(len(A)), "nV": int(len(V)),
-                "n_nodes_sub": int(sub.vcount()), "n_edges_sub": int(sub.ecount()),
-                "note": "no arteriole or no venule nodes in box"}
-
-    n = sub.vcount()
-    m = sub.ecount()
-
-    # Directed auxiliary graph with edge-splitting nodes
-    g2 = ig.Graph(directed=True)
-
-    edge_in = np.arange(n, n + m, dtype=int)
-    edge_out = np.arange(n + m, n + 2 * m, dtype=int)
-    s = n + 2 * m
-    t = s + 1
-    g2.add_vertices(t + 1)
-
-    edges2 = []
-    caps = []
-
-    # Capacity 1 through each original edge gadget: edge_in -> edge_out
-    for e in range(m):
-        edges2.append((int(edge_in[e]), int(edge_out[e])))
-        caps.append(1.0)
-
-    edgelist = sub.get_edgelist()
-    for e, (u, v) in enumerate(edgelist):
-        ein = int(edge_in[e])
-        eout = int(edge_out[e])
-        u = int(u)
-        v = int(v)
-
-        # u/v -> edge_in (big cap)
-        edges2 += [(u, ein), (v, ein)]
-        caps += [float(connect_cap), float(connect_cap)]
-
-        # edge_out -> u/v (big cap)
-        edges2 += [(eout, u), (eout, v)]
-        caps += [float(connect_cap), float(connect_cap)]
-
-    # super source to all A, all V to super sink
-    for a in A:
-        edges2.append((s, int(a)))
-        caps.append(float(connect_cap))
-    for v in V:
-        edges2.append((int(v), t))
-        caps.append(float(connect_cap))
-
-    g2.add_edges(edges2)
-    flow = g2.maxflow(s, t, capacity=caps)
-
-    return {
-        "edge_disjoint_paths": int(flow.value),
-        "nA": int(len(A)),
-        "nV": int(len(V)),
-        "n_nodes_sub": int(sub.vcount()),
-        "n_edges_sub": int(sub.ecount()),
-        "note": "edge-disjoint paths via maxflow (edge-splitting, cap=1 per original edge)"
-    }
-
-
-
-
-
-# ====================================================================================================================
-#                            NEW-PKL ONLY HELPERS (data["graph"], data["vertex"], data["geom"])
-# ====================================================================================================================
-
-def select_largest_component_data(data):            # LO PUEDO ELIMINAR, SIMPLEMENTE AÑADIR EN SINGLE CONNECTED, QUE ESCOJA EL BCC
-    """
-    NEW-PKL ONLY.
-    Input: data = {"graph":G, "vertex":{...}, "geom":{...}}
-    Output: same structure but keeping only the largest connected component (WEAK).
-    geom is kept as-is (polylines still refer to original geom indices; that's OK for analysis that uses
-    only node/edge topology; if you need geom consistency too, you'd do a geom cut, different step).
-    """
-    if not (isinstance(data, dict) and "graph" in data and "vertex" in data and "geom" in data):
-        raise ValueError("Expected NEW-PKL dict with keys: 'graph', 'vertex', 'geom'.")
-
-    G = data["graph"]
-    comps = G.components(mode="WEAK")
-    if len(comps) == 0:
-        return data
-
-    keep = np.asarray(comps[np.argmax(comps.sizes())], dtype=int)
-    H = G.induced_subgraph(keep)
-
-    
-        print("\n=== GIANT COMPONENT (NEW-PKL) ===")
-        print("Original:", G.vcount(), "V", G.ecount(), "E")
-        print("GC      :", H.vcount(), "V", H.ecount(), "E")
-
-    V = data["vertex"]
-    V2 = {}
-    for k, arr in V.items():
-        arr = np.asarray(arr)
-        if arr.ndim == 1 and len(arr) == G.vcount():
-            V2[k] = arr[keep].copy()
-        elif arr.ndim == 2 and arr.shape[0] == G.vcount():
-            V2[k] = arr[keep, :].copy()
-        else:
-            # leave untouched if not per-vertex sized
-            V2[k] = arr
-
-    return {"graph": H, "vertex": V2, "geom": data["geom"]}
-
-
-def attach_vertex_attrs_from_data(data, verbose=False):                         # ESTO NO LO NECESITO, SOLAMENTE TENGO QUE ACTUALIZAR LOS ACCESOS EN LOS OTROS
-    """
-    NEW-PKL ONLY.
-    Copies heavy per-vertex arrays from data["vertex"] into graph.vs attributes,
-    so all your existing functions (that expect graph.vs["coords_image"], etc.) work.
-    """
-    if not (isinstance(data, dict) and "graph" in data and "vertex" in data):
-        raise ValueError("attach_vertex_attrs_from_data expects NEW-PKL data dict.")
-
-    G = data["graph"]
-    V = data["vertex"]
-
-    # required for box + plotting
-    if "coords_image" not in V:
-        raise ValueError("data['vertex']['coords_image'] is required.")
-    G.vs["coords_image"] = [tuple(map(float, p)) for p in np.asarray(V["coords_image"], float)]
-
-    # optional commonly used
-    if "coords" in V:
-        G.vs["coords"] = [tuple(map(float, p)) for p in np.asarray(V["coords"], float)]
-    if "distance_to_surface" in V:
-        G.vs["distance_to_surface"] = np.asarray(V["distance_to_surface"], float).tolist()
-    if "radii" in V:
-        G.vs["radii"] = np.asarray(V["radii"], float).tolist()
-    if "vertex_annotation" in V:
-        G.vs["vertex_annotation"] = np.asarray(V["vertex_annotation"], int).tolist()
-    if "id" in V:
-        G.vs["id"] = np.asarray(V["id"], int).tolist()
-
-    if verbose:
-        print("[attach_vertex_attrs_from_data] graph.vs attrs:", G.vs.attributes())
-
-    return data
-
-
-# ====================================================================================================================
-#                                  RADII CHECK: vertex endpoints vs geom endpoints
-# ====================================================================================================================
-
-
-                                                # TIENE SENTIDO OTRO CODIGO A PARTE? SOLICITADO POR GAIA, PERO PODRÍA METERLO DONDE COMPRUEBO EL MAX Y YA NO? 
-
-def check_endpoint_radii_vertex_vs_geom(data, tol=1e-3, verbose=True, max_print=10):
-    """
-    NEW-PKL ONLY.
-    Checks: geom radii at first/last polyline point == vertex radii at nodes A/B.
-
-    Needs:
-      data["vertex"]["radii"] (nV,)
-      data["geom"]["radii"]   (nP,)
-      edges have geom_start/geom_end
-    """
-    if not (isinstance(data, dict) and "graph" in data and "vertex" in data and "geom" in data):
-        raise ValueError("Expected NEW-PKL dict with keys: 'graph', 'vertex', 'geom'.")
-
-    G = data["graph"]
-
-    if "radii" not in data["vertex"]:
-        raise ValueError("Missing data['vertex']['radii'] for endpoint radii check.")
-    if "radii" not in data["geom"]:
-        raise ValueError("Missing data['geom']['radii'] for endpoint radii check.")
-
-    vr = np.asarray(data["vertex"]["radii"], float)
-    gr = np.asarray(data["geom"]["radii"], float)
-
-    if "geom_start" not in G.es.attributes() or "geom_end" not in G.es.attributes():
-        raise ValueError("Edges must have 'geom_start' and 'geom_end'.")
-
-    bad = 0
-    maxdiff = 0.0
-    examples = []
-
-    for ei in range(G.ecount()):
-        e = G.es[ei]
-        s = int(e["geom_start"]); en = int(e["geom_end"])
-        if en - s < 2:
-            continue
-
-        u, v = e.tuple
-
-        d0 = abs(float(gr[s])    - float(vr[u]))
-        d1 = abs(float(gr[en-1]) - float(vr[v]))
-        md = max(d0, d1)
-
-        if md > tol:
-            bad += 1
-            if len(examples) < max_print:
-                examples.append((ei, md, u, float(vr[u]), float(gr[s]), v, float(vr[v]), float(gr[en-1])))
-        maxdiff = max(maxdiff, md)
-
-    if verbose:
-        print("\n=== Radii endpoint check (vertex vs geom endpoints) ===")
-        print(f"tol={tol} | bad_edges={bad}/{G.ecount()} | max_diff={maxdiff:.6g}")
-        if examples:
-            print("Examples: (edge, maxdiff, u, vr[u], gr[start], v, vr[v], gr[end])")
-            for ex in examples:
-                print(" ", ex)
-
-    return {"bad_edges": int(bad), "max_diff": float(maxdiff), "examples": examples}
-
-
-# ====================================================================================================================
-#                             REDUNDANCY: return used subgraph edges (for viz)
-# ====================================================================================================================
-
-
-                                                        # NO TIENE SENTIDO ESTE CODIGO AQUI? PARA QUE QUEIRO ESTE CODIGO? "GAIA SOLICITED"
-def edge_disjoint_av_paths_in_box_with_used_edges(
-    graph, box, coords_attr="coords_image", node_eps=0.0,
-    vessel_type_map=EDGE_NKIND_TO_LABEL,
-    connect_cap=10**9,
-):
-    """
-    Same as edge_disjoint_av_paths_in_box but also returns:
-      used_edges_sub: list of edge IDs in the induced subgraph that are saturated by the maxflow solution.
-
-    Note: this is ONE valid maximum-flow solution (not unique).
-    """
     validate_box_faces(box)
-    sub, sub_to_orig, _ = induced_subgraph_box(
-        graph, box, coords_attr=coords_attr, node_eps=node_eps, edge_mode="both"
+
+    space, coords_attr, _ = resolve_space_and_attrs(
+        graph, space=space, coords_attr=coords_attr,
+        depth_attr=None, require_space=True, require_coords=True, require_depth=False
     )
+
+    sub, sub_to_orig, _ = induced_subgraph_box(
+        graph, box, coords_attr=coords_attr,
+        node_eps=node_eps, edge_mode="both"
+    )
+
     if sub is None or sub.ecount() == 0:
-        return {"edge_disjoint_paths": 0, "used_edges_sub": [], "used_edges_orig": [],
-                "nA": 0, "nV": 0, "n_nodes_sub": 0, "n_edges_sub": 0, "note": "empty subgraph"}
+        return []
 
-    groups = _nodes_by_label_in_subgraph(sub, vessel_type_map=vessel_type_map)
-    A = groups.get("arteriole", np.array([], dtype=int))
-    V = groups.get("venule", np.array([], dtype=int))
+    groups = _nodes_by_label_in_subgraph(sub)
+    A = np.asarray(groups.get("arteriole", []), dtype=int)
+    V = np.asarray(groups.get("venule", []), dtype=int)
 
-    if len(A) == 0 or len(V) == 0:
-        return {"edge_disjoint_paths": 0, "used_edges_sub": [], "used_edges_orig": [],
-                "nA": int(len(A)), "nV": int(len(V)),
-                "n_nodes_sub": int(sub.vcount()), "n_edges_sub": int(sub.ecount()),
-                "note": "no arteriole or no venule nodes in box"}
+    if A.size == 0 or V.size == 0:
+        return []
 
-    n = sub.vcount()
-    m = sub.ecount()
+    paths_orig = []
 
-    g2 = ig.Graph(directed=True)
-    edge_in = np.arange(n, n + m, dtype=int)
-    edge_out = np.arange(n + m, n + 2*m, dtype=int)
-    s = n + 2*m
-    t = s + 1
-    g2.add_vertices(t + 1)
-
-    edges2 = []
-    caps = []
-
-    # cap=1 edges come FIRST -> flow.flow[0:m] corresponds to these.
-    for e in range(m):
-        edges2.append((int(edge_in[e]), int(edge_out[e])))
-        caps.append(1.0)
-
-    edgelist = sub.get_edgelist()
-    for e, (u, v) in enumerate(edgelist):
-        ein = int(edge_in[e]); eout = int(edge_out[e])
-        u = int(u); v = int(v)
-        edges2 += [(u, ein), (v, ein), (eout, u), (eout, v)]
-        caps  += [float(connect_cap)] * 4
-
+    # take first k A-V combinations
+    count = 0
     for a in A:
-        edges2.append((s, int(a))); caps.append(float(connect_cap))
-    for v in V:
-        edges2.append((int(v), t)); caps.append(float(connect_cap))
+        for v in V:
+            path_sub = sub.get_shortest_paths(a, to=v)[0]
+            if len(path_sub) > 1:
+                # map to original graph vertex ids
+                path_orig = [int(sub_to_orig[p]) for p in path_sub]
+                paths_orig.append(path_orig)
+                count += 1
+                if count >= k:
+                    return paths_orig
 
-    g2.add_edges(edges2)
-    flow = g2.maxflow(s, t, capacity=caps)
-
-    f = np.asarray(flow.flow, float)
-    used_edges_sub = [int(eid) for eid in range(m) if f[eid] > 0.5]
-
-    # map sub-edge id -> orig-edge id
-    # sub_to_orig maps sub-vertex -> orig-vertex. For edge mapping use original endpoints:
-    used_edges_orig = []
-    for eid in used_edges_sub:
-        u_sub, v_sub = sub.es[eid].tuple
-        u0 = int(sub_to_orig[u_sub]); v0 = int(sub_to_orig[v_sub])
-        # find edge id in original graph between (u0,v0) (igraph: get_eid)
-        try:
-            used_edges_orig.append(int(graph.get_eid(u0, v0, directed=False, error=True)))
-        except:
-            pass
-
-    return {
-        "edge_disjoint_paths": int(flow.value),
-        "used_edges_sub": used_edges_sub,
-        "used_edges_orig": used_edges_orig,
-        "nA": int(len(A)),
-        "nV": int(len(V)),
-        "n_nodes_sub": int(sub.vcount()),
-        "n_edges_sub": int(sub.ecount()),
-        "note": "used_edges_sub: saturated edges in one maxflow solution (subgraph edge IDs)"
-    }
+    return paths_orig
 
 
+def plot_av_paths_in_box(graph, box, paths_orig,
+                      space=None, coords_attr=None,
+                      node_eps=0.0,
+                      sample_edges=5000):
 
-                                                                                            # LO MISMO DE ANTES, PARA Q USO ESTO ? Q INFO DA? GAIA
-def plot_redundancy_used_edges(graph, box, used_edges_orig, coords_attr="coords_image",
-                              sample_edges=8000, title=None):
-    """
-    Simple 3D viz:
-      - light gray: random background edges in box-subgraph
-      - red: edges used by maxflow solution
-    """
+    space, coords_attr, _ = resolve_space_and_attrs(
+        graph, space=space, coords_attr=coords_attr,
+        depth_attr=None, require_space=True, require_coords=True, require_depth=False
+    )
 
     P = get_coords(graph, coords_attr)
 
-    sub, sub_to_orig, _ = induced_subgraph_box(graph, box, coords_attr=coords_attr, node_eps=0.0, edge_mode="both")
-    if sub is None or sub.ecount() == 0:
-        print("[plot_redundancy_used_edges] empty subgraph")
-        return
-
-    # background edges (orig ids)
-    bg_orig = []
-    for e in sub.es:
-        u, v = e.tuple
-        u0 = int(sub_to_orig[u]); v0 = int(sub_to_orig[v])
-        try:
-            bg_orig.append(int(graph.get_eid(u0, v0, directed=False, error=True)))
-        except:
-            pass
-    bg_orig = np.asarray(bg_orig, int)
-
-    if len(bg_orig) > sample_edges:
-        rng = np.random.default_rng(0)
-        bg_orig = rng.choice(bg_orig, size=sample_edges, replace=False)
-
-    used_edges_orig = np.asarray(list(set(used_edges_orig)), int)
+    # background
+    sub, sub_to_orig, _ = induced_subgraph_box(
+        graph, box, coords_attr=coords_attr,
+        node_eps=node_eps, edge_mode="both"
+    )
 
     fig = plt.figure()
     ax = fig.add_subplot(111, projection="3d")
 
-    # background
-    for eid in bg_orig:
-        u, v = graph.es[int(eid)].tuple
-        ax.plot([P[u,0], P[v,0]], [P[u,1], P[v,1]], [P[u,2], P[v,2]], color="lightgray", alpha=0.15, linewidth=0.6)
+    if sub is not None:
+        bg_pairs = []
+        for (u, v) in sub.get_edgelist():
+            u0 = sub_to_orig[u]
+            v0 = sub_to_orig[v]
+            bg_pairs.append((u0, v0))
 
-    # used
-    for eid in used_edges_orig:
-        u, v = graph.es[int(eid)].tuple
-        ax.plot([P[u,0], P[v,0]], [P[u,1], P[v,1]], [P[u,2], P[v,2]], color="red", alpha=0.95, linewidth=2.0)
+        bg_pairs = np.array(bg_pairs)
+        if len(bg_pairs) > sample_edges:
+            bg_pairs = bg_pairs[np.random.choice(len(bg_pairs), sample_edges, replace=False)]
 
-    ax.set_xlabel("X"); ax.set_ylabel("Y"); ax.set_zlabel("Z")
-    ax.set_title(title or f"Redundancy: edges used by maxflow solution (k={len(used_edges_orig)})")
+        for (u, v) in bg_pairs:
+            ax.plot([P[u,0], P[v,0]],
+                    [P[u,1], P[v,1]],
+                    [P[u,2], P[v,2]],
+                    alpha=0.1, linewidth=0.6)
+
+    # paths in red
+    for path in paths_orig:
+        for a, b in zip(path[:-1], path[1:]):
+            ax.plot([P[a,0], P[b,0]],
+                    [P[a,1], P[b,1]],
+                    [P[a,2], P[b,2]],
+                    linewidth=2.5)
+
+    unit = "µm" if space == "um" else "vox"
+    ax.set_xlabel(f"X ({unit})")
+    ax.set_ylabel(f"Y ({unit})")
+    ax.set_zlabel(f"Z ({unit})")
+    ax.set_title(f"Simple A→V paths (n={len(paths_orig)})")
+    plt.tight_layout()
     plt.show()
-    return fig, ax
 
 

@@ -315,6 +315,8 @@ G.es["length"] = e_len.tolist()
 # store per-edge radii (image and atlas)
 G.es["radius"] = e_rad.tolist()
 G.es["radius_atlas"] = e_rad_atlas.tolist()
+G.es["diameter"] = (2 * e_rad).tolist()
+G.es["diameter_atlas"] = (2 * e_rad_atlas).tolist()
 
 G.es["geom_start"] = gs.tolist()
 G.es["geom_end"] = ge.tolist()
@@ -395,6 +397,7 @@ data = {
         "distance_to_surface": v_dist,
         "radii": v_radii,  # image voxel space
         "radii_atlas": v_radii_atlas,  # atlas voxel space (25 µm grid)
+        
     },
     "geom": {
         "x": x,  # image voxel space
