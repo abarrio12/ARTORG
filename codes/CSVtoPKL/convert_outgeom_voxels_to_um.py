@@ -1,5 +1,5 @@
 """
-Convert OutGeom PKL from voxel space to micrometers (µm), WITHOUT overwriting the original voxel arrays.
+Convert OutGeom PKL from VOXEL space TO MICROMETERS (µm), WITHOUT overwriting the original voxel arrays.
 The new attributes are stored in separate keys with suffix "_R" (for "real-world" units), while the original voxel-based attributes remain unchanged.
 
 What gets converted:

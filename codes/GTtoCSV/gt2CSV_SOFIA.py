@@ -223,5 +223,5 @@ class QualityCheck(object):
 if __name__ == '__main__':
     graph = ReadWriteGraph("/home/admin/Ana/MicroBrain/18_vessels_graph.gt")
     #graph.writeAll()
-    graph.writeGraphPropertyEdgeGeometryAnnotation() # i only need to export this right now, as i have all the other csvs 
+    graph.writeGraphPropertyEdgeGeometryRadiiAtlas() # i only need to export this right now, as i have all the other csvs 
     QualityCheck(graph.graph)

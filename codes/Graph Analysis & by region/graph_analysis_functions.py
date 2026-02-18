@@ -202,12 +202,12 @@ def get_geom_from_data(data, space="vox"):
         L2 = np.asarray(g["lengths2"], float)
         r = np.asarray(g["radii_atlas_geom"], float) if "radii_atlas_geom" in g else None
     else:
-        g = data["geom_R"]
-        x = np.asarray(g["x_R"], float)
-        y = np.asarray(g["y_R"], float)
-        z = np.asarray(g["z_R"], float)
-        L2 = np.asarray(g["lengths2_R"], float)
-        r = np.asarray(g["radii_atlas_geom_R"], float) if "radii_atlas_geom_R" in g else None
+        gR = data["geom_R"]
+        x = np.asarray(gR["x_R"], float)
+        y = np.asarray(gR["y_R"], float)
+        z = np.asarray(gR["z_R"], float)
+        L2 = np.asarray(gR["lengths2_R"], float)
+        r = np.asarray(gR["radii_atlas_geom_R"], float) if "radii_atlas_geom_R" in gR else None
 
     return G, x, y, z, L2, r
 
@@ -316,18 +316,18 @@ def sync_vertex_attributes_safe(data, space="vox"):
 #                                                    LOAD / SAVE
 # ====================================================================================================================
 
-def load_graph(path):
+def load_data(path):
     """Load an igraph Graph object from a pickle file."""
     with open(path, "rb") as f:
-        graph = pickle.load(f)
-    return graph
+        data = pickle.load(f)
+    return data
 
 
-def dump_graph(graph, out_path):
+def dump_data(data, out_path):
     """Save an igraph Graph object into a pickle file."""
     with open(out_path, "wb") as f:
-        pickle.dump(graph, f)
-    print(f"\nGraph successfully saved to: {out_path}")
+        pickle.dump(data, f)
+    print(f"\nData successfully saved to: {out_path}")
 
 
 
@@ -698,7 +698,6 @@ def diameter_stats_nkind(
         }
 
     # Console output
-    print("\n=== Diameter statistics (by nkind) ===\n")
     for k in sorted(stats_dict.keys()):
             s = stats_dict[k]
             print(f"{s['name']} (nkind={k}, n={s['n']}):")
@@ -1122,7 +1121,7 @@ def analyze_bc_faces(
 
 def plot_bar_by_category_general(categ, attribute_toplot, label_dict=None,
                         xlabel="Category", ylabel="Value",
-                        title="Category statistics",
+                        title="Category statistics ",
                         show_values=True, value_fmt="{:.2f}"):
     labels = [label_dict.get(c, c) if label_dict else c for c in categ]
 
@@ -1423,7 +1422,8 @@ def plot_bc_3_cubes_tinted(
         ]
         ax3.legend(handles=handles, title="Vessel type", loc="upper left")
 
-    plt.tight_layout()
+    plt.tight_layout(rect=[0, 0, 1, 0.95])
+    plt.suptitle(f"Boundary nodes on cube faces by nkind | space: {space}", fontsize=16, y=1.02)
     plt.show()
     return
 
@@ -1432,7 +1432,7 @@ def plot_bc_3_cubes_tinted(
 
 def plot_bc_cube_net(
     res,
-    title="BC composition per face (cube net)",
+    title="BC composition per face (cube net) | space: {space}",
     face_alpha=0.35,
     fontsize=10,
     pct_decimals=1,
@@ -1610,68 +1610,12 @@ def plot_degree_nodes_spatial(
         ax.legend(loc="best", title=f"{crit} nodes")
 
     ax.set_xlabel(f"X ({unit})"); ax.set_ylabel(f"Y ({unit})"); ax.set_zlabel(f"Z ({unit})")
-    ax.set_title(title or f"Spatial distribution of {crit} [{unit}]")
+    ax.set_title(title or f"Spatial distribution of {crit} [{unit}] | space: {space}")
     plt.tight_layout()
     plt.show()
     return fig, ax
 
 
-
-
-def plot_high_degree_nodes_by_type(
-    graph,
-    space=None,
-    coords_attr=None,
-    high_degree_threshold=4,
-    title=None,
-    ax=None,
-    s_all=3,
-    s_hdn=35,
-    alpha_all=0.25,
-    alpha_hdn=0.95,
-    vessel_colors=None,
-):
-    if vessel_colors is None:
-        vessel_colors = {"arteriole": "red", "venule": "blue", "capillary": "gray", "unknown": "black"}
-
-    space, coords_attr, _ = resolve_space_and_attrs(
-        graph,
-        space=space,
-        coords_attr=coords_attr,
-        depth_attr=None,
-        require_space=True,
-        require_coords=True,
-        require_depth=False,
-    )
-
-    P = get_coords(graph, coords_attr)
-    deg = np.asarray(graph.degree(), dtype=int)
-    hdn = np.where(deg >= int(high_degree_threshold))[0]
-
-    if ax is None:
-        fig = plt.figure()
-        ax = fig.add_subplot(111, projection="3d")
-    else:
-        fig = ax.figure
-
-    ax.scatter(P[:, 0], P[:, 1], P[:, 2], s=s_all, c="lightgray", alpha=alpha_all, depthshade=False)
-
-    if hdn.size:
-        labels = np.array([infer_node_type_from_incident_edges(graph, int(v)) for v in hdn], dtype=object)
-        for lab, col in vessel_colors.items():
-            m = (labels == lab)
-            if np.any(m):
-                pts = P[hdn[m]]
-                ax.scatter(pts[:, 0], pts[:, 1], pts[:, 2],
-                           s=s_hdn, c=col, alpha=alpha_hdn, depthshade=False, label=f"HDN {lab}")
-
-    unit = "µm" if space == "um" else "vox"
-    ax.set_xlabel(f"X ({unit})"); ax.set_ylabel(f"Y ({unit})"); ax.set_zlabel(f"Z ({unit})")
-    ax.set_title(title or f"HDN (deg ≥ {high_degree_threshold}) by inferred type [{unit}]")
-    ax.legend(loc="best")
-    plt.tight_layout()
-    plt.show()
-    return fig, ax
 
 
 
@@ -1760,7 +1704,6 @@ def count_microsegments_by_nkind(ms, label_map=None):
     nk = ms["nkind"]
     out = {int(k): int(np.sum(nk == k)) for k in np.unique(nk)}
 
-    print("\n=== Micro-segment counts (Gaia-style) ===")
     for k in sorted(out.keys()):
             print(f"  nkind={k} ({label_map.get(k, k)}): {out[k]}")
     print(f"  TOTAL micro-segments: {len(nk)}")
@@ -2013,7 +1956,7 @@ def plot_av_paths_in_box(graph, box, paths_orig,
     ax.set_xlabel(f"X ({unit})")
     ax.set_ylabel(f"Y ({unit})")
     ax.set_zlabel(f"Z ({unit})")
-    ax.set_title(f"Simple A→V paths (n={len(paths_orig)})")
+    ax.set_title(f"Simple A→V paths (n={len(paths_orig)}) | space: {space}")
     plt.tight_layout()
     plt.show()
 
