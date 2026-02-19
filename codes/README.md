@@ -8,8 +8,10 @@ This repository contains a comprehensive toolkit for analyzing and processing **
 
 ## 📁 Folder Structure
 
-### 1. **CSVtoPKL/**
+### 1. **CSVtoPKL/** — CSV to Pickle Conversion
 Converts CSV data files into Python pickle format containing igraph network objects and geometric data.
+
+📖 **[→ Detailed Guide](CSVtoPKL/README.md)** - Complete documentation with workflow explanation
 
 **Key Scripts:**
 - **`CSV2Pickle_SOFIA.py`** - Main script to convert raw CSV files into igraph pickle format
@@ -25,107 +27,165 @@ Converts CSV data files into Python pickle format containing igraph network obje
   - Optimized for sinuous vessel paths
   - Preserves geometry indices for efficiency
   
-- **`build_outgeom_indexed.py`** - Creates indexed geometry representation (memory-efficient)
-  - Builds pseudo-JSON layout with igraph topology + indexed numpy arrays
+- **`build_graph_outgeom_voxels.py`** - Creates indexed geometry representation with outer geometry
+  - Builds graph with igraph topology + indexed numpy arrays
   - Computes robust tortuosity metrics for curved vessels
-  - Chunked processing for large datasets
   
-- **`outgeom_um.py`** - Geometry utilities for micrometer-scale vessel measurements
+- **`convert_outgeom_voxels_to_um.py`** - Converts voxel space to micrometers (µm)
+  - Non-destructive unit conversion
+  - Stores both voxel and physical-unit data
 
 ---
 
-### 2. **cutting/**
+### 2. **cutting/** — Graph ROI Extraction & Clipping
 Graph segmentation tools to extract subgraphs based on spatial regions (bounding boxes, anatomical areas).
 
+📖 **[→ Detailed Guide](cutting/README.md)** - Complete documentation with clipping algorithm explanation
+
 **Key Scripts:**
-- **`Cut_The_Graph_GAIA.py`** - Main cutting algorithm using GAIA methodology
+- **`cut_outgeom_roi_UM.py`** - Main cutting algorithm in micrometers (recommended)
   - Intersects vessel networks with 3D bounding boxes
-  - Handles edge intersections and creates new nodes at box boundaries
-  - Outputs subgraphs within specified regions
+  - Handles edge intersections and clips at box boundaries
+  - Creates new nodes at intersections and outputs clipped subgraphs
   
-- **`Cut_The_Graph_MVN.py`** - Variant for MVN (Multi-Vascular Network) data
-  - Region-specific graph extraction
+- **`cut_outgeom_roi_VOX.py`** - Variant in voxel space
+  - Same functionality as UM version but uses voxel coordinates
+  
+- **`Cut_The_Graph_GAIA.py`** - GAIA-specific region extraction
+  - GAIA dataset methodology
+  
+- **`Cut_The_Graph_MVN.py`** - MVN (Multi-Vascular Network) variant
+  - Region-specific graph extraction for MVN data
   
 - **`cut_box.py`** - Simple bounding box cutting utility
-  - Extracts vessels within coordinate ranges
+  - Basic rectangular region extraction
   
-- **`cut_out.py`** - Outflow/region-specific cutting
+- **`cut_out.py`** - Complementary cutting
+  - Extract everything outside a region
   
-- **`cut_outgeom_gaia_like.py`** - Geometry-aware GAIA-like cutting
-  - Preserves edge geometries when cutting
-  
-- **`graph_cut_SOFIA.py`** - SOFIA's graph cutting implementation
-  
-- **`equivalent_non.py`** - Computes equivalent non-tortuous representations
-
----
-
-### 3. **GTtoCSV/**
+- **`equivalent_non — Graph-Tool to CSV Conversion
 Converts graph-tool format files to CSV format for data interchange and analysis.
+
+📖 **[→ Detailed Guide](GTtoCSV/README.md)** - Complete documentation with format specifications
 
 **Key Scripts:**
 - **`gt2CSV_SOFIA.py`** - Main converter: graph-tool → CSV
   - Exports vertices, edges, and attributes to separate CSV files
   - Adapted from Renier dataset format
+  - Includes edges, coordinates, radii, annotations
   
 - **`create_graph_from_GT.py`** - Creates igraph objects from graph-tool files
+  - Helper utilities for graph loading
   
-- **`Franca_Extract_graph_info.py`** - Extracts metadata and properties from graph-tool objects
-
----
-
-### 4. **PKLtoVTP/**
+- **`Franca_Extract_ — Pickle to ParaView Visualization
 Converts pickle graph objects to VTP (VTK PolyData) format for visualization in ParaView.
 
+📖 **[→ Detailed Guide](PKLtoVTP/README.md)** - Complete documentation with VTP format and ParaView usage guide
+
 **Key Scripts:**
-- **`pkl2vtp_SOFIA.py`** - Main converter: pickle → VTP
+- **`pkl2vtp_SOFIA.py`** - Main converter: pickle → VTP (recommended)
   - Exports 3D vessel networks as VTK polydata
   - Handles vertex and edge attributes as scalars
-  - Supports subgraph export
+  - Supports subgraph export and color-mapping
+  
+- **`PKLtoVTP_tortuous_OUTGEOM.py`** - Tortuous path export (natural curvature)
+  - Full polyline geometry preservation
+  - Best for anatomical visualization
+  
+- **`PKLtoVTP_nonT_basic.py`** - Simplified non-tortuous variant
+  - Straight-line representation (vertices only)
+  - Fast rendering, topology emphasis
+  
+- **`PKLtoVTP_tortu_nontortu.py`** - Exports both variants
+  - Comparative visualization
   
 - **`Pkl2vtp_MVN_SOFIA.py`** - MVN-specific VTP export
+  - MVN dataset methodology
   
-- **`pkltovtp_ANA.py`** - Ana's variant with custom processing
-  
-- **`PKLtoVTP_nonT_basic.py`** - Non-tortuous variant (simplified geometries)
-  
-- **`PKLtoVTP_tortu_nontortu.py`** - Exports both tortuous and simplified versions
-  
-- **`PKLtoVTP_tortuous_FULLGEOM.py`** - Full geometry tortuous export
-  
-- **`PKLtoVTP_tortuous_OUTGEOM.py`** - Indexed geometry tortuous export
-  
-- **`test_edges_pairing.py`** - Utility for validating edge connectivity
-
----
-
-### 5. **Graph Analysis & by region/**
+- **`pkltovtp_ANA.py`** - Ana's varian — Vascular Network Metrics & Analysis
 Comprehensive tools for analyzing vascular network properties and spatial statistics.
 
+📖 **[→ Detailed Guide](Graph%20Analysis%20%26%20by%20region/README.md)** - Complete documentation with analysis parameters and workflow
+
 **Key Notebooks:**
-- **`Graph_analysis.ipynb`** - Main analysis notebook
+- **`Graph_analysis.ipynb`** - Main analysis template
   - Graph diameter, length, and degree statistics
   - Vessel type classification (arteriole, venule, capillary)
+  - General workflow example for custom analysis
   
-- **`HippocampalArea_graphAnalysis.ipynb`** - Analysis specific to hippocampal region
-  - Region-specific statistics and visualizations
+- **`HippocampalArea_graphAnalysis.ipynb`** - Hippocampus region-specific analysis
+  - Hippocampal vasculature properties
+  - Regional boundary definition and statistics
   
 - **`SomatomotorArea_graphAnalysis.ipynb`** - Somatomotor cortex analysis
+  - Motor cortex vascular characterization
   
-- **`Somatomotor_VS_Hippocampal_graphAnalysis.ipynb`** - Comparative analysis between regions
+- **`Somatomotor_VS_Hippocampal_graphAnalysis.ipynb`** - Comparative regional study
+  - Side-by-side comparison of two brain regions
+  - Highlights structural differences
   
-- **`Check_full_TnonT.ipynb`** - Compares tortuous vs non-tortuous variants
+- **`nonT_T_diff.ipynb`** - Tortuous vs non-tortuous comparison
+  - Structural distinctions between vessel types
   
-- **`nonT_T_diff.ipynb`** - Difference metrics between tortuous and non-tortuous networks
-  
-- **`test_analysis.ipynb`** - Testing and validation notebook
+- **`Check_full_TnonT.ipynb`** - Full dataset validation
+  - Data integrity checks and summary statistics
 
 **Key Scripts:**
-- **`graph_analysis_functions.py`** (2600+ lines) - Core analysis library
-  - Classic graph metrics (diameter, length, degree distribution)
-  - Bifurcation complexity (BC) detection and spatial analysis per anatomical face
-  - Gaia-style vessel density calculations using micro-segments
-  - Redundancy analysis via edge-disjoint path computation
+- **`graph_analysis_functions.py`** (1964+ lines) - Core analysis library
+  - Classic metrics: diameter, length, degree distribution
+  - Boundary condition (BC) detection per anatomical face
+  - Vessel density (Gaia-style micro-segment calculation)
+  - Redundancy analysis (edge-disjoint paths / maxflow)
+  - Depth stratification (superficial vs deep)
+  - Spatial filtering and regional aggregation
+  - Comprehensive visualization functions
+  
+- **`cube_analysis.py`** - Cubic region analysis utilities
+  - Statistics for cubic subvolumes
+  - Spatial hotspot identification
+  
+- **`SelectBrainRegion_fromJSON.py`** - JSON-based region selection
+  - Anatomical region def — Experimental & Development
+Experimental and testing code for prototyping and validation.
+
+📖 **[→ Detailed Guide](my%20test%20codes/README.md)** - Status of experimental code and promotion guidelines
+
+⚠️ **Note:** Code in this folder is **NOT production-ready**. Use for experimentation only.
+
+- **`bound_AB.py`** - Boundary detection experimentation
+  - Test implementation of interface detection
+  
+- **`CSVtoPickle_Tortuous.py`** - Alternative tortuous conversion
+  - Experimental approach to tortuous CSV→pickle
+  - Source Data (Paris/ClearMap)
+    ↓
+[GTtoCSV] (optional: graph-tool → CSV)
+    ↓
+CSV Files (../CSV/)
+    ↓
+[CSVtoPKL] → Build graph
+    ├─ build_graph_outgeom_voxels.py     (voxel space)
+    └─ convert_outgeom_voxels_to_um.py   (→ micrometers)
+    ↓
+PKL Files (../output/)
+    ├─ graph_*.pkl (complete vessel network)
+    │
+    ├─ [Optional: cutting/]  (extract region of interest)
+    │   └─→ cut_outgeom_roi_UM.py
+    │       ↓
+    │   data_cut (subgraph)
+    │
+    ├─→ [Graph Analysis & by region/]
+    │   ├─ graph_analysis_functions.py  (compute metrics)
+    │   └─ *.ipynb                       (regional analysis)
+    │   ↓
+    │   Results (tables, figures, statistics)
+    │
+    └─→ [PKLtoVTP/]       (visualization)
+        ├─ pkl2vtp_SOFIA.py
+        └─ *.vtp files
+        ↓
+        [ParaView] → 3D interactive visualizationputation
   - Depth-based stratification (superficial vs deep regions)
   - Radii consistency sanity checks
   - Comprehensive visualization functions (3D plots, heatmaps, degree distributions)
@@ -192,13 +252,32 @@ CSVtoPKL/ (CSV → igraph pickle)
    - Vessel density (local density of vessel segments)
    - Depth stratification (superficial vs deep classification)
    - Spatial distribution maps by vessel type
+� Getting Started
 
-3. **Structural Analysis**
-   - Bifurcation complexity (BC) detection by anatomical boundary
-   - Tortuosity metrics (vessel curvature quantification)
-   - Redundancy analysis (alternative routes between vessel types)
+1. **Read the module-specific README first** - Each subfolder has a detailed guide:
+   - [CSVtoPKL/README.md](CSVtoPKL/README.md)
+   - [cutting/README.md](cutting/README.md)
+   - [Graph Analysis & by region/README.md](Graph%20Analysis%20%26%20by%20region/README.md)
+   - [GTtoCSV/README.md](GTtoCSV/README.md)
+   - [PKLtoVTP/README.md](PKLtoVTP/README.md)
 
-4. **Vessel Classification**
+2. **Choose your workflow** - Start from input data type:
+   - Have **CSV files**? → [CSVtoPKL](CSVtoPKL/README.md)
+   - Have **PKL files**? → [Graph Analysis](Graph%20Analysis%20%26%20by%20region/README.md) or [cutting](cutting/README.md)
+   - Want **visualization**? → [PKLtoVTP](PKLtoVTP/README.md)
+   - Have **graph-tool files**? → [GTtoCSV](GTtoCSV/README.md)
+
+3. **Check dependencies** - Ensure you have: `igraph`, `numpy`, `pandas`, `matplotlib`, `lxml`
+
+---
+
+## 📌 Key Authors & Variants
+
+- **SOFIA** - Main data processing and conversion pipeline
+- **GAIA** - Graph cutting methodology and region extraction (cutting/ module)
+- **Ana** - Memory-efficient geometry indexing, micrometers conversion, analysis functions
+- **MVN** - Multi-vascular network dataset variants
+- **Franca** - Original dataset processing framework (GTtoCSV)
    - Arteriole, Venule, Capillary identification
    - Arteriovenous connection mapping
 
