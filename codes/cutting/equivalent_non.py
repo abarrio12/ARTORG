@@ -1,9 +1,13 @@
 # ==============================================================================
-# AUTHOR: Ana Barrio
-# DATE: 6-02-26
 # DESCRIPTION: Cross-referencing and filtering a Non-Tortuous graph based on
 #              an existing tortuous with OutGeom spatial cut + sanity checks
 #              (length consistency + error stats for diameter/length on common edges)
+#
+# This is already done in the cutting code (cut_outgeom_roi_VOX and UM and in Cut_the_graph_Gaia)
+# This was a separate script for testing and sanity checks, but the main logic is now integrated in the cutting code.
+#
+# AUTHOR: Ana Barrio
+# DATE: 6-02-26
 # ==============================================================================
 
 import pickle
