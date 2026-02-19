@@ -17,12 +17,11 @@ Create visualization files that:
 PKLtoVTP/
 ├── pkl2vtp_SOFIA.py                     # Main converter (SOFIA implementation)
 ├── Pkl2vtp_MVN_SOFIA.py                 # MVN dataset variant
-├── pkltovtp_ANA.py                      # Ana's implementation
-├── PKLtoVTP_nonT_basic.py               # Non-tortuous variant
-├── PKLtoVTP_tortuous_OUTGEOM.py         # Tortuous outer geometry
+├── PKLtoVTP_Tortuous_OUTGEOM.py         # Tortuous outer geometry
 ├── PKLtoVTP_tortuous_FULLGEOM.py        # Full geometry variant
-├── PKLtoVTP_tortu_nontortu.py           # Combined T/nonT export
-├── test_edges_pairing.py                # Edge connectivity validation
+├── PKLtoVTP_nonT_basic.py               # Non-tortuous simplified variant
+├── PKLtoVTP_nonTort_basic_export.py     # Alternative non-tortuous export
+├── PKLtoVTP_nonTort_outgeom.py          # Non-tortuous with outer geometry
 └── README.md
 ```
 
@@ -108,7 +107,7 @@ WriteOnFileVTP(
 )
 ```
 
-### 2. **PKLtoVTP_tortuous_OUTGEOM.py** - Tortuous Path Export
+### 2. **PKLtoVTP_Tortuous_OUTGEOM.py** - Tortuous Path Export
 
 Specialized converter preserving **tortuous (curved) geometry**:
 - Exports full polyline representation
@@ -121,7 +120,11 @@ Specialized converter preserving **tortuous (curved) geometry**:
 - ✓ Smooth vessel appearance in ParaView
 - ✓ Natural curvature visualization
 
-### 3. **PKLtoVTP_nonT_basic.py** - Simplified Representation
+### 3. **PKLtoVTP_tortuous_FULLGEOM.py** - Full Geometry Tortuous Export
+
+Alternative tortuous implementation with full geometry preservation.
+
+### 4. **PKLtoVTP_nonT_basic.py** - Simplified Non-Tortuous Representation
 
 Creates simplified VTP using only vertex coordinates:
 - Vertices act as nodes
@@ -134,14 +137,11 @@ Creates simplified VTP using only vertex coordinates:
 - Network topology emphasis
 - Fast rendering of large graphs
 
-### 4. **PKLtoVTP_tortu_nontortu.py** - Comparative Export
+### 5. **PKLtoVTP_nonTort_basic_export.py** & **PKLtoVTP_nonTort_outgeom.py** - Non-Tortuous Variants
 
-Generates both representations in same file or separate files:
-- Tortuous version: full geometry
-- Non-tortuous version: simplified network
-- Useful for comparison and validation
+Alternative non-tortuous export implementations with different geometry handling approaches.
 
-### 5. **Pkl2vtp_MVN_SOFIA.py** - Dataset-Specific Variant
+### 6. **Pkl2vtp_MVN_SOFIA.py** - Dataset-Specific Variant
 
 MVN (Mesonetwork Visualization Network) format:
 - Applies MVN-specific coordinate transformations

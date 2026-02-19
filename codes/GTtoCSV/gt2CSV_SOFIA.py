@@ -42,6 +42,10 @@ class ReadWriteGraph(object):
         array = self.graph.edge_properties.radii.get_array()
         self.saveFile(array, file)
 
+    def writeEdgePropertyRadii_Atlas(self, file = folder +'radii_edge_atlas.csv'):
+        array = self.graph.edge_properties.radii_atlas.get_array()
+        self.saveFile(array, file)
+
     def writeEdgePropertyVein(self, file = folder +'vein.csv'):
         array = self.graph.edge_properties.vein.get_array()
         self.saveFile(array, file)
@@ -155,6 +159,7 @@ class ReadWriteGraph(object):
     def writeAll(self):
         self.writeEdges()
         self.writeEdgePropertyRadii()
+        self.writeEdgePropertyRadii_Atlas()
         self.writeEdgePropertyVein()
         self.writeEdgePropertyArtery()
         self.writeEdgePropertyLength()
@@ -223,5 +228,5 @@ class QualityCheck(object):
 if __name__ == '__main__':
     graph = ReadWriteGraph("/home/admin/Ana/MicroBrain/18_vessels_graph.gt")
     #graph.writeAll()
-    graph.writeGraphPropertyEdgeGeometryRadiiAtlas() # i only need to export this right now, as i have all the other csvs 
+    graph.writeEdgePropertyRadii_Atlas() # i only need to export this right now, as i have all the other csvs 
     QualityCheck(graph.graph)

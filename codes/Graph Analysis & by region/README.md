@@ -15,23 +15,52 @@ Extract quantitative properties of vascular networks to:
 
 ```
 Graph Analysis & by region/
-├── graph_analysis_functions.py                      # Core analysis library
-├── Graph_analysis.ipynb                             # General analysis notebook
-├── cube_analysis.py                                 # Cubic ROI analysis
-├── SelectBrainRegion_fromJSON.py                    # Region selector
-├── SelectionBrainParaview_SOFIA.py                  # ParaView integration
 ├── Gaia_microbloom_compliance.py                    # GAIA dataset compliance
-├── HippocampalArea_graphAnalysis.ipynb              # Hippocampus-specific
-├── SomatomotorArea_graphAnalysis.ipynb              # Somatomotor-specific
-├── Somatomotor_VS_Hippocampal_graphAnalysis.ipynb  # Comparative study
-├── nonT_T_diff.ipynb                                # Non-T vs T vessel comparison
-├── Check_full_TnonT.ipynb                           # Full dataset validation
-└── README.md
+├── check_connectivity_nonTort&Tort.ipynb            # Connectivity validation
+├── README.md
+│
+├── Graph analysis/
+│   ├── graph_analysis_functions.py                  # Core analysis library
+│   ├── Graph_analysis.ipynb                         # General analysis template
+│   └── test_analysis.ipynb                          # Testing notebook
+│
+├── ROI Comparison/
+│   ├── HippocampalArea_graphAnalysis.ipynb          # Hippocampus analysis
+│   ├── SomatomotorArea_graphAnalysis.ipynb          # Somatomotor cortex analysis
+│   └── Somatomotor_VS_Hippocampal_graphAnalysis.ipynb # Comparative study
+│
+└── SelectBrainRegion/
+    ├── SelectBrainRegion_fromJSON.py                # Region selector from JSON
+    └── SelectionBrainParaview_SOFIA.py              # ParaView integration
 ```
+
+## Organization by Function
+
+### Core Analysis Library
+- **`Graph analysis/graph_analysis_functions.py`** - Main computational functions
+
+### Analysis Workflows
+- **`Graph analysis/Graph_analysis.ipynb`** - Template for general analysis
+- **`Graph analysis/test_analysis.ipynb`** - Testing and validation
+
+### Regional Analysis Notebooks
+Located in **`ROI Comparison/`** for organized regional studies:
+- `HippocampalArea_graphAnalysis.ipynb` - Hippocampal region
+- `SomatomotorArea_graphAnalysis.ipynb` - Somatomotor cortex
+- `Somatomotor_VS_Hippocampal_graphAnalysis.ipynb` - Comparative analysis
+
+### Utility Tools
+- **`Gaia_microbloom_compliance.py`** - GAIA dataset processing
+- **`check_connectivity_nonTort&Tort.ipynb`** - Validation of tortuous/non-tortuous
+
+### Region Selection Tools
+Located in **`SelectBrainRegion/`**:
+- `SelectBrainRegion_fromJSON.py` - Load anatomical regions from JSON
+- `SelectionBrainParaview_SOFIA.py` - ParaView region integration
 
 ## Core Module: graph_analysis_functions.py
 
-Comprehensive library with functions grouped by analysis type:
+Located in `Graph analysis/`, this is the main computational library with functions grouped by analysis type:
 
 ### 1. Classic Graph Metrics
 - **Edge length:** Straightforward edge length ("non tortuous edge" length)
@@ -87,17 +116,37 @@ atlas_resolution = 25 # µm/voxel (sink resolution)
 
 ## Key Jupyter Notebooks
 
-### 1. **Graph_analysis.ipynb** - General Template
-- Step-by-step graph loading and metric computation
-- Suitable as starting point for custom analysis
+### General Analysis Templates
+Located in **`Graph analysis/`**:
 
-### 2. **HippocampalArea_graphAnalysis.ipynb** - Hippocampus
-- Region-specific analysis for hippocampal vasculature
-- Includes regional boundaries and subdivisions
+1. **Graph_analysis.ipynb** - General Template
+   - Step-by-step graph loading and metric computation
+   - Suitable as starting point for custom analysis
 
-### 3. **SomatomotorArea_graphAnalysis.ipynb** - Somatomotor Cortex
-- Motor/somatosensory cortex vascular properties
-- Comparison with baseline networks
+2. **test_analysis.ipynb** - Testing & Development
+   - Experimental and validation workflows
+
+### Regional Analysis Studies
+Located in **`ROI Comparison/`**:
+
+1. **HippocampalArea_graphAnalysis.ipynb** - Hippocampus Analysis
+   - Region-specific analysis for hippocampal vasculature
+   - Includes regional boundaries and subdivisions
+
+2. **SomatomotorArea_graphAnalysis.ipynb** - Somatomotor Cortex
+   - Motor/somatosensory cortex vascular properties
+   - Comparison with baseline networks
+
+3. **Somatomotor_VS_Hippocampal_graphAnalysis.ipynb** - Comparative Study
+   - Side-by-side comparison of two regions
+   - Highlights regional differences in:
+     - Vascular density
+     - Vessel size distribution
+     - Branching complexity
+     - Topological features
+
+### Validation & Comparison
+- **check_connectivity_nonTort&Tort.ipynb** - Tortuous vs non-tortuous connectivity validation
 
 ### 4. **Somatomotor_VS_Hippocampal_graphAnalysis.ipynb** - Comparative Study
 - Side-by-side comparison of two regions

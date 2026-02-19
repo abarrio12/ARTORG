@@ -14,11 +14,11 @@ Transform tabular CSV data (from the `CSV/` folder) into Python-serialized pickl
 
 ```
 CSVtoPKL/
-├── CSV2Pickle_SOFIA.py                    # Basic CSV → PKL conversion
-├── CSVtoPKL_FULLGEOM.py                   # Full geometry conversion
-├── CSVtoPKL_Tortuous_OutGeom.py           # Tortuous path handling
-├── build_graph_outgeom_voxels.py          # Build graph with outer geometry
-├── convert_outgeom_voxels_to_um.py        # Convert voxel space to micrometers
+├── build_graph_outgeom_voxels.py        # Build graph with outer geometry (voxel space)
+├── convert_outgeom_voxels_to_um.py      # Convert voxel coordinates to micrometers
+├── CSV2Pickle_SOFIA.py                  # Basic CSV → PKL conversion (SOFIA variant)
+├── CSVtoPKL_FULLGEOM.py                 # Full geometry variant
+├── CSVtoPKL_Tortuous_OutGeom.py         # Tortuous path handling
 └── README.md
 ```
 

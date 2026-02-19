@@ -17,7 +17,6 @@ Transform binary graph-tool objects into compatible CSV tables:
 GTtoCSV/
 ├── gt2CSV_SOFIA.py                    # Main GT → CSV converter
 ├── Franca_Extract_graph_info.py       # Extract and display graph info
-├── create_graph_from_GT.py            # GT file loading utilities
 └── README.md
 ```
 
@@ -75,14 +74,7 @@ Utility to inspect and display graph structure:
 - Graph metadata
 - Counts and summaries
 
-
-
-### 3. **create_graph_from_GT.py** - GT File Loading
-
-Helper functions to properly load graph-tool files:
-- Handle graph format verification
-- Load with correct data types
-- Extract attribute information
+Used for **data exploration** before conversion.
 
 ## CSV Output Files
 

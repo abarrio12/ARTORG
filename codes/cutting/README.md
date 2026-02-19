@@ -15,12 +15,9 @@ Enable selective analysis of brain vasculature by:
 
 ```
 cutting/
-├── cut_box.py                         # Cut graph inside rectangular box
-├── cut_out.py                         # Cut graph outside region
 ├── cut_outgeom_roi_UM.py              # Cut in micrometers (main utility)
 ├── cut_outgeom_roi_VOX.py             # Cut in voxels
 ├── Cut_The_Graph_GAIA.py              # GAIA dataset-specific cutting
-├── Cut_The_Graph_MVN.py               # MVN dataset-specific cutting
 ├── equivalent_non.py                  # Non-tortuous equivalent generation
 ├── graph_cut_SOFIA.py                 # SOFIA-specific implementation
 └── README.md
@@ -94,22 +91,22 @@ Cuts graph inside a 3D rectangular box in **micrometers**.
 
 Same as above but operates in voxel coordinates (uses `data["vertex"]`, `data["geom"]`).
 
-### 3. **Cut_The_Graph_GAIA.py** & **Cut_The_Graph_MVN.py**
+### 3. **Cut_The_Graph_GAIA.py** - GAIA-Specific Cutting
 
-Dataset-specific wrappers that:
-- Define standard ROI boxes for brain regions (GAIA or MVN naming conventions)
+Dataset-specific wrapper that:
+- Define standard ROI boxes for brain regions (GAIA naming conventions)
 - Automate batch cutting of multiple regions
 - Handle dataset-specific coordinate systems
 
-### 4. **cut_box.py** & **cut_out.py**
-
-Simpler rectangular box utilities (may be used internally).
-
-### 5. **equivalent_non.py**
+### 4. **equivalent_non.py** - Non-Tortuous Equivalent Generation
 
 Generates a "non-tortuous" equivalent of a cut graph:
 - Simplifies polylines to straight lines between vertices
 - Useful for comparison or simplified modeling
+
+### 5. **graph_cut_SOFIA.py** - SOFIA-Specific Implementation
+
+Alternative graph cutting implementation using SOFIA methodology.
 
 ## Workflow Example
 
