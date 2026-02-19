@@ -157,7 +157,7 @@ def convert_outgeom_pkl_to_um(
     G.es["length_R"] = edge_length_R.astype(np.float32).tolist()
 
     # --------------------------
-    # Radii geometry in µm 
+    # Radii geometry in µm   >>>>>>>>>>>>>>>>   (STILL DONT HAVE THE CSV SO THIS CAN'T BE DONE)
     # --------------------------
     if "radii_atlas_geom" in g:  
         r_atlas_vox = np.asarray(g["radii_atlas_geom"], dtype=np.float64)  # (nP,) in atlas vox

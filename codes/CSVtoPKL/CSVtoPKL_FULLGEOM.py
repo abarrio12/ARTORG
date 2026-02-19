@@ -1,8 +1,16 @@
 """
 BUILD FULLGEOM graph from CSVs - MEMORY OPTIMIZED
-- Each edge stores its full geometry in G.es["points"] (Gaia-compatible).
+- Each edge stores its full geometry in G.es["points"]. 
 - Also computes length_tortuous + tortuosity from the points.
 - Optimized to avoid RAM duplication
+
+Take into account that this code store the information in the edges/vertices. 
+If you are using a big graph, most likely it will crash. That is the reason
+building outside arrays with the geometry and other interesting data was 
+implemented (outgeom)
+
+Author: Ana Barrio
+Date: January 2026
 """
 
 import os

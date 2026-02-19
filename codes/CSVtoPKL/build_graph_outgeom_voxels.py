@@ -405,7 +405,7 @@ data = {
         "z": z,  # image voxel space
         "annotation": ann_geom,
         "radii": r_geom,  # image voxel space
-        "radii_atlas_geom": r_atlas_geom,  # atlas voxel space (25 µm grid)
+        "radii_atlas_geom": r_atlas_geom,  # atlas voxel space (25 µm grid)  # !! needs to be extracted !!
     },
 }
 
