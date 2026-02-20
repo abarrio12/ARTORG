@@ -230,3 +230,5 @@ if __name__ == '__main__':
     #graph.writeAll()
     graph.writeEdgePropertyRadii_Atlas() # i only need to export this right now, as i have all the other csvs 
     QualityCheck(graph.graph)
+
+    

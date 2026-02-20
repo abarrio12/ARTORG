@@ -1,14 +1,14 @@
 # GTtoCSV: Graph-Tool Format to CSV Conversion
 
 ## Overview
-This module converts **graph-tool graph files** (.gt format) into **tabular CSV format**, enabling data interchange with other tools, databases, spreadsheet analysis, and cross-platform compatibility.
+This module converts **graph-tool graph files** (.gt format) into **tabular CSV format**
 
 ## Goal
 Transform binary graph-tool objects into compatible CSV tables:
 1. Extract graph topology (edges, vertices)
 2. Export node attributes (coordinates, radii, annotations)
-3. Export edge properties (connectivity, vessel type, diameter)
-4. Enable downstream analysis in non-graph-specific tools (Excel)
+3. Export edge properties (connectivity, vessel type, diameter, length)
+4. Enable analysis in non-graph tools (Excel)
 
 
 ## Folder Structure
@@ -59,22 +59,36 @@ rw.folderPrefix("/home/admin/Ana/MicroBrain/CSV")
 
 # Export all properties
 rw.writeEdges("edges.csv")
-rw.writeCoordinates("coordinates.csv")
-rw.writeRadii("radii.csv")
-rw.writeEdgePropertyRadii("radii_edge.csv")
-rw.writeEdgePropertyArtery("artery.csv")
-rw.writeEdgePropertyVein("vein.csv")
+rw.writeVertexPropertyAnnotation("annotation.csv")                            # vertex properties
+rw.writeEdgePropertyRadii("radii_edge.csv")                                   # edge properties
+rw.writeGraphPropertyEdgeGeometryCoordinates("edge_geometry_coordinates.csv") # graph properties
 ```
 
-### 2. **Franca_Extract_graph_info.py** - Graph Metadata Extraction
+### 2. **Franca_Extract_graph_info.py** - Graph Structure Inspector
 
-Utility to inspect and display graph structure:
-- Vertex properties (available attributes)
-- Edge properties (available attributes)
-- Graph metadata
-- Counts and summaries
+Before converting a graph-tool file to CSV, use this utility to understand what data is available:
 
-Used for **data exploration** before conversion.
+**Purpose:**
+- Inspect the graph-tool file without full conversion
+- List all vertex properties (coordinates, radii, annotations, etc.)
+- List all edge properties (vessel type, diameter, geometric info)
+- Display graph-level metadata
+- Get counts: number of vertices, edges, attributes
+
+**Usage:**
+```python
+from Franca_Extract_graph_info import extract_graph_info
+
+# Inspects graph.gt and prints available properties
+info = extract_graph_info("graph.gt")
+# Output shows what attributes are available to export
+```
+
+**Why use this?**
+- Know exactly which properties exist before calling `writeEdges()`, `writeCoordinates()`, etc.
+- Verify graph integrity and structure before processing
+- Decide which properties to export to CSV
+- Debug issues if certain attributes are missing or unexpected
 
 ## CSV Output Files
 
@@ -96,20 +110,25 @@ Generated files in `CSV/` folder:
 - `artery_raw.csv` - Raw artery values
 - `artery_binary.csv` - Thresholded artery
 - `length.csv` - Edge lengths
+- `radii_atlas_edge.csv` - Per-edge radii atlas
+
 
 ### Geometric CSVs
 - `edge_geometry_coordinates.csv` - Polyline points per edge
-- `edge_geometry_radii.csv` - Radii along each polyline
+- `edge_geometry_radii.csv` - Radii along the polyline 
+- `edge_geometry_radii_atlas.csv` - Radii atlas along the polyline
 - `edge_geometry_annotation.csv` - Annotations along polyline
 - `edge_geometry_indices.csv` - Point indices (geom_start, geom_end)
 - `edge_geometry_artery_binary.csv` - Artery type along polyline
+
+**Note:** The terms "geometry," "points," and "polyline" refer to the same thing: individual nodes along the tortuous (curved) vessel path. They are used interchangeably.
 
 ## Data Workflow
 
 ```
 Original Source (Paris/ClearMap)
         ↓
-[build_graph] → graph.gt (graph-tool format)
+[build_graph_gt] → graph.gt (graph-tool format) (Paris)
         ↓
 [GTtoCSV] → CSV files (tabular format)
         ↓
@@ -118,47 +137,12 @@ Original Source (Paris/ClearMap)
 Further analysis: cutting, visualization, metrics
 ```
 
-## Format Specifications
-
-### edges.csv
-```
-source,target
-0,1
-1,2
-1,3
-...
-```
-
-### coordinates.csv
-```
-x,y,z
-100.5,200.3,50.1
-101.2,201.5,51.3
-...
-```
-
-### radii_edge.csv
-```
-radius
-2.5
-3.1
-2.8
-...
-```
-
-### artery.csv / vein.csv
-```
-classification
-1      # True (is artery/vein)
-0      # False (not artery/vein)
-...
-```
-
 ## Related Modules
 
 - **CSVtoPKL:** Converts CSV → PKL (builds graph structure + geometry)
 - **PKLtoVTP:** Converts PKL → VTP (visualization format)
 
 ## Author
-Sofia and Franca dataset adaptation
+Sofia (`gt2CSV.py`) and Franca (`Extract_graph_info.py`) dataset adaptation
+
 Updated: Ana Barrio - Feb 2026
