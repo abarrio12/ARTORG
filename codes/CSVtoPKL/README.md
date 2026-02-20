@@ -1,7 +1,7 @@
 # CSVtoPKL: CSV to Pickle Conversion
 
 ## Overview
-This module converts raw CSV data into structured **Pickle (.pkl) files** containing the complete vascular graph with geometric information, vertex attributes, and edge properties.
+This module converts raw CSV data into structured **Pickle (.pkl) files** containing the complete vascular graph with geometric information, vertex attributes and edge properties.
 
 ## Goal
 Transform tabular CSV data (from the `CSV/` folder) into Python-serialized pickle objects that preserve:
@@ -15,10 +15,9 @@ Transform tabular CSV data (from the `CSV/` folder) into Python-serialized pickl
 ```
 CSVtoPKL/
 ├── build_graph_outgeom_voxels.py        # Build graph with outer geometry (voxel space)
-├── convert_outgeom_voxels_to_um.py      # Convert voxel coordinates to micrometers
+├── convert_outgeom_voxels_to_um.py      # Convert voxel coordinates to micrometers (.pkl from previous)
 ├── CSV2Pickle_SOFIA.py                  # Basic CSV → PKL conversion (SOFIA variant)
-├── CSVtoPKL_FULLGEOM.py                 # Full geometry variant
-├── CSVtoPKL_Tortuous_OutGeom.py         # Tortuous path handling
+├── CSVtoPKL_FULLGEOM.py                 # Full geometry variant (stores info in edges/vertex)
 └── README.md
 ```
 
@@ -29,27 +28,53 @@ CSVtoPKL/
 - Creates basic graph structure
 - Stores minimal vertex/edge attributes
 
-### 2. **build_graph_outgeom_voxels.py** - Graph with Outer Geometry
-- Builds an igraph.Graph from CSV data
-- Includes "outer geometry" (tortuous polyline paths for each edge)
-- Stores polyline points (x, y, z coordinates) for each vessel
-- Creates `data["geom"]` dictionary with per-point attributes
-- Maintains vessel annotations and connectivity
+### 2. **build_graph_outgeom_voxels.py** - Graph with Outer Geometry (Voxel Space)
 
-**Key attributes stored:**
-- Vertices: `coords_image`, `radii_atlas`, `distance_to_surface`
-- Geometry: `x, y, z` (polyline points), `radii_atlas_geom`, `annotation`
-- Edges: `geom_start`, `geom_end` (indices into polyline), `length`
+Builds an igraph.Graph from CSV data with complete tortuous geometry information. The output is a Python dict (pickle-serialized) containing the network topology and all geometric information.
+
+**Output structure (voxel space):**
+```
+data
+├── graph                       # igraph.Graph object
+│   ├── vertices (N total)
+│   ├── edges (E total)
+│   └── edge attributes:
+│       ├── geom_start         # Index into geom polyline (start point)
+│       ├── geom_end           # Index into geom polyline (end point)
+│       ├── length             # Arc length in voxels
+│       └── ... (other edge properties)
+│
+├── vertex                      # Vertex-level attributes (N entries each)
+│   ├── coords_image            # Coordinates (N × 3) array in voxels
+│   ├── radii_atlas             # Atlas-space radii (N,) array
+│   ├── distance_to_surface     # Distance to surface (N,) array
+│   └── ... (other vertex attributes)
+│
+└── geom                        # Geometry polyline points (all N_points total)
+    ├── x                       # X coordinates of all polyline points (M,) array
+    ├── y                       # Y coordinates of all polyline points (M,) array
+    ├── z                       # Z coordinates of all polyline points (M,) array
+    ├── lengths2                # Distance to next point; last = 0 (M,) array
+    ├── radii_atlas_geom        # Radii at each polyline point (M,) array
+    ├── annotation              # Vessel type at each point (M,) array
+    └── ... (other per-point properties)
+```
+
+**Key insight:** 
+- `graph.es["geom_start"]` and `graph.es["geom_end"]` are **indices** into the `geom` arrays
+- To get all polyline points for edge `i`: `geom["x"][geom_start[i]:geom_end[i]]`
+- Each polyline can have many points (M >> E)
+- This preserves the true tortuous (curved) vessel paths
 
 ### 3. **convert_outgeom_voxels_to_um.py** - Voxel to Micrometer Conversion
 - Converts voxel-space coordinates to physical units (micrometers)
 - **Keeps original voxel data intact** (non-destructive)
 - Stores converted data with suffix `_R` (for "real-world" units)
-- Computes per-segment lengths in µm
-- Calculates tortuosity (dimensionless: arc_length / straight_distance)
+- Computes per-segment lengths2 and length as per-edge (sum(lengths2)) in µm
+- Calculates tortuosity (dimensionless: length / straight_distance)
 - Uses conversion factors:
-  - Source resolution: (1.625, 1.625, 2.5) µm/voxel
-  - Radii atlas: 25 µm/voxel
+  - Source resolution: (1.625, 1.625, 2.5) µm/voxel # (image resolution)
+  - Radii atlas: 25 µm/voxel                        # (atlas resolution)
 
 **Output structure:**
 ```
@@ -66,17 +91,15 @@ data
 │   ├── distance_to_surface_R
 │   └── radii_atlas_R
 └── graph            # igraph.Graph object
-    ├── length_R     # per-edge arc length (µm)
+    ├── length_R     # per-edge length (µm)
     └── tortuosity_R # dimensionless
 ```
 
 ### 4. **CSVtoPKL_FULLGEOM.py** - Full Geometry Variant
 - Alternative implementation for complete geometric information
-- May include additional spatial information
+- In voxels 
+- Stores information in edges/vertex. If the graph is large, processing may use excessive memory (this is why outer geometry was implemented)
 
-### 5. **CSVtoPKL_Tortuous_OutGeom.py** - Tortuous Path Handling
-- Specialized version handling tortuous (curved) vessel paths
-- Preserves natural vessel geometry (not straight-line approximation)
 
 ## Workflow
 
@@ -109,25 +132,59 @@ Generated pickle files in `output/`:
 
 ## Usage Example
 
-```python
-# Step 1: Build graph from CSV
-from build_graph_outgeom_voxels import build_graph_outgeom_indexed
-data = build_graph_outgeom_indexed(...)
+**Step 1: Build graph from CSV in voxels**
 
-# Step 2: Convert to micrometers
-from convert_outgeom_voxels_to_um import convert_outgeom_pkl_to_um
-data_um = convert_outgeom_pkl_to_um(
-    in_path="output/graph_18_OutGeom_Hcut3.pkl",
-    out_path="output/graph_18_OutGeom_Hcut3_um.pkl",
-    res_um_per_vox=(1.625, 1.625, 2.5),
-    min_straight_dist_um=1.0
-)
+Edit the hardcoded paths in `build_graph_outgeom_voxels.py`:
+```python
+FOLDER = "/home/admin/Ana/MicroBrain/CSV/"
+OUT_PATH = "/home/admin/Ana/MicroBrain/output/graph_18_OutGeom.pkl"
+```
+
+Then run:
+```bash
+python build_graph_outgeom_voxels.py
+```
+
+This creates `graph_18_OutGeom.pkl` (voxel space).
+
+**Step 2: Convert to micrometers**
+
+Edit the paths in `convert_outgeom_voxels_to_um.py`:
+```python
+in_path = "/home/admin/Ana/MicroBrain/output/graph_18_OutGeom.pkl"
+out_path = "/home/admin/Ana/MicroBrain/output/graph_18_OutGeom_um.pkl"
+```
+
+Then run:
+```bash
+python convert_outgeom_voxels_to_um.py
+```
+
+This creates `graph_18_OutGeom_um.pkl` (micrometers).
+
+**Optional: Load and verify the output in Python**
+
+```python
+import pickle
+import numpy as np
+
+# Load voxel-space graph
+data_vox = pickle.load(open("/home/admin/Ana/MicroBrain/output/graph_18_OutGeom.pkl", "rb"))
+print(f"Vertices: {data_vox['graph'].vcount()}")
+print(f"Edges: {data_vox['graph'].ecount()}")
+print(f"Geometry points: {len(data_vox['geom']['x'])}")
+
+# Load micrometer-space graph
+data_um = pickle.load(open("/home/admin/Ana/MicroBrain/output/graph_18_OutGeom_um.pkl", "rb"))
+print(f"\nAfter conversion to µm:")
+print(f"Vertices: {data_um['graph'].vcount()}")
+print(f"Edge lengths (µm): {data_um['graph'].es['length_R'][:5]}...")
 ```
 
 ## Important Notes
 
-- **Radii conversion:** Only atlas radii are converted (atlas grid = 25 µm/voxel). Original image-space radii are NOT converted here due to upstream scaling ambiguities.
-- **Non-destructive:** Original voxel arrays are preserved, allowing downstream flexibility.
+- **Radii conversion:** Only atlas radii are converted (atlas grid = 25 µm/voxel). Original image-space radii are NOT converted here due to scaling ambiguities (not sure is as trivial as just multiplying by image resolution, giving it is isotropic).
+- **Non-destructive:** Original voxel arrays are preserved, allowing flexibility.
 - **Tortuosity:** Calculated only for edges where straight-line distance ≥ min_straight_dist_um (sanity check).
 
 ## Author
