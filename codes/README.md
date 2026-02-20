@@ -268,4 +268,3 @@ PKL Files (../output/)
 ---
 
 *Last updated: February 2026*
-*Project: MicroBrain Analysis Toolkit* 
