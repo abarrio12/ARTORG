@@ -27,7 +27,7 @@ Graph Analysis & by region/
 ├── ROI Comparison/
 │   ├── HippocampalArea_graphAnalysis.ipynb          # Hippocampus analysis
 │   ├── SomatomotorArea_graphAnalysis.ipynb          # Somatomotor cortex analysis
-│   └── Somatomotor_VS_Hippocampal_graphAnalysis.ipynb # Comparative study
+│   └── Somatomotor_VS_Hippocampal_graphAnalysis.ipynb # Compare two regions
 │
 └── SelectBrainRegion/
     ├── SelectBrainRegion_fromJSON.py                # Region selector from JSON
@@ -47,7 +47,7 @@ Graph Analysis & by region/
 Located in **`ROI Comparison/`** for organized regional studies:
 - `HippocampalArea_graphAnalysis.ipynb` - Hippocampal region
 - `SomatomotorArea_graphAnalysis.ipynb` - Somatomotor cortex
-- `Somatomotor_VS_Hippocampal_graphAnalysis.ipynb` - Comparative analysis
+- `Somatomotor_VS_Hippocampal_graphAnalysis.ipynb` - Compare two regions
 
 ### Utility Tools
 - **`Gaia_microbloom_compliance.py`** - GAIA dataset processing
@@ -137,17 +137,13 @@ Located in **`ROI Comparison/`**:
    - Motor/somatosensory cortex vascular properties
    - Comparison with baseline networks
 
-3. **Somatomotor_VS_Hippocampal_graphAnalysis.ipynb** - Comparative Study
+3. **Somatomotor_VS_Hippocampal_graphAnalysis.ipynb** - Compare two regions
    - Side-by-side comparison of two regions
-   - Highlights regional differences in:
-     - Vascular density
-     - Vessel size distribution
-     - Branching complexity
-     - Topological features
+   - Highlights regional differences in vascular properties
 
-### Validation & Comparison
+### Validation & Compliance Checks
 - **check_connectivity_nonTort&Tort.ipynb** - Tortuous vs non-tortuous connectivity validation
-- **nonT_T_diff.ipynb** - Dataset compliance check
+- **nonT_T_diff.ipynb** - Compliance check between datasets
 - **Check_full_TnonT.ipynb** - Data integrity validation
 
 

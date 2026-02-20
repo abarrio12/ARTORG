@@ -54,99 +54,27 @@ edges (connectivity)            →  Lines (cells)
 
 ## Main Scripts
 
-### 1. **pkl2vtp_SOFIA.py** - Primary Converter
+Use the function from each script, depending on what you need:
 
-Core conversion implementation with key functions:
-
+**For realistic visualization (recommended):**
 ```python
-def WriteOnFileVTP(
-    filename, 
-    vertices_array, 
-    connectivity_array,
-    point_data,         # dict: {"field_name": array}
-    cell_data,         # dict: {"field_name": array}
-    subgraph=False
-)
+from PKLtoVTP_Tortuous_OUTGEOM import pkl2vtp_tortuous_outgeom
+vtp_file = pkl2vtp_tortuous_outgeom("graph.pkl", "output/", radii_mode='atlas')
 ```
+Creates curved vessels exactly as stored in your graph.
 
-**Converts PKL to VTP:**
+**For quick network preview:**
 ```python
-import pickle
-from pkl2vtp_SOFIA import *
-
-# Load PKL
-data = pickle.load(open("graph_18_OutGeom_Hcut3_um.pkl", "rb"))
-
-# Extract geometry
-vertices = data["vertex_R"]["coords_image_R"]  # (N, 3)
-geom = data["geom_R"]
-x_um, y_um, z_um = geom["x_R"], geom["y_R"], geom["z_R"]
-polyline_points = np.column_stack([x_um, y_um, z_um])
-
-# Define connectivity (edges → polyline segments)
-connectivity = []
-for edge in data["graph"].es:
-    start = edge["geom_start"]
-    end = edge["geom_end"]
-    for i in range(start, end - 1):
-        connectivity.append([i, i + 1])
-
-# Add properties
-point_data = {
-    "diameter": geom["diameters_atlas_geom_R"],
-    "annotation": geom["annotation"],
-}
-
-# Write VTP
-WriteOnFileVTP(
-    filename="vessel_graph.vtp",
-    vertices_array=polyline_points,
-    connectivity_array=np.array(connectivity),
-    point_data=point_data,
-    cell_data={},
-)
+from PKLtoVTP_nonT_basic import pkl2vtp_nonT
+vtp_file = pkl2vtp_nonT("graph.pkl", "output/")
 ```
+Simple straight lines between vessels, no detailed geometry.
 
-### 2. **PKLtoVTP_Tortuous_OUTGEOM.py** - Tortuous Path Export
-
-Specialized converter preserving **tortuous (curved) geometry**:
-- Exports full polyline representation
-- Each polyline point becomes a VTP point
-- Maintains natural vessel curvature
-- Preserves per-point radii variation
-
-**Advantages:**
-- ✓ Accurate geometric representation
-- ✓ Smooth vessel appearance in ParaView
-- ✓ Natural curvature visualization
-
-### 3. **PKLtoVTP_tortuous_FULLGEOM.py** - Full Geometry Tortuous Export
-
-Alternative tortuous implementation with full geometry preservation.
-
-### 4. **PKLtoVTP_nonT_basic.py** - Simplified Non-Tortuous Representation
-
-Creates simplified VTP using only vertex coordinates:
-- Vertices act as nodes
-- Edges connect vertices directly (straight lines)
-- No intermediate polyline points
-- ~10-100× fewer points/cells
-
-**Use cases:**
-- Quick preview/overview
-- Network topology emphasis
-- Fast rendering of large graphs
-
-### 5. **PKLtoVTP_nonTort_basic_export.py** & **PKLtoVTP_nonTort_outgeom.py** - Non-Tortuous Variants
-
-Alternative non-tortuous export implementations with different geometry handling approaches.
-
-### 6. **Pkl2vtp_MVN_SOFIA.py** - Dataset-Specific Variant
-
-MVN (Mesonetwork Visualization Network) format:
-- Applies MVN-specific coordinate transformations
-- Uses MVN anatomical region definitions
-- Color-codes by region/structure
+**Other options:**
+- `PKLtoVTP_tortuous_FULLGEOM.py` - Different geometry preservation approach
+- `PKLtoVTP_nonTort_outgeom.py` - Outer geometry without curves
+- `Pkl2vtp_MVN_SOFIA.py` - MVN format data
+- `pkl2vtp_SOFIA.py` - General converter with `WriteOnFileVTP()` utility function
 
 
 ## Conversion Pipeline
@@ -163,64 +91,104 @@ VTP file (XML, text-readable)
 Export: PNG, PDF, measurements, regions
 ```
 
-## Output Files
+## What VTP Files Are Generated
 
-Generated VTP files:
-- `graph_18_igraph.vtp` - Full tortuous geometry
-- `graph_18_igraph_nHcut3.vtp` - Cut region variant
-- `hippo.vtp` - Hippocampus-specific
-- `nonT_Hcut3.vtp` - Non-tortuous simplified version
+Each output filename tells you what it contains:
+- `graph_18_igraph.vtp` - Full brain vessel network
+- `graph_18_igraph_nHcut3.vtp` - Network cut by region (nH = region version, cut3 = step 3)
+- `nonT_Hcut3.vtp` - Same region but simplified view (nonT = straight lines only)
+- `hippo.vtp` - Hippocampus region extracted
 
-## Coordinate Systems in VTP
+**Naming convention:** `[dataset]_[region][cut_level].vtp`
 
-⚠️ **Important:** VTP **stores** coordinate values but does NOT preserve coordinate system metadata.
+You can open any .vtp file directly in ParaView to visualize.
 
-- VTP contains raw XYZ coordinates (whatever you input)
-- **No metadata** about what those coordinates represent (voxels? µm? atlas space?)
-- ParaView displays them as-is, but has no knowledge of the coordinate system
-- Measurements in ParaView assume input coordinates are in the originally specified units
+## Coordinate Systems & Units
 
-**To ensure correct interpretation:**
-1. Always ensure input PKL has `_R` (micrometer) attributes via [CSVtoPKL/convert_outgeom_voxels_to_um.py](../CSVtoPKL/README.md)
-2. Document externally that your VTP file contains **micrometers (µm)** coordinates
-3. When sharing VTP files, specify the coordinate system separately
-4. Use consistent axis orientation if combining with other datasets
+**⚠️ Important:** VTP stores coordinates but doesn't know what units they represent.
 
-**Example:** If you export voxel coordinates by mistake, VTP will still display them but ParaView won't know they're voxels, leading to incorrect measurements.
+When you open a VTP file in ParaView:
+- You see 3D coordinates as numbers
+- ParaView doesn't know if they're voxels, micrometers, or millimeters
+- Measurements in ParaView assume your input units
 
-## Troubleshooting
+**How to ensure correctness:**
+1. Make sure your PKL file has `_R` (micrometer) attributes - these have coordinates scaled to micrometers
+   - Check using [CSVtoPKL/convert_outgeom_voxels_to_um.py](../CSVtoPKL/README.md)
+   - Example: `data["vertex_R"]["coords_image_R"]` uses _R suffix for µm coordinates
+2. In your code, use the `_R` versions of arrays:
+   ```python
+   x_um, y_um, z_um = geom["x_R"], geom["y_R"], geom["z_R"]  # ← Use _R suffix
+   coords = data["vertex_R"]["coords_image_R"]               # ← Use _R suffix
+   ```
+3. When you save the VTP file, document that it contains **µm (micrometers)** coordinates
+4. If combining multiple VTP files, ensure they all use the same coordinate system
 
-**Issue: VTP file won't open in ParaView**
-- Check XML validity: `xmllint vessel_graph.vtp`
-- Verify points/lines arrays match connectivity format
-- Ensure correct data types (Float64, UInt64)
+**Example:** If you accidentally use voxel coordinates (without _R), VTP will display them but ParaView won't know they're voxels, leading to incorrect measurements.
 
-**Issue: Vessels appear as points/dots**
-- Apply Tube filter: Filters → Geometric → Tube
-- Check if diameter data is present: PointData["diameter"]
-- Adjust tube radius scale in Tube filter properties
 
-**Issue: Colors don't map**
-- Verify PointData array exists: use `h5dump` or ParaView Attributes panel
-- Check value ranges (ensure not all NaN)
-- Use ParaView histogram editor to adjust scale
+## Workflow Overview
+
+```
+Your PKL graph file
+         ↓
+  [Choose script]
+  ├─ Tortuous (curved) → Realistic appearance
+  └─ Basic (straight)  → Quick preview
+         ↓
+   VTP file created
+         ↓
+  Open in ParaView → Explore, measure, color by property
+         ↓
+  Export → Publication images, videos, analysis
+```
 
 ## Related Modules
 
-- **CSVtoPKL:** Generates PKL from CSV
-- **cutting:** Extracts PKL subregions before visualization
-- **Graph Analysis:** Computes properties to visualize
+- **[CSVtoPKL](../CSVtoPKL/README.md)** - Converts your raw CSV data to PKL format
+- **[cutting](../cutting/README.md)** - Extract vessel regions before visualizing
+- **[Graph Analysis](../Graph%20Analysis%20&%20by%20region/README.md)** - Compute properties (tortuosity, density) to color-code in ParaView
 
-## Supported Property Types
+## Properties You Can Visualize
 
-Commonly visualized:
-- `diameter` / `radii` - Vessel cross-section size
-- `annotation` - Vessel type (artery/vein/capillary)
-- `length` - Edge length
-- `tortuosity` - Curved vs. straight
-- `density` - Local vascular density
-- Custom properties from analysis
+- `diameter` or `radii_atlas` - Vessel thickness (colored tubes)
+- `annotation` - Vessel type (artery vs vein)
+- `tortuosity` - How curved each vessel is (straight = 1.0)
+- `length` - Distance along vessel
+- Custom properties from graph analysis
 
-## Author
-Sofia Renier dataset adaptation
-Ana Barrio - Feb 2026
+## Quick Start Example
+
+```python
+# Load your graph
+
+import pickle
+data = pickle.load(open("my_graph.pkl", "rb"))
+
+# Convert to VTP
+
+from PKLtoVTP_Tortuous_OUTGEOM import pkl2vtp_tortuous_outgeom
+output_file = pkl2vtp_tortuous_outgeom("my_graph.pkl", "./output/")
+print(f"Created: {output_file}")
+
+# Now open in ParaView
+# File → Open → select the .vtp file
+# Then color by "annotation" or "tortuosity" to visualize properties
+```
+
+## Common Tasks in ParaView
+
+| Task | How |
+|------|-----|
+| Change vessel colors | Color by → annotation / tortuosity / your property |
+| Measure distance | Tools → Measure (hold Shift + click two points) |
+| Export image | File → Export Screenshot |
+| Adjust tube thickness | Representation → Style → Line Width |
+| Select region | Use box/sphere selection tool to isolate vessels |
+
+---
+
+## Author & Version
+
+Sox dataset adaptation - Feb 2026
+Ana Barrio
