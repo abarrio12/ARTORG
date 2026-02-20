@@ -3,13 +3,19 @@ import vtk
 import numpy as np
 
 '''
-length_tortuous = longitud real siguiendo la geometría del vaso (suma de distancias entre puntos consecutivos de la polyline).
-length = la longitud “del edge” que te venía del CSV / atributo del grafo. En muchos pipelines suele ser la distancia recta entre nodos 
-(chord) o una longitud “resumida” precomputada (depende de cómo exportaste length.csv).
+Data structure in PKL:
+- length = arc length along the polyline (from CSV)
+- lengths2 = distance between consecutive geometry points (computed from diffs)
+- radii_atlas = radius in atlas voxel space (25 µm grid)
+
+VTP export:
+- Points: geometry coordinates (x, y, z)
+- CellData: per-edge attributes (nkind, radius_atlas, diameter_atlas, length, tortuosity)
+- PointData: per-point attributes (annotation, radii_atlas, etc.)
 '''
 
-in_path = "/home/admin/Ana/MicroBrain/output/graph_18_OutGeom_Hcut3.pkl"
-out_vtp = "/home/admin/Ana/MicroBrain/output/graph_18_OutGeom_Hcut3.vtp"
+in_path = "/home/admin/Ana/MicroBrain/output/graph_18_OutGeom.pkl"
+out_vtp = "/home/admin/Ana/MicroBrain/output/graph_18_OutGeom.vtp"
 
 data = pickle.load(open(in_path, "rb"))
 
@@ -23,22 +29,22 @@ nP = len(x)
 
 # -------- pointwise arrays (optional) ----------
 ann = np.asarray(geom["annotation"], dtype=np.int32) if "annotation" in geom else None
-radii_p = np.asarray(geom["radii"], dtype=np.float32) if "radii" in geom else None
-diam_p = np.asarray(geom["diameters"], dtype=np.float32) if "diameters" in geom else None
-if diam_p is None and radii_p is not None:
-    diam_p = (2.0 * radii_p).astype(np.float32)
+radii_atlas_p = np.asarray(geom["radii_atlas_geom"], dtype=np.float32) if "radii_atlas_geom" in geom else None
+
+diam_atlas_p = None
+if radii_atlas_p is not None:
+    diam_atlas_p = (2.0 * radii_atlas_p).astype(np.float32)
 
 lengths2_p = np.asarray(geom["lengths2"], dtype=np.float32) if "lengths2" in geom else None
-lengths_p  = np.asarray(geom["lengths"], dtype=np.float32)  if "lengths" in geom else None
 
 def _check(name, arr):
     if arr is not None and len(arr) != nP:
         raise ValueError(f"geom['{name}'] must match x/y/z length.")
 _check("annotation", ann)
-_check("radii", radii_p)
-_check("diameters", diam_p)
+_check("radii_atlas_geom", radii_atlas_p)
+_check("diameters_atlas", diam_atlas_p)
 _check("lengths2", lengths2_p)
-_check("lengths", lengths_p)
+
 
 # ============================
 # VTK: points ONCE
@@ -59,10 +65,9 @@ def make_float_array(name):
     a = vtk.vtkFloatArray(); a.SetName(name); return a
 
 nkind_array        = make_int_array("nkind")
-radius_array       = make_float_array("radius")
-diameter_array     = make_float_array("diameter")
+radius_atlas_array = make_float_array("radius_atlas")
+diameter_atlas_array = make_float_array("diameter_atlas")
 length_array       = make_float_array("length")
-length_tort_array  = make_float_array("length_tortuous")
 tortuosity_array   = make_float_array("tortuosity")
 
 # ============================
@@ -75,14 +80,14 @@ if ann is not None:
     for i in range(nP): a.SetValue(i, int(ann[i]))
     pointdata_arrays.append(a)
 
-if radii_p is not None:
-    a = vtk.vtkFloatArray(); a.SetName("radii"); a.SetNumberOfTuples(nP)
-    for i in range(nP): a.SetValue(i, float(radii_p[i]))
+if radii_atlas_p is not None:
+    a = vtk.vtkFloatArray(); a.SetName("radii_atlas"); a.SetNumberOfTuples(nP)
+    for i in range(nP): a.SetValue(i, float(radii_atlas_p[i]))
     pointdata_arrays.append(a)
 
-if diam_p is not None:
-    a = vtk.vtkFloatArray(); a.SetName("diameters"); a.SetNumberOfTuples(nP)
-    for i in range(nP): a.SetValue(i, float(diam_p[i]))
+if diam_atlas_p is not None:
+    a = vtk.vtkFloatArray(); a.SetName("diameters_atlas"); a.SetNumberOfTuples(nP)
+    for i in range(nP): a.SetValue(i, float(diam_atlas_p[i]))
     pointdata_arrays.append(a)
 
 if lengths2_p is not None:
@@ -90,10 +95,6 @@ if lengths2_p is not None:
     for i in range(nP): a.SetValue(i, float(lengths2_p[i]))
     pointdata_arrays.append(a)
 
-if lengths_p is not None:
-    a = vtk.vtkFloatArray(); a.SetName("lengths"); a.SetNumberOfTuples(nP)
-    for i in range(nP): a.SetValue(i, float(lengths_p[i]))
-    pointdata_arrays.append(a)
 
 # ============================
 # Build polylines referencing GLOBAL point ids
@@ -115,23 +116,23 @@ for e in range(G.ecount()):
     # ---- CellData ----
     nkind_array.InsertNextValue(int(G.es[e]["nkind"]) if "nkind" in G.es.attributes() else -1)
 
-    if "radius" in G.es.attributes():
-        r_edge = float(G.es[e]["radius"])
-    elif radii_p is not None:
-        r_edge = float(np.nanmean(radii_p[s:en]))
+    if "radius_atlas" in G.es.attributes():
+        r_atlas_edge = float(G.es[e]["radius_atlas"])
+    elif radii_atlas_p is not None:
+        r_atlas_edge = float(np.nanmax(radii_atlas_p[s:en]))
     else:
-        r_edge = np.nan
-    radius_array.InsertNextValue(r_edge)
+        r_atlas_edge = np.nan
+    radius_atlas_array.InsertNextValue(r_atlas_edge)
 
-    if "diameter" in G.es.attributes():
-        d_edge = float(G.es[e]["diameter"])
-    elif not np.isnan(r_edge):
-        d_edge = 2.0 * r_edge
-    elif diam_p is not None:
-        d_edge = float(np.nanmean(diam_p[s:en]))
+    if "diameter_atlas" in G.es.attributes():
+        d_atlas_edge = float(G.es[e]["diameter_atlas"])
+    elif not np.isnan(r_atlas_edge):
+        d_atlas_edge = 2.0 * r_atlas_edge
+    elif diam_atlas_p is not None:
+        d_atlas_edge = float(np.nanmax(diam_atlas_p[s:en])) # radii of the edge is max(radii of the points), so diameters of the edge is max(diameters of the points)
     else:
-        d_edge = np.nan
-    diameter_array.InsertNextValue(d_edge)
+        d_atlas_edge = np.nan
+    diameter_atlas_array.InsertNextValue(d_atlas_edge)
 
     if "length" in G.es.attributes():
         L = float(G.es[e]["length"])
@@ -141,9 +142,6 @@ for e in range(G.ecount()):
         P = np.column_stack([x[s:en], y[s:en], z[s:en]]).astype(np.float64)
         L = float(np.sum(np.linalg.norm(np.diff(P, axis=0), axis=1)))
     length_array.InsertNextValue(L)
-
-    Lt = float(G.es[e]["length_tortuous"]) if "length_tortuous" in G.es.attributes() and G.es[e]["length_tortuous"] is not None else np.nan
-    length_tort_array.InsertNextValue(Lt)
 
     tau = float(G.es[e]["tortuosity"]) if "tortuosity" in G.es.attributes() and G.es[e]["tortuosity"] is not None else np.nan
     tortuosity_array.InsertNextValue(tau)
@@ -157,10 +155,9 @@ polydata.SetLines(lines)
 
 # CellData
 polydata.GetCellData().AddArray(nkind_array)
-polydata.GetCellData().AddArray(radius_array)
-polydata.GetCellData().AddArray(diameter_array)
+polydata.GetCellData().AddArray(radius_atlas_array)
+polydata.GetCellData().AddArray(diameter_atlas_array)
 polydata.GetCellData().AddArray(length_array)
-polydata.GetCellData().AddArray(length_tort_array)
 polydata.GetCellData().AddArray(tortuosity_array)
 polydata.GetCellData().SetActiveScalars("nkind")
 
@@ -171,10 +168,10 @@ for a in pointdata_arrays:
 # choose default active scalar
 if polydata.GetPointData().HasArray("annotation"):
     polydata.GetPointData().SetActiveScalars("annotation")
-elif polydata.GetPointData().HasArray("radii"):
-    polydata.GetPointData().SetActiveScalars("radii")
-elif polydata.GetPointData().HasArray("diameters"):
-    polydata.GetPointData().SetActiveScalars("diameters")
+elif polydata.GetPointData().HasArray("radii_atlas"):
+    polydata.GetPointData().SetActiveScalars("radii_atlas")
+elif polydata.GetPointData().HasArray("diameters_atlas"):
+    polydata.GetPointData().SetActiveScalars("diameters_atlas")
 
 writer = vtk.vtkXMLPolyDataWriter()
 writer.SetFileName(out_vtp)
