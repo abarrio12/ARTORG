@@ -1,164 +1,143 @@
-# Cutting: Graph ROI Extraction & Clipping
+# Cutting: Graph Spatial Clipping by 3D Box
 
-## Overview
-This module **extracts and clips vessel graphs** based on **Region of Interest (ROI)** definitions (hippocampal and somatomotor region in this case). It takes a complete vascular graph and returns a subgraph containing only vessels within specified 3D spatial regions.
+## What This Does
 
-## Goal
-Enable selective analysis of brain vasculature by:
-1. Defining 3D box ROIs (in micrometers or voxels)
-2. Selecting vertices inside ROI boundaries
-3. Clipping vessel paths that cross box boundaries (creating new border vertices)
-4. Rebuilding consistent graph structure with recomputed geometric attributes
-5. Preserving all metadata (annotations, radii, properties)
+Takes a complete blood vessel map and cuts out just the vessels inside a 3D box you define. Everything outside gets removed.
 
-## Folder Structure
+**Quick steps:**
+1. Pick a brain region using [SelectBrainRegion_fromJSON.py](../Graph%20Analysis%20%26%20by%20region/SelectBrainRegion/SelectBrainRegion_fromJSON.py)
+2. View it in ParaView
+3. Place a 3D box around your region
+4. Note the box center coordinates
+5. Run the script matching your data type (voxels or micrometers)
+
+## Files
 
 ```
 cutting/
-├── cut_outgeom_roi_UM.py              # Cut in micrometers (main utility)
-├── cut_outgeom_roi_VOX.py             # Cut in voxels
-├── Cut_The_Graph_GAIA.py              # GAIA dataset-specific cutting
-├── equivalent_non.py                  # Non-tortuous equivalent generation
-├── graph_cut_SOFIA.py                 # SOFIA-specific implementation
+├── cut_outgeom_roi_VOX.py              # Cut voxel-space data
+├── cut_outgeom_roi_UM.py               # Cut micrometer data  
+├── Cut_The_Graph_GAIA.py               # Advanced clipping (two methods)
+├── equivalent_non.py                   # Make straight-line version
+├── graph_cut_SOFIA.py                  # Alternative method
 └── README.md
 ```
 
-## Core Concepts
+## How It Works
 
-### Geometric Clipping Algorithm
+The tool:
+1. Keeps all vessels completely inside the box
+2. Cuts vessels that cross the box edge (creates new connection points)
+3. Removes vessels completely outside
+4. Recalculates lengths and properties for cut pieces
 
-When a vessel edge geometry (polyline) intersects a box boundary:
+## Which Script to Use?
 
-```
-Original polyline:  •———•———•———•———•  (goes outside box)
-                        ↓
-Result:             •———•———X   X———•  (clipped at boundaries)
-                             ↑ border vertices
-```
+| Your Data Type | Use This Script | Box In |
+|---|---|---|
+| Voxels | `cut_outgeom_roi_VOX.py` | Voxels |
+| Micrometers | `cut_outgeom_roi_UM.py` | Micrometers |
 
-**Process:**
-1. Identify polyline segments that cross the box boundary
-2. Compute intersection point (exact position on box surface)
-3. Create new "border vertex" at intersection
-4. Retain only polyline points inside the box
-5. Connect border vertices with appropriate edge properties
+## How to Use
 
-### Key Data Structures
+**Key:** ParaView doesn't know units—it just shows numbers. YOU need to remember whether your data is voxels or micrometers.
 
-Input (`data` dict):
+### If your data is in VOXELS
+
 ```python
-data = {
-    "graph": igraph.Graph,
-    "vertex_R": {
-        "coords_image_R": array(N, 3),      # vertex coordinates in µm
-        ...
-    },
-    "geom_R": {
-        "x_R", "y_R", "z_R": arrays(M,),    # polyline points in µm
-        "lengths2_R": array(M,),             # per-segment distances
-        "diameters_atlas_geom_R": array(M,),
-        "annotation": array(M,),
-    }
-}
+from cut_outgeom_roi_VOX import cut_graph_inside_box
+import pickle
+
+data = pickle.load(open("graph_voxels.pkl", "rb"))
+
+# From ParaView
+center = (1500, 1200, 800)  # voxels
+size_um = 500               # your box size in micrometers
+
+# Convert µm to voxels
+res = [1.625, 1.625, 2.5]  # µm/voxel (x, y, z)
+size_vox_xy = int(size_um / res[0])  # 500/1.625 ≈ 308 voxels
+size_vox_z = int(size_um / res[2])   # 500/2.5 = 200 voxels
+
+# Make box
+x_box = (center[0] - size_vox_xy, center[0] + size_vox_xy)
+y_box = (center[1] - size_vox_xy, center[1] + size_vox_xy)
+z_box = (center[2] - size_vox_z, center[2] + size_vox_z)
+
+# Cut
+data_cut = cut_graph_inside_box(data, x_box=x_box, y_box=y_box, z_box=z_box)
+
+# Save
+with open("cut.pkl", "wb") as f:
+    pickle.dump(data_cut, f, protocol=pickle.HIGHEST_PROTOCOL)
 ```
 
-Output: Same structure, filtered to ROI
-
-## Main Scripts
-
-### 1. **cut_outgeom_roi_UM.py** - Primary Utility (Micrometers)
-
-Cuts graph inside a 3D rectangular box in **micrometers**.
-
-**Inputs:**
-- `data`: PKL dict with `_R` (micrometer) attributes
-- `x_box`: `(x_min, x_max)` in µm
-- `y_box`: `(y_min, y_max)` in µm
-- `z_box`: `(z_min, z_max)` in µm
-
-**Output:**
-- New `data` dict with filtered graph and clipped geometry
-
-**Key operations:**
-- Vertex filtering (keep vertices inside box)
-- Polyline clipping (cut at box boundaries)
-- Geometry recomputation:
-  - `lengths2_R`: distances between consecutive polyline points
-  - `length_R`: per-edge arc length (sum of segment lengths)
-  - `tortuosity_R`: `length_R / straight_distance`
-
-### 2. **cut_outgeom_roi_VOX.py** - Voxel Space Variant
-
-Same as above but operates in voxel coordinates (uses `data["vertex"]`, `data["geom"]`).
-
-### 3. **Cut_The_Graph_GAIA.py** - GAIA-Specific Cutting
-
-Dataset-specific wrapper that:
-- Define standard ROI boxes for brain regions (GAIA naming conventions)
-- Automate batch cutting of multiple regions
-- Handle dataset-specific coordinate systems
-
-### 4. **equivalent_non.py** - Non-Tortuous Equivalent Generation
-
-Generates a "non-tortuous" equivalent of a cut graph:
-- Simplifies polylines to straight lines between vertices
-- Useful for comparison or simplified modeling
-
-### 5. **graph_cut_SOFIA.py** - SOFIA-Specific Implementation
-
-Alternative graph cutting implementation using SOFIA methodology.
-
-## Workflow Example
+### If your data is in MICROMETERS
 
 ```python
 from cut_outgeom_roi_UM import cut_graph_inside_box
+import pickle
 
-# Define ROI in micrometers
-roi_box = {
-    "x_box": (1000, 3000),   # µm
-    "y_box": (800, 2800),
-    "z_box": (500, 2500),
-}
+data = pickle.load(open("graph_micrometers.pkl", "rb"))
 
-# Load PKL
-data = pickle.load(open("graph_18_OutGeom_Hcut3_um.pkl", "rb"))
+# From ParaView
+center = (2437, 1950, 2000)  # micrometers
+size = 500                   # micrometers
 
-# Cut graph
-data_cut = cut_graph_inside_box(
-    data,
-    x_box=roi_box["x_box"],
-    y_box=roi_box["y_box"],
-    z_box=roi_box["z_box"],
+# Make box
+x_box = (center[0] - size, center[0] + size)
+y_box = (center[1] - size, center[1] + size)
+z_box = (center[2] - size, center[2] + size)
+
+# Cut
+data_cut = cut_graph_inside_box(data, x_box=x_box, y_box=y_box, z_box=z_box)
+
+# Save
+with open("cut.pkl", "wb") as f:
+    pickle.dump(data_cut, f, protocol=pickle.HIGHEST_PROTOCOL)
+```
+
+### Special: You saw VOXELS in ParaView but data is in MICROMETERS?
+
+```python
+from cut_outgeom_roi_UM import cut_graph_inside_box
+import pickle
+
+data = pickle.load(open("graph_micrometers.pkl", "rb"))
+
+# From ParaView (voxels)
+center_vox = (1500, 1200, 800)
+
+# Convert to micrometers
+res = [1.625, 1.625, 2.5]  # µm/voxel
+center_um = (
+    center_vox[0] * res[0],  # 1500 × 1.625
+    center_vox[1] * res[1],  # 1200 × 1.625
+    center_vox[2] * res[2]   # 800 × 2.5
 )
 
-# Result contains only vessels within box, with clipped geometry
-print(f"Original: {data['graph'].vcount()} vertices")
-print(f"Cut: {data_cut['graph'].vcount()} vertices")
+size = 500
+
+# Make box
+x_box = (center_um[0] - size, center_um[0] + size)
+y_box = (center_um[1] - size, center_um[1] + size)
+z_box = (center_um[2] - size, center_um[2] + size)
+
+# Cut
+data_cut = cut_graph_inside_box(data, x_box=x_box, y_box=y_box, z_box=z_box)
+
+# Save
+with open("cut.pkl", "wb") as f:
+    pickle.dump(data_cut, f, protocol=pickle.HIGHEST_PROTOCOL)
 ```
 
-## Typical Use Cases
+## Advanced: Cut_The_Graph_GAIA.py
 
-1. **Brain region analysis:** Extract vasculature from specific anatomical regions (hippocampus, somatomotor cortex, etc.)
-2. **Comparative studies:** Cut identical ROIs across different datasets/samples
-3. **Boundary condition studies:** Focus on vessels at specific interfaces
-4. **Vascular density mapping:** Compute properties within uniform cubic divisions
+Has two clipping methods:
+- **Full clipping:** Cuts vessels at box edge with exact coordinates
+- **Classification only:** Just finds which vessels cross the edge (doesn't cut them)
 
-## Related Workflow
-
-```
-complete graph (PKL)
-        ↓
-[cut_outgeom_roi_UM.py]
-        ↓
-cut graph (PKL) → analysis, visualization, statistics
-```
-
-## Coordinate Systems
-
-- **Voxels:** Indices into the original imaging array. Resolution varies (default: 1.625 × 1.625 × 2.5 µm/voxel)
-- **Micrometers:** Physical units. Use this for anatomically meaningful ROI definitions.
-
-**Conversion:** Use `convert_outgeom_voxels_to_um.py` from CSVtoPKL module.
+Use the main scripts (VOX/UM) unless you need these specialized methods.
 
 ## Author
 Ana Barrio - Feb 2026
