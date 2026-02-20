@@ -1,4 +1,4 @@
-# Graph Analysis & by Region: Vascular Network Metrics
+# Graph Analysis: Measure Vessel Networks
 
 ## Overview
 This module computes comprehensive **topological, geometric, and spatial metrics** on vascular graphs. It supports regional analysis, enabling comparison across different brain areas and identification of structural features.
@@ -102,8 +102,8 @@ space="um"   # Use micrometer coordinates(coords_image_R)
 
 ### Distance Threshold (eps)
 - **Always in voxels** (even if `space="um"`)
-- Automatically converted if `space="um"` using resolution factor
-- Example: `eps=50` vox ≈ 81 µm (using default 1.625 µm/vox)
+- Default: `eps=2` voxels ≈ 3.25 µm (using default 1.625 µm/vox)
+- Used for defining neighborhood connectivity
 
 ### Resolution
 ```python
@@ -147,120 +147,30 @@ Located in **`ROI Comparison/`**:
 
 ### Validation & Comparison
 - **check_connectivity_nonTort&Tort.ipynb** - Tortuous vs non-tortuous connectivity validation
+- **nonT_T_diff.ipynb** - Dataset compliance check
+- **Check_full_TnonT.ipynb** - Data integrity validation
 
-### 4. **Somatomotor_VS_Hippocampal_graphAnalysis.ipynb** - Comparative Study
-- Side-by-side comparison of two regions
-- Highlights regional differences in:
-  - Vascular density
-  - Vessel size distribution
-  - Branching complexity
-  - Topological features
 
-### 5. **nonT_T_diff.ipynb** - Vessel Type Comparison
-- Analyzes differences between tortuous (T) and non-tortuous (nonT) vessels
-- Examines structural/functional distinctions
+## Data Format
 
-### 6. **Check_full_TnonT.ipynb** - Full Dataset Validation
-- Validates entire dataset integrity
-- Checks for anomalies, disconnected components
-- Prepares summary statistics
+Your PKL file has this structure:
 
-## Typical Analysis Workflow
-
-```python
-import pickle
-from graph_analysis_functions import *
-
-# Load graph
-data = pickle.load(open("graph_18_OutGeom_Hcut3_um.pkl", "rb"))
-G = data["graph"]
-vertices = data["vertex_R"]
-geom = data["geom_R"]
-
-# Compute metrics
-degree = G.degree()
-length_dist = G.es["length_R"]
-mean_diameter = np.mean(G.es["diameter"])
-
-# Spatial analysis
-hdn_nodes = find_high_degree_nodes(G, k_threshold=5)
-vascular_density = compute_vascular_density(
-    vertices, geom, space="um", region_box=(x_min, x_max, y_min, y_max, z_min, z_max)
-)
-
-# Generate report
-print(f"Nodes: {G.vcount()}")
-print(f"Edges: {G.ecount()}")
-print(f"Mean edge length: {np.mean(length_dist):.2f} µm")
-print(f"Vascular density: {vascular_density:.4f}")
-```
-
-## Regional Analysis Helpers
-
-### SelectBrainRegion_fromJSON.py
-- Load region definitions from JSON files
-- Define anatomical regions programmatically
-- Apply to automated batch analysis
-
-### cube_analysis.py
-- Divide graph into regular cubic grid
-- Compute metrics per cube
-- Identify spatial hotspots
-
-## Metrics Output
-
-Typical results include:
-- **Summary statistics:** mean, std, min, max, median
-- **Distributions:** histograms across edges/nodes
-- **Spatial maps:** metric values at each point
-- **Comparative tables:** region-to-region comparisons
-- **Redundancy scores:** robustness indices
-
-## Important Parameters
-
-```python
-# Space and resolution
-space = "um"  or "vox"
-res_um_per_vox = (1.625, 1.625, 2.5)
-
-# Distance thresholds (always in voxels)
-eps = 2  # neighborhood definition (typical value for local connectivity)
-
-# Regional definitions
-roi_box = ((x_min, x_max), (y_min, y_max), (z_min, z_max))  # in µm
-
-# Vessel type filters (from annotation dictionary)
-vessel_type = "artery"  # or "vein", "capillary", None for all
-
-# Vessel type annotation mapping
-# 2 = artery, 3 = vein, 4 = capillary 
-```
-
-## Related Workflow
-
-```
-PKL graph (micrometers)
-        ↓
-[graph_analysis_functions.py]
-        ↓
-metrics (CSV, figures, statistics) → publications, reports
-```
-
-## Data Structure Convention
-
-When analyzing, expect:
 ```python
 data = {
-    "graph": igraph.Graph,      # topology (original from building graph in voxels)
-    "vertex_R": {
-        "coords_image_R": (N, 3) array,    # vertex positions (in um)
-        "radii_atlas_R": (N,) array, () # radii of the atlas (in um)
-        ...
+    "graph": igraph.Graph,        # network topology
+    
+    "vertex": {
+        "coords": array,          # vertex positions (atlas voxels)
+        "coords_image": array,    # vertex positions (image voxels)
+        "radii_atlas": array,     # radius in atlas space
+        "annotation": array,      # region ID
     },
-    "geom_R": {
-        "x_R", "y_R", "z_R": (M,) arrays,  # polyline points (in um)
-        "lengths2_R", "diameters_atlas_geom_R": (M,) arrays, #(in um) 
-        "annotation": (M,) array,
+    
+    "geom": {
+        "x", "y", "z": arrays,    # polyline points (voxels)
+        "lengths2": array,        # distance between consecutive points
+        "radii_atlas_geom": array,# radius at each point
+        "annotation": array,      # region ID at each point
     }
 }
 ```

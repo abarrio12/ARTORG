@@ -152,9 +152,10 @@ def reorient_edge_geometry_to_vertices(
 # =============================================================================
 # Sanity checks
 # =============================================================================
-def sanity_e_len_equals_sum_lengths2(e_len, gs, ge, x, y, z, n_check=5, seed=0, tol=1e-3):
+def sanity_e_len_equals_sum_lengths2(e_len, gs, ge, lengths2, n_check=5, seed=0, tol=1e-3):
     """
-    Check: e_len[ei] ~= sum(||P[i+1] - P[i]||) along the polyline for n_check edges.
+    Check: e_len[ei] ~= sum(lengths2[s:en]) along the polyline for n_check edges.
+    Takes precomputed lengths2 array (distance between consecutive points).
     Returns True only if all tested edges satisfy the condition.
     """
     rng = np.random.default_rng(seed)
@@ -167,12 +168,8 @@ def sanity_e_len_equals_sum_lengths2(e_len, gs, ge, x, y, z, n_check=5, seed=0, 
             print(f"edge {ei}: SKIP (npts={en-s})")
             continue
 
-        dx = np.diff(x[s:en])
-        dy = np.diff(y[s:en])
-        dz = np.diff(z[s:en])
-        lengths2 = np.sqrt(dx * dx + dy * dy + dz * dz)
-
-        equal = abs(float(e_len[ei]) - float(lengths2.sum())) <= tol
+        edge_sum = float(np.sum(lengths2[s:en]))
+        equal = abs(float(e_len[ei]) - edge_sum) <= tol
         print(f"edge {ei}: e_len == sum(lengths2) ? {equal}")
         all_true = all_true and equal
 
@@ -263,9 +260,6 @@ ge = geom_idx[:, 1].astype(np.int64, copy=False)
 
 # global geometry points
 geom_xyz = pd.read_csv(FOLDER + "edge_geometry_coordinates.csv", header=None, dtype=np.float32).to_numpy()  # (nP,3)
-x = geom_xyz[:, 0]
-y = geom_xyz[:, 1]
-z = geom_xyz[:, 2]
 
 # per-point attributes
 ann_geom = pd.read_csv(FOLDER + "edge_geometry_annotation.csv", header=None, dtype=np.int32).to_numpy().reshape(-1)
@@ -273,6 +267,26 @@ r_geom = pd.read_csv(FOLDER + "edge_geometry_radii.csv", header=None, dtype=np.f
 r_atlas_geom = pd.read_csv(FOLDER + "edge_geometry_radii_atlas.csv", header=None, dtype=np.float32).to_numpy().reshape(-1)
 
 print("CSVs loaded")
+
+# =============================================================================
+# Build geometry structure
+# =============================================================================
+
+x = geom_xyz[:, 0]
+y = geom_xyz[:, 1]
+z = geom_xyz[:, 2]
+
+# lengths2 global (distance between consecutive geometry points)
+dx = np.diff(x.astype(np.float64))
+dy = np.diff(y.astype(np.float64))
+dz = np.diff(z.astype(np.float64))
+lengths2 = np.sqrt(dx*dx + dy*dy + dz*dz).astype(np.float32)
+
+# make it same length as x/y/z (last point has no next)
+lengths2 = np.append(lengths2, np.float32(0.0))
+
+
+#check
 print(f"nV={nV:,}  nE={nE:,}  nP={x.shape[0]:,}")
 
 
@@ -361,7 +375,7 @@ _ = reorient_edge_geometry_to_vertices(
 # =============================================================================
 # Sanity checks (length + radii + radii_atlas)
 # =============================================================================
-ok_len = sanity_e_len_equals_sum_lengths2(e_len, gs, ge, x, y, z, n_check=5, seed=0, tol=1e-3)
+ok_len = sanity_e_len_equals_sum_lengths2(e_len, gs, ge, lengths2, n_check=5, seed=0, tol=1e-3)
 print("All 5 length checks OK?", ok_len)
 
 ok_rad = sanity_e_rad_equals_max_r_geom(e_rad, gs, ge, r_geom, n_check=5, seed=0, tol=1e-6)
@@ -403,6 +417,7 @@ data = {
         "x": x,  # image voxel space
         "y": y,  # image voxel space
         "z": z,  # image voxel space
+        "lengths2": lengths2,  # image voxel space (distance between consecutive geometry points)
         "annotation": ann_geom,
         "radii": r_geom,  # image voxel space
         "radii_atlas_geom": r_atlas_geom,  # atlas voxel space (25 µm grid)  # !! needs to be extracted !!
