@@ -251,7 +251,7 @@ e_rad = pd.read_csv(FOLDER + "radii_edge.csv", header=None, dtype=np.float32).to
 
 # edge atlas radii (NEW): must exist as per-edge atlas radii
 # IMPORTANT: rename the filename if your export uses a different name.
-e_rad_atlas = pd.read_csv(FOLDER + "radii_edge_atlas.csv", header=None, dtype=np.float32).to_numpy().reshape(-1)
+e_rad_atlas = pd.read_csv(FOLDER + "radii_atlas_edge.csv", header=None, dtype=np.float32).to_numpy().reshape(-1)
 
 e_vein = pd.read_csv(FOLDER + "vein.csv", header=None, dtype=np.int8).to_numpy().reshape(-1)
 e_art = pd.read_csv(FOLDER + "artery.csv", header=None, dtype=np.int8).to_numpy().reshape(-1)
