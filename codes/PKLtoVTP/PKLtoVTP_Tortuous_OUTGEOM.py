@@ -41,8 +41,8 @@ def _check(name, arr):
     if arr is not None and len(arr) != nP:
         raise ValueError(f"geom['{name}'] must match x/y/z length.")
 _check("annotation", ann)
-_check("radii_atlas_geom", radii_atlas_p)
-_check("diameters_atlas", diam_atlas_p)
+_check("radii_p_atlas", radii_atlas_p)
+_check("diameter_p_atlas", diam_atlas_p)
 _check("lengths2", lengths2_p)
 
 
@@ -64,8 +64,9 @@ def make_int_array(name):
 def make_float_array(name):
     a = vtk.vtkFloatArray(); a.SetName(name); return a
 
+# edge
 nkind_array        = make_int_array("nkind")
-radius_atlas_array = make_float_array("radius_atlas")
+radius_atlas_array = make_float_array("radius_atlas")  
 diameter_atlas_array = make_float_array("diameter_atlas")
 length_array       = make_float_array("length")
 tortuosity_array   = make_float_array("tortuosity")
@@ -81,12 +82,12 @@ if ann is not None:
     pointdata_arrays.append(a)
 
 if radii_atlas_p is not None:
-    a = vtk.vtkFloatArray(); a.SetName("radii_atlas"); a.SetNumberOfTuples(nP)
+    a = vtk.vtkFloatArray(); a.SetName("radii_p_atlas"); a.SetNumberOfTuples(nP)
     for i in range(nP): a.SetValue(i, float(radii_atlas_p[i]))
     pointdata_arrays.append(a)
 
 if diam_atlas_p is not None:
-    a = vtk.vtkFloatArray(); a.SetName("diameters_atlas"); a.SetNumberOfTuples(nP)
+    a = vtk.vtkFloatArray(); a.SetName("diameter_p_atlas"); a.SetNumberOfTuples(nP)
     for i in range(nP): a.SetValue(i, float(diam_atlas_p[i]))
     pointdata_arrays.append(a)
 
@@ -168,10 +169,10 @@ for a in pointdata_arrays:
 # choose default active scalar
 if polydata.GetPointData().HasArray("annotation"):
     polydata.GetPointData().SetActiveScalars("annotation")
-elif polydata.GetPointData().HasArray("radii_atlas"):
-    polydata.GetPointData().SetActiveScalars("radii_atlas")
-elif polydata.GetPointData().HasArray("diameters_atlas"):
-    polydata.GetPointData().SetActiveScalars("diameters_atlas")
+elif polydata.GetPointData().HasArray("radii_p_atlas"):
+    polydata.GetPointData().SetActiveScalars("radii_p_atlas")
+elif polydata.GetPointData().HasArray("diameter_p_atlas"):
+    polydata.GetPointData().SetActiveScalars("diameter_p_atlas")
 
 writer = vtk.vtkXMLPolyDataWriter()
 writer.SetFileName(out_vtp)

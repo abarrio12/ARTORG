@@ -56,14 +56,14 @@ edges (connectivity)            →  Lines (cells)
 
 Use the function from each script, depending on what you need:
 
-**For realistic visualization (recommended):**
+**For outgeometry visualization:**
 ```python
 from PKLtoVTP_Tortuous_OUTGEOM import pkl2vtp_tortuous_outgeom
 vtp_file = pkl2vtp_tortuous_outgeom("graph.pkl", "output/", radii_mode='atlas')
 ```
 Creates curved vessels exactly as stored in your graph.
 
-**For quick network preview:**
+**For quick non tortuous graph preview:**
 ```python
 from PKLtoVTP_nonT_basic import pkl2vtp_nonT
 vtp_file = pkl2vtp_nonT("graph.pkl", "output/")
@@ -91,15 +91,7 @@ VTP file (XML, text-readable)
 Export: PNG, PDF, measurements, regions
 ```
 
-## What VTP Files Are Generated
-
-Each output filename tells you what it contains:
-- `graph_18_igraph.vtp` - Full brain vessel network
-- `graph_18_igraph_nHcut3.vtp` - Network cut by region (nH = region version, cut3 = step 3)
-- `nonT_Hcut3.vtp` - Same region but simplified view (nonT = straight lines only)
-- `hippo.vtp` - Hippocampus region extracted
-
-**Naming convention:** `[dataset]_[region][cut_level].vtp`
+**Naming convention:** `[dataset]_[n = non tortuous][region][cut_level].vtp`
 
 You can open any .vtp file directly in ParaView to visualize.
 
@@ -113,7 +105,7 @@ When you open a VTP file in ParaView:
 - Measurements in ParaView assume your input units
 
 **How to ensure correctness:**
-1. Make sure your PKL file has `_R` (micrometer) attributes - these have coordinates scaled to micrometers
+1. If you want um, make sure your PKL file has `_R` attributes - these have coordinates scaled to micrometers
    - Check using [CSVtoPKL/convert_outgeom_voxels_to_um.py](../CSVtoPKL/README.md)
    - Example: `data["vertex_R"]["coords_image_R"]` uses _R suffix for µm coordinates
 2. In your code, use the `_R` versions of arrays:
@@ -124,7 +116,7 @@ When you open a VTP file in ParaView:
 3. When you save the VTP file, document that it contains **µm (micrometers)** coordinates
 4. If combining multiple VTP files, ensure they all use the same coordinate system
 
-**Example:** If you accidentally use voxel coordinates (without _R), VTP will display them but ParaView won't know they're voxels, leading to incorrect measurements.
+**Note:** If you accidentally use voxel coordinates (without _R), VTP will display them but ParaView won't know they're voxels, leading to incorrect measurements.
 
 
 ## Workflow Overview
@@ -149,46 +141,10 @@ Your PKL graph file
 - **[cutting](../cutting/README.md)** - Extract vessel regions before visualizing
 - **[Graph Analysis](../Graph%20Analysis%20&%20by%20region/README.md)** - Compute properties (tortuosity, density) to color-code in ParaView
 
-## Properties You Can Visualize
 
-- `diameter` or `radii_atlas` - Vessel thickness (colored tubes)
-- `annotation` - Vessel type (artery vs vein)
-- `tortuosity` - How curved each vessel is (straight = 1.0)
-- `length` - Distance along vessel
-- Custom properties from graph analysis
+## Author 
 
-## Quick Start Example
+Sofia: pkl2vtp_MVN_Sofia & pkl2vtp_Sofia
 
-```python
-# Load your graph
+Ana Barrio - Feb 2026
 
-import pickle
-data = pickle.load(open("my_graph.pkl", "rb"))
-
-# Convert to VTP
-
-from PKLtoVTP_Tortuous_OUTGEOM import pkl2vtp_tortuous_outgeom
-output_file = pkl2vtp_tortuous_outgeom("my_graph.pkl", "./output/")
-print(f"Created: {output_file}")
-
-# Now open in ParaView
-# File → Open → select the .vtp file
-# Then color by "annotation" or "tortuosity" to visualize properties
-```
-
-## Common Tasks in ParaView
-
-| Task | How |
-|------|-----|
-| Change vessel colors | Color by → annotation / tortuosity / your property |
-| Measure distance | Tools → Measure (hold Shift + click two points) |
-| Export image | File → Export Screenshot |
-| Adjust tube thickness | Representation → Style → Line Width |
-| Select region | Use box/sphere selection tool to isolate vessels |
-
----
-
-## Author & Version
-
-Sox dataset adaptation - Feb 2026
-Ana Barrio
