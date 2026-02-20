@@ -34,41 +34,44 @@ VTP is an XML-based **VTK PolyData** format containing:
 - **PointData:** Properties at each point (diameter, annotation)
 - **CellData:** Properties per edge/cell
 
-### Mapping from PKL to VTP
+### What Gets Exported to VTP
 
-```
-PKL data structure              →  VTP structure
-────────────────────────────────────────────────────
-vertex (N nodes)                →  Points (N vertices)
-    coords_image_R              →  XYZ coordinates
+**Points:** All geometry points (x, y, z) stored in global coordinate space
 
-geom (M polyline points)        →  Points + CellData
-    x_R, y_R, z_R              →  Point coordinates
-    annotation                  →  PointData array (color/label)
-    diameters_atlas_geom_R     →  PointData array (tube radius)
+**PointData** (properties at each point):
+- `annotation` - Vessel type/region label
+- `radii_p_atlas` - Radius at this point (atlas-scaled)
+- `diameter_p_atlas` - Diameter at this point (2 × radius)
+- `lengths2` - Distance to next point along geometry
 
-edges (connectivity)            →  Lines (cells)
-    geom_start, geom_end       →  Line connectivity (point indices)
-    vessel_type                →  CellData array
-```
+**CellData** (properties per edge/vessel segment):
+- `nkind` - Vessel type code
+- `radius_atlas` - Edge radius (max of all points in segment)
+- `diameter_atlas` - Edge diameter (2 × radius)
+- `length` - Total arc length along edge
+- `tortuosity` - Straightness ratio (actual/Euclidean distance)
 
 ## Main Scripts
 
 Use the function from each script, depending on what you need:
 
-**For outgeometry visualization:**
+**For realistic curved vessel visualization (recommended):**
 ```python
-from PKLtoVTP_Tortuous_OUTGEOM import pkl2vtp_tortuous_outgeom
-vtp_file = pkl2vtp_tortuous_outgeom("graph.pkl", "output/", radii_mode='atlas')
+# Direct execution - fills in paths, loads graph, exports
+python PKLtoVTP_Tortuous_OUTGEOM.py
 ```
-Creates curved vessels exactly as stored in your graph.
+Or use as module:
+```python
+from PKLtoVTP_Tortuous_OUTGEOM import *  # loads and processes directly
+```
+→ Creates curved vessels with full polyline geometry, ideal for visualization
 
-**For quick non tortuous graph preview:**
+**For quick straight-line network preview:**
 ```python
 from PKLtoVTP_nonT_basic import pkl2vtp_nonT
 vtp_file = pkl2vtp_nonT("graph.pkl", "output/")
 ```
-Simple straight lines between vessels, no detailed geometry.
+→ Simple vertex-to-vertex connections, fast rendering
 
 **Other options:**
 - `PKLtoVTP_tortuous_FULLGEOM.py` - Different geometry preservation approach
@@ -91,9 +94,9 @@ VTP file (XML, text-readable)
 Export: PNG, PDF, measurements, regions
 ```
 
-**Naming convention:** `[dataset]_[n = non tortuous][region][cut_level].vtp`
-
 You can open any .vtp file directly in ParaView to visualize.
+
+**Output naming:** `[dataset]_[region].vtp` or `[dataset]_[region]_cut[level].vtp` for cut regions
 
 ## Coordinate Systems & Units
 
@@ -135,16 +138,29 @@ Your PKL graph file
   Export → Publication images, videos, analysis
 ```
 
+## What to Color By in ParaView
+
+**Point-level properties:**
+- `annotation` - Shows anatomical regions
+- `radii_p_atlas` - Vessel diameter at each point (for tube scaling)
+- `diameter_p_atlas` - Same as above (diameter = 2 × radius)
+
+**Edge-level properties:**
+- `radius_atlas` / `diameter_atlas` - Vessel thickness for entire segment
+- `tortuosity` - Red = straight (1.0), Blue = curved (>1.0)
+- `length` - Segment length
+- `nkind` - Vessel classification code
+
 ## Related Modules
 
-- **[CSVtoPKL](../CSVtoPKL/README.md)** - Converts your raw CSV data to PKL format
+- **[CSVtoPKL](../CSVtoPKL/README.md)** - Converts raw CSV data to PKL format
 - **[cutting](../cutting/README.md)** - Extract vessel regions before visualizing
-- **[Graph Analysis](../Graph%20Analysis%20&%20by%20region/README.md)** - Compute properties (tortuosity, density) to color-code in ParaView
+- **[Graph Analysis](../Graph%20Analysis%20&%20by%20region/README.md)** - Compute additional properties to visualize
 
+---
 
-## Author 
+## Authors
 
-Sofia: pkl2vtp_MVN_Sofia & pkl2vtp_Sofia
-
-Ana Barrio - Feb 2026
+- **Sofia** - Core pkl2vtp_SOFIA.py conversion engine, MVN variant
+- **Ana Barrio** - PKLtoVTP_Tortuous_OUTGEOM improvements, geometry optimization - Feb 2026
 

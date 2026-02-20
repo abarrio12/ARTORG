@@ -29,7 +29,8 @@ Converts CSV data files into Python pickle format containing igraph network obje
   
 - **`build_graph_outgeom_voxels.py`** - Creates indexed geometry representation with outer geometry
   - Builds graph with igraph topology + indexed numpy arrays
-  - Computes robust tortuosity metrics for curved vessels
+  - Computes robust tortuosity metrics
+  - Optimized sanity checks (lengths2 computed once, reused for validation)
   
 - **`convert_outgeom_voxels_to_um.py`** - Converts voxel space to micrometers (µm)
   - Non-destructive unit conversion
@@ -37,7 +38,8 @@ Converts CSV data files into Python pickle format containing igraph network obje
 
 ---
 
-### 2. **cutting/** — Graph ROI Extraction & Clipping
+### 2. **cutting/** — Graph ROI Extraction & Clipp
+ing
 Graph segmentation tools to extract subgraphs based on spatial regions (bounding boxes, anatomical areas).
 
 📖 **[→ Detailed Guide](cutting/README.md)** - Complete documentation with clipping algorithm explanation
@@ -51,8 +53,9 @@ Graph segmentation tools to extract subgraphs based on spatial regions (bounding
 - **`cut_outgeom_roi_VOX.py`** - Variant in voxel space
   - Same functionality as UM version but uses voxel coordinates
   
-- **`Cut_The_Graph_GAIA.py`** - GAIA-specific region extraction
-  - GAIA dataset methodology
+- **`Cut_The_Graph_GAIA.py`** - GAIA dataset region extraction
+  - Two variants: Full edge clipping and classification-only approaches
+  - Handles complex edge-boundary intersections
   
 - **`Cut_The_Graph_MVN.py`** - MVN (Multi-Vascular Network) variant
   - Region-specific graph extraction for MVN data
@@ -62,8 +65,10 @@ Graph segmentation tools to extract subgraphs based on spatial regions (bounding
   
 - **`cut_out.py`** - Complementary cutting
   - Extract everything outside a region
-  
-- **`equivalent_non — Graph-Tool to CSV Conversion
+
+---
+
+### 3. **GTtoCSV/** — Graph-Tool to CSV Conversion
 Converts graph-tool format files to CSV format for data interchange and analysis.
 
 📖 **[→ Detailed Guide](GTtoCSV/README.md)** - Complete documentation with format specifications
@@ -71,13 +76,16 @@ Converts graph-tool format files to CSV format for data interchange and analysis
 **Key Scripts:**
 - **`gt2CSV_SOFIA.py`** - Main converter: graph-tool → CSV
   - Exports vertices, edges, and attributes to separate CSV files
-  - Adapted from Renier dataset format
   - Includes edges, coordinates, radii, annotations
   
 - **`create_graph_from_GT.py`** - Creates igraph objects from graph-tool files
   - Helper utilities for graph loading
   
-- **`Franca_Extract_ — Pickle to ParaView Visualization
+- **`Franca_Extract_graph_info.py`** - Extract metadata from graph-tool format
+
+---
+
+### 4. **PKLtoVTP/** — Pickle to ParaView Visualization
 Converts pickle graph objects to VTP (VTK PolyData) format for visualization in ParaView.
 
 📖 **[→ Detailed Guide](PKLtoVTP/README.md)** - Complete documentation with VTP format and ParaView usage guide
@@ -88,12 +96,14 @@ Converts pickle graph objects to VTP (VTK PolyData) format for visualization in 
   - Handles vertex and edge attributes as scalars
   - Supports subgraph export and color-mapping
   
-- **`PKLtoVTP_tortuous_OUTGEOM.py`** - Tortuous path export (natural curvature)
-  - Full polyline geometry preservation
+- **`PKLtoVTP_Tortuous_OUTGEOM.py`** - Tortuous path export with full polyline geometry
+  - Preserves complete curved vessel paths
+  - Exports PointData: annotation, radii_p_atlas, diameter_p_atlas, lengths2
+  - Exports CellData: radius_atlas, diameter_atlas, length, tortuosity, nkind
   - Best for anatomical visualization
   
-- **`PKLtoVTP_nonT_basic.py`** - Simplified non-tortuous variant
-  - Straight-line representation (vertices only)
+- **`PKLtoVTP_nonT_basic.py`** - Simplified non-tortuous variant (vertices only)
+  - Straight-line representation between vertices
   - Fast rendering, topology emphasis
   
 - **`PKLtoVTP_tortu_nontortu.py`** - Exports both variants
@@ -101,8 +111,10 @@ Converts pickle graph objects to VTP (VTK PolyData) format for visualization in 
   
 - **`Pkl2vtp_MVN_SOFIA.py`** - MVN-specific VTP export
   - MVN dataset methodology
-  
-- **`pkltovtp_ANA.py`** - Ana's varian — Vascular Network Metrics & Analysis
+
+---
+
+### 5. **Graph Analysis & by region/** — Vascular Network Metrics & Analysis
 Comprehensive tools for analyzing vascular network properties and spatial statistics.
 
 📖 **[→ Detailed Guide](Graph%20Analysis%20%26%20by%20region/README.md)** - Complete documentation with analysis parameters and workflow
@@ -110,25 +122,24 @@ Comprehensive tools for analyzing vascular network properties and spatial statis
 **Key Notebooks:**
 - **`Graph_analysis.ipynb`** - Main analysis template
   - Graph diameter, length, and degree statistics
-  - Vessel type classification (arteriole, venule, capillary)
-  - General workflow example for custom analysis
+  - Vessel type classification
+  - Workflow example for custom analysis
   
-- **`HippocampalArea_graphAnalysis.ipynb`** - Hippocampus region-specific analysis
-  - Hippocampal vasculature properties
+- **`HippocampalArea_graphAnalysis.ipynb`** - Hippocampus region analysis
   - Regional boundary definition and statistics
   
 - **`SomatomotorArea_graphAnalysis.ipynb`** - Somatomotor cortex analysis
   - Motor cortex vascular characterization
   
-- **`Somatomotor_VS_Hippocampal_graphAnalysis.ipynb`** - Comparative regional study
-  - Side-by-side comparison of two brain regions
+- **`Somatomotor_VS_Hippocampal_graphAnalysis.ipynb`** - Compare two regions
+  - Side-by-side regional comparison
   - Highlights structural differences
   
-- **`nonT_T_diff.ipynb`** - Tortuous vs non-tortuous comparison
-  - Structural distinctions between vessel types
+- **`nonT_T_diff.ipynb`** - Compliance check between datasets
+  - Data integrity and format validation
   
-- **`Check_full_TnonT.ipynb`** - Full dataset validation
-  - Data integrity checks and summary statistics
+- **`Check_full_TnonT.ipynb`** - Data integrity check
+  - Full dataset validation and summary
 
 **Key Scripts:**
 - **`graph_analysis_functions.py`** (1964+ lines) - Core analysis library
@@ -140,24 +151,17 @@ Comprehensive tools for analyzing vascular network properties and spatial statis
   - Spatial filtering and regional aggregation
   - Comprehensive visualization functions
   
-- **`cube_analysis.py`** - Cubic region analysis utilities
-  - Statistics for cubic subvolumes
-  - Spatial hotspot identification
+- **`SelectBrainRegion_fromJSON.py`** - Region selection from JSON atlas data
+  - Anatomically-guided subgraph extraction
   
-- **`SelectBrainRegion_fromJSON.py`** - JSON-based region selection
-  - Anatomical region def — Experimental & Development
-Experimental and testing code for prototyping and validation.
-
-📖 **[→ Detailed Guide](my%20test%20codes/README.md)** - Status of experimental code and promotion guidelines
-
-⚠️ **Note:** Code in this folder is **NOT production-ready**. Use for experimentation only.
-
-- **`bound_AB.py`** - Boundary detection experimentation
-  - Test implementation of interface detection
+- **`SelectionBrainParaview_SOFIA.py`** - ParaView-compatible region selection
   
-- **`CSVtoPickle_Tortuous.py`** - Alternative tortuous conversion
-  - Experimental approach to tortuous CSV→pickle
-  - Source Data (Paris/ClearMap)
+---
+
+## Pipeline
+
+```
+Source Data (Paris/ClearMap)
     ↓
 [GTtoCSV] (optional: graph-tool → CSV)
     ↓
@@ -171,7 +175,7 @@ PKL Files (../output/)
     ├─ graph_*.pkl (complete vessel network)
     │
     ├─ [Optional: cutting/]  (extract region of interest)
-    │   └─→ cut_outgeom_roi_UM.py
+    │   └─→ cut_outgeom_roi_VOX/UM.py
     │       ↓
     │   data_cut (subgraph)
     │
@@ -182,45 +186,10 @@ PKL Files (../output/)
     │   Results (tables, figures, statistics)
     │
     └─→ [PKLtoVTP/]       (visualization)
-        ├─ pkl2vtp_SOFIA.py
+        ├─ pkl2vtp_Tortuous_OUTGEOM.py
         └─ *.vtp files
         ↓
-        [ParaView] → 3D interactive visualizationputation
-  - Depth-based stratification (superficial vs deep regions)
-  - Radii consistency sanity checks
-  - Comprehensive visualization functions (3D plots, heatmaps, degree distributions)
-  
-- **`cube_analysis.py`** - Boxed region analysis utilities
-  - Extracts statistics for cubic subvolumes
-  
-- **`SelectBrainRegion_fromJSON.py`** - Region selection from JSON atlas data
-  - Anatomically-guided subgraph extraction
-  
-- **`SelectionBrainParaview_SOFIA.py`** - ParaView-compatible region selection
-  
-- **`Untitled1.ipynb`** - Development/experimental notebook
-
----
-
-### 6. **my test codes/**
-Experimental and testing code for development purposes.
-
-- **`bound_AB.py`** - Boundary/AB testing utilities
-- **`CSVtoPickle_Tortuous.py`** - Experimental tortuous CSV→pickle conversion
-- **`Graph_analysis.ipynb`** - Local analysis testing
-
----
-
-## 🔄 Data Conversion Pipeline
-
-```
-Raw CSV Data
-    ↓
-CSVtoPKL/ (CSV → igraph pickle)
-    ↓
-    └─→ Graph Analysis & by region/
-    └─→ cutting/ (extract subregions)
-    └─→ PKLtoVTP/ (pickle → VTP for visualization)
+        [ParaView] → 3D interactive visualization
 ```
 
 ---
@@ -228,31 +197,27 @@ CSVtoPKL/ (CSV → igraph pickle)
 ## 📊 Data Attributes
 
 ### Vertex Properties:
-- Coordinates (atlas space and image space)
-- Radii (vessel diameter)
-- Brain region annotation
+- **Coordinates** - Position in atlas space and image space
+- **Radii** - Vessel radius (atlas) at vertex 
+- **Annotation** - Brain region label
 
 ### Edge Properties:
-- Length (vessel segment length in µm)
-- Radii (vessel radii along edge)
-- Topology (arteriole, venule, capillary classification)
-- Tortuosity metrics (straight distance vs actual path length)
-- Geometry (full polyline coordinates or indexed references)
+- **Length** - Vessel segment length (sum(lengths2))
+- **Radii** - Vessel segment radii (max(radii points))
+- **Tortuosity** - Curvature metric (straight distance vs actual path length)
+- **Nkind** - Arteriole, venule, or capillary type
+- **Geometry indices** - References to polyline coordinates (`geom_start`, `geom_end`)
+
+### Geometry Data:
+- **Polyline coordinates** - Full 3D path of each vessel (x, y, z points)
+- **Per-point radii** - Vessel radius varies along the path (`radii_atlas_geom`)
+- **Per-point distances** - Distance between consecutive points (`lengths2`)
+
+
 
 ---
 
-## 🔬 Analysis Capabilities
-
-1. **Topological Analysis**
-   - Network diameter and characteristic path length
-   - Degree distribution and centrality measures
-   - Clustering coefficients
-
-2. **Spatial Analysis**
-   - Vessel density (local density of vessel segments)
-   - Depth stratification (superficial vs deep classification)
-   - Spatial distribution maps by vessel type
-� Getting Started
+## 🔍 Getting Started
 
 1. **Read the module-specific README first** - Each subfolder has a detailed guide:
    - [CSVtoPKL/README.md](CSVtoPKL/README.md)
@@ -271,18 +236,6 @@ CSVtoPKL/ (CSV → igraph pickle)
 
 ---
 
-## 📌 Key Authors & Variants
-
-- **SOFIA** - Main data processing and conversion pipeline
-- **GAIA** - Graph cutting methodology and region extraction (cutting/ module)
-- **Ana** - Memory-efficient geometry indexing, micrometers conversion, analysis functions
-- **MVN** - Multi-vascular network dataset variants
-- **Franca** - Original dataset processing framework (GTtoCSV)
-   - Arteriole, Venule, Capillary identification
-   - Arteriovenous connection mapping
-
----
-
 ## 🛠️ Main Dependencies
 
 - **igraph** - Graph structure and algorithms
@@ -295,55 +248,18 @@ CSVtoPKL/ (CSV → igraph pickle)
 
 ---
 
-## 📝 Usage Examples
-
-### Convert CSV to pickled igraph:
-```python
-from CSVtoPKL.CSV2Pickle_SOFIA import ReadWriteGraph
-# Creates igraph with vessel network from CSV files
-```
-
-### Cut graph by region:
-```python
-from cutting.Cut_The_Graph_GAIA import cut_by_bounding_box
-# Extracts subgraph within spatial bounds
-```
-
-### Analyze graph properties:
-```python
-from Graph_Analysis import graph_analysis_functions
-# Computes network metrics, visualizations, regional statistics
-```
-
-### Export to ParaView:
-```python
-from PKLtoVTP.pkl2vtp_SOFIA import ExportToVTP
-# Converts igraph pickle to VTP for 3D visualization
-```
-
----
-
 ## 📌 Key Authors & Variants
 
-- **SOFIA** - Main data processing and conversion pipeline
-- **GAIA** - Graph cutting methodology and region extraction
-- **Ana** - Memory-efficient geometry indexing and optimization
-- **MVN** - Multi-vascular network variants
-- **Franca** - Original dataset processing framework
-
----
-
-## 📂 Related Directories
-
-- **`../CSV/`** - Input CSV data files (vertices, edges, attributes)
-- **`../output/`** - Generated VTP files and processed graphs
-- **`../blood flow solver/`** - Hemodynamic simulations on networks
+- **Sofia** - Main data processing and region extraction
+- **Gaia** - Graph cutting methodology
+- **Franca** - Original dataset processing gt
+- **Ana** - Conversion pipeline and building tortuous graph
 
 ---
 
 ## 🔍 Notes
 
-- All coordinates are in **micrometer (µm)** unless otherwise specified
+- All coordinates are in **voxels (vox)** unless otherwise specified
 - Graph files typically represent **Graph 18 (full brain hemisphere)**
 - Both **atlas coordinates** and **image coordinates** are maintained for alignment
 - **Tortuosity** is quantified as the ratio of actual path length to Euclidean distance
