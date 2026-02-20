@@ -81,18 +81,3 @@ def outgeom_to_igraph_materialized(data, space="um"):
     G2.es["diameter_p_atlas"] = diam_atlas
 
     return G2
-
-import pickle
-
-# cargar tu pkl
-with open("/home/admin/Ana/MicroBrain/output/graph_18_OutGeom_Hcut3_um.pkl", "rb") as f:
-    data = pickle.load(f)
-
-
-# convertir a igraph "materializado"
-G2 = outgeom_to_igraph_materialized(
-    data,
-    space="um"   
-)
-
-print(G2.summary())
