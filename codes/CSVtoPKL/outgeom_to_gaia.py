@@ -181,7 +181,7 @@ if __name__ == "__main__":
     # save igraph pkl
     G_gaia.write_pickle(out_path)
 
-    # 4) print mínimo
+    #minimal print to check
     print("Saved:", out_path)
     print("Units:", G_gaia["unit"])
     print("V/E:", G_gaia.vcount(), G_gaia.ecount())

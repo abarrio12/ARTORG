@@ -60,10 +60,12 @@ def WriteOnFileVTP(filename, vertices_array, connectivity_array, point_data, cel
     connectivity = xml.SubElement(lines, "DataArray", {"type":"Int32", "Name":"connectivity", "format":"ascii"})
     offsets = xml.SubElement(lines, "DataArray", {"type":"Int32", "Name":"offsets", "format":"ascii"})
     connectivity.text = " ".join(["{}".format(i) for c in connectivity_array for i in c])
+
     offsets.text = " ".join(["{}".format((i+1)*2) + " " for i in range(len(connectivity_array))])
 
     with open(filename, 'w') as vtkOutput:
         vtkOutput.write(xml.tostring(vtkTag, pretty_print=True, encoding="unicode"))
+
 
 def write_vtp(graph, filename, tortuous=True, verbose=False):
     """
@@ -118,7 +120,11 @@ def write_vtp(graph, filename, tortuous=True, verbose=False):
     G = deepcopy(graph)
     G.vs['index'] = list(range(G.vcount()))
     if G.ecount() > 0:
-        G.es['index'] = list(range(G.ecount()))
+        G.es['index'] = list(range(G.ecount())) 
+
+    pBC_array = None
+    pressure_array = None
+
 
     # Delete self-loops
     G.delete_edges(np.nonzero(G.is_loop())[0].tolist())
@@ -158,10 +164,10 @@ def write_vtp(graph, filename, tortuous=True, verbose=False):
     G.delete_vertices(disconnected_vertices)
 
     vertices_array = G.vs["coords"]
-    if 'pBC' in G.vs.attribute_names(): # << added by ana to comply with Paris graph (no pBC attribute)
+    if pBC_array is not None: # << added by ana to comply with Paris graph (no pBC attribute)
         pBC_array = [-1000 if value is None else value for value in G.vs['pBC']]
     #degree_array = G.vs["degree"]
-    if 'pressure' in G.vs.attribute_names(): # << added by ana to comply with Paris graph (no pressure attribute)
+    if pressure_array is not None: # << added by ana to comply with Paris graph (no pressure attribute)
         pressure_array = G.vs["pressure"]
     new_vertex_index_array = [*[j for j in range(len(vertices_array))]]
 
@@ -200,17 +206,17 @@ def write_vtp(graph, filename, tortuous=True, verbose=False):
                 step = 1 / 1000
             else:
                 step = 1 / 10
-
+            V = np.asarray(vertices_array)
                 # new points and point data only if there is tortuous segments
-            if len(np.where(np.all(vertices_array == ps[0], axis=1))[0]) == 1:
-                if edge[0] != int(np.where(np.all(vertices_array == ps[0], axis=1))[0]):
+            if len(np.where(np.all(V == ps[0], axis=1))[0]) == 1:
+                if edge[0] != int(np.where(np.all(V == ps[0], axis=1))[0]):
                     node_0 = edge[1]
                     node_1 = edge[0]
                 else:
                     node_0 = edge[0]
                     node_1 = edge[1]
-            elif len(np.where(np.all(vertices_array == ps[-1], axis=1))[0]) == 1:
-                if edge[1] != int(np.where(np.all(vertices_array == ps[-1], axis=1))[0]):
+            elif len(np.where(np.all(V == ps[-1], axis=1))[0]) == 1:
+                if edge[1] != int(np.where(np.all(V == ps[-1], axis=1))[0]):
                     node_0 = edge[1]
                     node_1 = edge[0]
                 else:
@@ -218,15 +224,14 @@ def write_vtp(graph, filename, tortuous=True, verbose=False):
                     node_1 = edge[1]
 
             if n_points > 2:
-                vertices_array += ps[
-                                  1:-1]  # add points except first and last which is the bifurcation point (already in the list)
+                vertices_array += ps[1:-1]  # add points except first and last which is the bifurcation point (already in the list)
                 if pBC_array is not None:
                     pBC_array += [-1000, ] * (n_points - 2)
                 #degree_array += [2, ] * (n_points - 2)
                 new_vertex_index_array += [*[edge_index + j * step for j in range(1, n_points-1)]]  # adding also the bifurcation point (first and last)
-                p1, p2 = pressure_array[node_0], pressure_array[node_1]
-                step_pr = (p2 - p1) / (n_points - 1.0)
                 if pressure_array is not None:
+                    p1, p2 = pressure_array[node_0], pressure_array[node_1]
+                    step_pr = (p2 - p1) / (n_points - 1.0)
                     pressure_array += [*[p1 + j * step_pr for j in range(1, n_points - 1)]]  # add points except first and last
 
             # append tortuous edges
@@ -250,6 +255,7 @@ def write_vtp(graph, filename, tortuous=True, verbose=False):
             lengths2_edge_array += [*[j for j in lengths2]]
             edge_index += 1
 
+        
         WriteOnFileVTP(
             filename=filename,
             vertices_array=vertices_array,
@@ -263,12 +269,13 @@ def write_vtp(graph, filename, tortuous=True, verbose=False):
         )
 
     else:
+        
         connectivity_non_tortuous = G.es["connectivity"]
         nkind_non_tortuous = G.es["nkind"]
         length_non_tortuous = G.es["length"]
         diameter_non_tortuous = G.es["diameter"]
 
-
+        
         WriteOnFileVTP(
             filename=filename,
             vertices_array=vertices_array,
@@ -277,6 +284,7 @@ def write_vtp(graph, filename, tortuous=True, verbose=False):
                         "index": new_vertex_index_array, },
             cell_data={"connectivity": connectivity_non_tortuous, "diameter": diameter_non_tortuous, "length": length_non_tortuous, "nkind": nkind_non_tortuous},
         )
+
 
 # Load a graph from a pickle file
 input_igraph_pkl_path = "/home/admin/Ana/MicroBrain/output/graph_18_OutGeom_Hcut3_um_gaia.pkl"
@@ -288,5 +296,5 @@ graph = igraph.Graph.Read_Pickle(input_igraph_pkl_path)
 
 output_path = "/home/admin/Ana/MicroBrain/output/"
 
-write_vtp(graph, output_path+'graph_18_OutGeom_Hcut3_um_gaia.vtp', False)
+write_vtp(graph, output_path+'graph_18_OutGeom_Hcut3_um_gaia.vtp', True)
 
