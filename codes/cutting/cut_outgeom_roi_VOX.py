@@ -599,7 +599,7 @@ def cut_outgeom_gaia_like(data, xBox, yBox, zBox, tol=1e-6, min_straight_dist=1.
 # --------------------------
 if __name__ == "__main__":
     in_path = "/home/admin/Ana/MicroBrain/output/graph_18_OutGeom.pkl"
-    out_path = "/home/admin/Ana/MicroBrain/output/graph_18_OutGeom_Hcut3.pkl"
+    out_path = "/home/admin/Ana/MicroBrain/output/graph_18_OutGeom_Hcut1.pkl"
 
     print("Loading:", in_path)
     data = pickle.load(open(in_path, "rb"))
@@ -608,7 +608,7 @@ if __name__ == "__main__":
     res = np.array([1.625, 1.625, 2.5], dtype=float)
 
     # Box center (voxels)
-    center = np.array([2100, 4200, 750], dtype=float)
+    center = np.array([1200, 3400, 1500], dtype=float)
 
     # Box physical size (µm)
     box_um = np.array([400, 400, 400], dtype=float)

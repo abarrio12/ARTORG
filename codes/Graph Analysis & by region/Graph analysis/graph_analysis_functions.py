@@ -1709,6 +1709,8 @@ def count_microsegments_by_nkind(ms, label_map=None):
     print(f"  TOTAL micro-segments: {len(nk)}")
     return out
 
+
+
 def vessel_vol_frac_slabs_in_box(ms, box, slab=50.0, axis="z"):
     """
     Volume fraction inside a box, split into slabs along an axis.
@@ -1805,24 +1807,46 @@ def vessel_vol_frac_slabs_in_box(ms, box, slab=50.0, axis="z"):
 
 
 
-
-
-
 # ====================================================================================================================
 #                                                    REDUNDANCY
 # ====================================================================================================================
 
-def induced_subgraph_box(graph, box, coords_attr="coords_image", node_eps=0.0, edge_mode="both"):
+# -------------------------------------------------------------------------------------------------
+# Subgraph extraction
+# -------------------------------------------------------------------------------------------------
+def induced_subgraph_box(
+    graph,
+    box,
+    coords_attr="coords_image",
+    node_eps=0.0,
+    edge_mode="both",
+):
     """
-    Creates subgraph induced by nodes inside the box.
+    Subgraph induced by nodes inside an axis-aligned box.
 
-    edge_mode:
-      - "both": keep edges only if BOTH endpoints are inside (recommended)
-      - "any":  alias of "both" here to avoid silent wrong graphs (see note in comments)
+    Parameters
+    ----------
+    graph : igraph.Graph
+    box : dict with keys xmin,xmax,ymin,ymax,zmin,zmax
+    coords_attr : str
+        Vertex attribute storing coordinates (N,3).
+    node_eps : float
+        Padding around box (same units as coords_attr).
+    edge_mode : {"both","any"}
+        - "both": keep edges only if BOTH endpoints are inside (standard induced subgraph)
+        - "any":  kept for API compatibility; currently behaves like "both" for safety.
 
-    Returns:
-      sub (igraph.Graph), sub_to_orig (np.array), orig_to_sub (dict)
+    Returns
+    -------
+    sub : igraph.Graph or None
+    sub_to_orig : np.ndarray or None
+        sub vertex id -> original vertex id
+    orig_to_sub : dict or None
+        original vertex id -> sub vertex id
     """
+    if edge_mode not in ("both", "any"):
+        raise ValueError("edge_mode must be 'both' or 'any'")
+
     P = get_coords(graph, coords_attr)
 
     xmin, xmax = float(box["xmin"]), float(box["xmax"])
@@ -1834,130 +1858,247 @@ def induced_subgraph_box(graph, box, coords_attr="coords_image", node_eps=0.0, e
         (P[:, 1] >= ymin - node_eps) & (P[:, 1] <= ymax + node_eps) &
         (P[:, 2] >= zmin - node_eps) & (P[:, 2] <= zmax + node_eps)
     )
+
     keep = np.where(inside)[0]
     if keep.size == 0:
         return None, None, None
 
+    # Induced subgraph always keeps edges only if both endpoints are kept.
+    # True "any" would require adding boundary nodes / clipping edges, which we don't do here.
     sub = graph.induced_subgraph(keep)
-    sub_to_orig = np.array(keep, dtype=int)
-    orig_to_sub = {int(o): i for i, o in enumerate(sub_to_orig)}
 
-    if edge_mode not in ("both", "any"):
-        raise ValueError("edge_mode must be 'both' or 'any'")
-
-    # NOTE: true "any" needs adding boundary nodes; for safety we keep "both".
+    sub_to_orig = np.asarray(keep, dtype=int)
+    orig_to_sub = {int(o): int(i) for i, o in enumerate(sub_to_orig)}
     return sub, sub_to_orig, orig_to_sub
 
 
-def _nodes_by_label_in_subgraph(sub, vessel_type_map=EDGE_NKIND_TO_LABEL):            
-    labels = [infer_node_type_from_incident_edges(sub, v.index, vessel_type_map=vessel_type_map) for v in sub.vs]
+# -------------------------------------------------------------------------------------------------
+# Node typing helpers
+# -------------------------------------------------------------------------------------------------
+def nodes_by_label(graph, vessel_type_map=EDGE_NKIND_TO_LABEL):
+    """
+    Classify nodes based on incident edges (nkind -> label mapping).
+    Returns dict(label -> np.ndarray(vertex_ids)).
+    """
+    labels = [
+        infer_node_type_from_incident_edges(graph, v.index, vessel_type_map=vessel_type_map)
+        for v in graph.vs
+    ]
+    labels = np.asarray(labels, dtype=object)
+
     out = {}
-    for lab in ["arteriole", "venule", "capillary", "unknown"]:
-        out[lab] = np.where(np.array(labels, dtype=object) == lab)[0]
+    for lab in ("arteriole", "venule", "capillary", "unknown"):
+        out[lab] = np.where(labels == lab)[0].astype(int)
     return out
 
 
-
-def av_paths_in_box(graph, box,
-                           space=None, coords_attr=None,
-                           node_eps=0.0):
-    """
-    Returns up to k shortest A->V paths inside the box.
-    Much simpler than maxflow-based extraction.
-    """
-
-    validate_box_faces(box)
-
-    space, coords_attr, _ = resolve_space_and_attrs(
-        graph, space=space, coords_attr=coords_attr,
-        depth_attr=None, require_space=True, require_coords=True, require_depth=False
-    )
-
-    sub, sub_to_orig, _ = induced_subgraph_box(
-        graph, box, coords_attr=coords_attr,
-        node_eps=node_eps, edge_mode="both"
-    )
-
-    if sub is None or sub.ecount() == 0:
-        return []
-
-    groups = _nodes_by_label_in_subgraph(sub)
+def _av_sets(graph):
+    """Return (A, V) node id arrays for a graph."""
+    groups = nodes_by_label(graph)
     A = np.asarray(groups.get("arteriole", []), dtype=int)
     V = np.asarray(groups.get("venule", []), dtype=int)
+    return A, V
+
+
+# -------------------------------------------------------------------------------------------------
+# Shortest A→V paths
+# -------------------------------------------------------------------------------------------------
+def shortest_av_paths(graph, A=None, V=None):
+    """
+    All shortest paths between every arteriole node and every venule node in `graph`.
+    Returns list[list[int]] of vertex-id paths (in THIS graph's vertex ids).
+    """
+    if A is None or V is None:
+        A, V = _av_sets(graph)
 
     if A.size == 0 or V.size == 0:
         return []
 
-    paths_orig = []
-
-    # take first k A-V combinations
-    count = 0
+    paths = []
     for a in A:
         for v in V:
-            path_sub = sub.get_shortest_paths(a, to=v)[0]
-            if len(path_sub) > 1:
-                # map to original graph vertex ids
-                path_orig = [int(sub_to_orig[p]) for p in path_sub]
-                paths_orig.append(path_orig)
-    return paths_orig
+            p = graph.get_shortest_paths(int(a), to=int(v))[0]
+            if len(p) > 1:
+                paths.append([int(x) for x in p])
+    return paths
 
 
+def av_shortest_paths_all(graph):
+    """
+    Backward-compatible wrapper (your old name).
+    For a CUT graph: compute ALL shortest paths between every arteriole and every venule.
+    """
+    return shortest_av_paths(graph)
 
 
-
-
-def plot_av_paths_in_box(graph, box, paths_orig,
-                      space=None, coords_attr=None,
-                      node_eps=0.0,
-                      sample_edges=5000):
+def av_paths_in_box(
+    graph,
+    box,
+    space=None,
+    coords_attr=None,
+    node_eps=0.0,
+):
+    """
+    All shortest A→V paths inside `box`, returned as paths in ORIGINAL graph vertex ids.
+    """
+    validate_box_faces(box)
 
     space, coords_attr, _ = resolve_space_and_attrs(
-        graph, space=space, coords_attr=coords_attr,
-        depth_attr=None, require_space=True, require_coords=True, require_depth=False
+        graph,
+        space=space,
+        coords_attr=coords_attr,
+        depth_attr=None,
+        require_space=True,
+        require_coords=True,
+        require_depth=False,
+    )
+
+    sub, sub_to_orig, _ = induced_subgraph_box(
+        graph,
+        box,
+        coords_attr=coords_attr,
+        node_eps=node_eps,
+        edge_mode="both",
+    )
+    if sub is None or sub.ecount() == 0:
+        return []
+
+    A_sub, V_sub = _av_sets(sub)
+    if A_sub.size == 0 or V_sub.size == 0:
+        return []
+
+    paths_sub = shortest_av_paths(sub, A=A_sub, V=V_sub)
+    # map sub vertex ids -> original vertex ids
+    return [[int(sub_to_orig[i]) for i in path] for path in paths_sub]
+
+
+# -------------------------------------------------------------------------------------------------
+# Max edge-disjoint A→V paths via maxflow
+# -------------------------------------------------------------------------------------------------
+def max_edge_disjoint_av(graph):
+    """
+    Max number of EDGE-DISJOINT arteriole->venule paths in a CUT graph using maxflow.
+
+    Returns dict:
+      {"n_edge_disjoint_av": int, "nA": int, "nV": int}
+    """
+    A, V = _av_sets(graph)
+    if A.size == 0 or V.size == 0:
+        return {"n_edge_disjoint_av": 0, "nA": int(A.size), "nV": int(V.size)}
+
+    # Directed flow network (mutual edges if original is undirected)
+    D = graph.as_directed(mutual=True) if not graph.is_directed() else graph.copy()
+
+    # Capacity = 1 per edge
+    D.es["cap"] = [1.0] * D.ecount()
+
+    # Add super source/sink
+    s = D.vcount()
+    t = D.vcount() + 1
+    D.add_vertices(2)
+
+    BIG = float(max(1, D.ecount()))
+    extra_edges = [(s, int(a)) for a in A] + [(int(v), t) for v in V]
+    extra_caps = [BIG] * (len(A) + len(V))
+
+    D.add_edges(extra_edges)
+
+    # Important: set capacities for ALL edges (old edges + new edges)
+    # Old edges already exist: 1.0; new edges: BIG
+    D.es["cap"] = [1.0] * (D.ecount() - len(extra_caps)) + extra_caps
+
+    mf = D.maxflow(s, t, capacity="cap")
+    return {"n_edge_disjoint_av": int(round(mf.value)), "nA": int(A.size), "nV": int(V.size)}
+
+
+# -------------------------------------------------------------------------------------------------
+# Plotting helpers
+# -------------------------------------------------------------------------------------------------
+def plot_density_slabs(df, title, out_png=None):
+    if df is None or df.empty:
+        return
+
+    mid = 0.5 * (df["slab_lo"].values + df["slab_hi"].values)
+    cols = [c for c in df.columns if c.endswith("_vol_frac") or c == "total_vol_frac"]
+
+    fig, ax = plt.subplots(figsize=(7, 4))
+    for c in cols:
+        ax.plot(mid, df[c].values, marker="o", linewidth=1.5, label=c)
+
+    ax.set_xlabel("Slab midpoint (µm)")
+    ax.set_ylabel("Volume fraction")
+    ax.set_title(title)
+    ax.grid(True, alpha=0.2)
+    ax.legend(fontsize=8)
+    plt.tight_layout()
+
+    if out_png:
+        fig.savefig(out_png, dpi=200)
+    plt.show()
+
+
+def plot_av_paths_in_box(
+    graph,
+    box,
+    paths_orig,
+    space=None,
+    coords_attr=None,
+    node_eps=0.0,
+    sample_edges=5000,
+):
+    space, coords_attr, _ = resolve_space_and_attrs(
+        graph,
+        space=space,
+        coords_attr=coords_attr,
+        depth_attr=None,
+        require_space=True,
+        require_coords=True,
+        require_depth=False,
     )
 
     P = get_coords(graph, coords_attr)
 
-    # background
+    # Background edges inside box
     sub, sub_to_orig, _ = induced_subgraph_box(
-        graph, box, coords_attr=coords_attr,
-        node_eps=node_eps, edge_mode="both"
+        graph,
+        box,
+        coords_attr=coords_attr,
+        node_eps=node_eps,
+        edge_mode="both",
     )
 
     fig = plt.figure()
     ax = fig.add_subplot(111, projection="3d")
 
-    if sub is not None:
-        bg_pairs = []
-        for (u, v) in sub.get_edgelist():
-            u0 = sub_to_orig[u]
-            v0 = sub_to_orig[v]
-            bg_pairs.append((u0, v0))
-
-        bg_pairs = np.array(bg_pairs)
-        if len(bg_pairs) > sample_edges:
-            bg_pairs = bg_pairs[np.random.choice(len(bg_pairs), sample_edges, replace=False)]
+    if sub is not None and sub.ecount() > 0:
+        bg_pairs = np.asarray([(sub_to_orig[u], sub_to_orig[v]) for (u, v) in sub.get_edgelist()], dtype=int)
+        if bg_pairs.shape[0] > sample_edges:
+            idx = np.random.choice(bg_pairs.shape[0], sample_edges, replace=False)
+            bg_pairs = bg_pairs[idx]
 
         for (u, v) in bg_pairs:
-            ax.plot([P[u,0], P[v,0]],
-                    [P[u,1], P[v,1]],
-                    [P[u,2], P[v,2]],
-                    alpha=0.1, linewidth=0.6)
+            ax.plot(
+                [P[u, 0], P[v, 0]],
+                [P[u, 1], P[v, 1]],
+                [P[u, 2], P[v, 2]],
+                alpha=0.1,
+                linewidth=0.6,
+            )
 
-    # paths in red
+    # Paths (highlight)
     for path in paths_orig:
         for a, b in zip(path[:-1], path[1:]):
-            ax.plot([P[a,0], P[b,0]],
-                    [P[a,1], P[b,1]],
-                    [P[a,2], P[b,2]],
-                    linewidth=2.5)
+            ax.plot(
+                [P[a, 0], P[b, 0]],
+                [P[a, 1], P[b, 1]],
+                [P[a, 2], P[b, 2]],
+                linewidth=2.5,
+            )
 
     unit = "µm" if space == "um" else "vox"
     ax.set_xlabel(f"X ({unit})")
     ax.set_ylabel(f"Y ({unit})")
     ax.set_zlabel(f"Z ({unit})")
-    ax.set_title(f"Simple A→V paths (n={len(paths_orig)}) | space: {space}")
+    ax.set_title(f"A→V shortest paths (n={len(paths_orig)}) | space: {space}")
     plt.tight_layout()
     plt.show()
-
-

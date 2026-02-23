@@ -1,41 +1,59 @@
-## Paris calculation
+## Paris Calculations
 
-These file aims to explain some of the calculations made in the Paris code for better understanding
+This document explains the key calculations used in the Paris code to help you understand how various measurements are derived.
 
-1. Distance to surface
+### 1. Distance to Surface
 
-Measurement: voxels scaled to atlas at 25 um ("atlas voxels")
+**Measurement unit:** Voxels from the atlas at 25 μm resolution (referred to as "atlas voxels")
 
-2. How it was computed: I found that they use the function distance_transform_edt from scipy.ndimage
-This function creates a binary mask from the atlas (voxels inside the brain have a value > 0 and are set to 1, voxels outside are set to 0, defining the brain surface). Then, it computes for each voxel inside the brain the shortest euclidean distance to the nearest voxel outside the brain. The result is an array that contains all distances from the voxels to the surface.
-Lines in Paris code
-API of the function
+**How it is computed:** The code uses the `distance_transform_edt` function from `scipy.ndimage`. This function:
+- Creates a binary mask from the atlas where brain voxels are set to 1 and voxels outside the brain are set to 0
+- For each voxel inside the brain, calculates the shortest Euclidean distance to the nearest surface voxel
+- Returns an array containing the distance from each voxel to the brain surface
 
-I also found that the distance_file used is not computed dynamically (at least I have not found the parte of the code where they do it yet). They use the atlas 25 um (Link to Paris code) and from there they extract the components (distance to suface: ABA_25um_2017_distance_to_surface.tif ,annotation, hemispheres and reference volumes) and can be found in the folder Resources.
-Decompress_atlas function
-Prepare annotation files
+**Important note:** The distance data is precomputed and loaded from the atlas (not calculated dynamically). The code uses the 25 μm Allen Brain Atlas as the reference, from which it extracts the distance-to-surface file (`ABA_25um_2017_distance_to_surface.tif`), along with annotations, hemisphere data, and reference volumes. These resources are loaded directly and then reoriented and cropped to match your specific dataset.
 
- Then is loaded from this atlas resources folder directly (Link to Paris line)  and after is only reoriented and cropped to match the dataset (Link to Paris lines for reorientation).
+### 2. Radii of the Vertex
 
-Hope it makes some sense, is a bit tricky. I will write it in the readme
+**Measurement unit:** Voxels from the original image (resolution 1.625 × 1.625 × 2.5 μm)
 
-2. Radii of the vertex
-Measurement: voxels of image (resolution 1.625 x 1.625 x 2.5)
-For the radii of the vertex (not atlas careful!) what they did is they took the maximum of the radii of the points in the polyline and assign it to the verteces of the edge (non tortuous graph)
+**How it is calculated:** For the non-tortuous graph, the radius assigned to a vertex is the maximum radius from all points in the polyline (the series of line segments forming the edge):
 
-3. Length of the edge
-Measurement: voxels of image (resolution 1.625 x 1.625 x 2.5)
-For the edge of the length they sum the lengths2, meaning, the lengths of the segments of the tortuous = distance between points.
+$$r_{vertex} = \max(r_1, r_2, r_3, ..., r_n)$$
 
-4. Radii atlas
-Hi Sofia, since we were not fully sure about the radii units/scaling, I checked how radii_atlas is computed in the Paris code.
-I found that for the vertex, radii_atlas is indeed rescaled to the atlas (25 µm voxel grid) using a resampling factor computed from the source and sink image shapes:
-https://github.com/ClearAnatomics/ClearMap/blob/6d6e37f98457b821fb9f8a56cd7b4cb048bf272e/ClearMap/Scripts/TubeMap.py#L134C2-L146C9
-https://github.com/ClearAnatomics/ClearMap/blob/6d6e37f98457b821fb9f8a56cd7b4cb048bf272e/ClearMap/Scripts/TubeMap.py#L482C1-L492C83
+where $r_1, r_2, ..., r_n$ are the radii of each individual point in the polyline. This maximum radius value is then assigned to both endpoints (vertices) of the edge.
 
-Basically, it converts radii from the original image voxel space into voxels of the 25 µm atlas grid (0.076804589994077 is the transformation factor in case we needed any other time)
+### 3. Length of the Edge
 
-In the end, to obtain radii_Atlas in micrometers, we simply multiply by 25, as we discussed the other day (but just to be sure I did the checking)
+**Measurement unit:** Voxels from the original image (resolution 1.625 × 1.625 × 2.5 μm)
+
+**How it is calculated:** For the tortuous graph, the edge length is computed by summing the distances between all consecutive points along the line segment (polyline):
+
+$$L_{edge} = \sum_{i=1}^{n-1} d(p_i, p_{i+1})$$
+
+where $p_1, p_2, ..., p_n$ are the points in the polyline and $d(p_i, p_{i+1})$ is the Euclidean distance between consecutive points. This gives the total path length along the tortuous path rather than just the straight-line distance between endpoints.
+
+### 4. Radii in Atlas Space
+
+**How it is calculated:** The vertex radii are rescaled from the original image space to the atlas space (25 μm voxel grid). This rescaling uses a transformation factor computed from the dimensions of the source and target images:
+
+$$r_{atlas} = r_{original} \times scaling\_factor$$
+
+where the scaling factor is 0.0768 (precisely 0.076804589994077).
+
+References:
+- [TubeMap.py lines 134-146](https://github.com/ClearAnatomics/ClearMap/blob/6d6e37f98457b821fb9f8a56cd7b4cb048bf272e/ClearMap/Scripts/TubeMap.py#L134C2-L146C9)
+- [TubeMap.py lines 482-492](https://github.com/ClearAnatomics/ClearMap/blob/6d6e37f98457b821fb9f8a56cd7b4cb048bf272e/ClearMap/Scripts/TubeMap.py#L482C1-L492C83)
+
+**Scaling ratio:** You can calculate the ratio between the original and atlas space radii to verify the transformation:
+
+$$ratio = \frac{r_{original}}{r_{atlas}} \approx 13.013$$
+
+**To convert to micrometers:** Multiply the atlas-space radii by 25 μm (the atlas voxel size):
+
+$$r_{micrometers} = r_{atlas} \times 25 \text{ μm}$$
+
+**Additional notes:** The transformation factor 0.076804589994077 is computed from the source and sink image shapes. This same factor can be used in other contexts where radius rescaling between the original image space and the 25 μm atlas grid is needed.
 
 
 
