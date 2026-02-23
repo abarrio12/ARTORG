@@ -88,35 +88,35 @@ def convert_outgeom_pkl_to_um(
     if not {"x", "y", "z"} <= set(g.keys()):
         raise KeyError("data['geom'] must contain x,y,z. Check your building the graph code")
 
-    x_vox = np.asarray(g["x"], dtype=np.float64)
-    y_vox = np.asarray(g["y"], dtype=np.float64)
-    z_vox = np.asarray(g["z"], dtype=np.float64)
+    x_vox = np.asarray(g["x"], dtype=np.float32)
+    y_vox = np.asarray(g["y"], dtype=np.float32)
+    z_vox = np.asarray(g["z"], dtype=np.float32)
 
     x_um = x_vox * sx
     y_um = y_vox * sy
     z_um = z_vox * sz
 
-    g_R["x_R"] = x_um.astype(np.float64, copy=False)
-    g_R["y_R"] = y_um.astype(np.float64, copy=False)
-    g_R["z_R"] = z_um.astype(np.float64, copy=False)
+    g_R["x_R"] = x_um.astype(np.float32, copy=False)
+    g_R["y_R"] = y_um.astype(np.float32, copy=False)
+    g_R["z_R"] = z_um.astype(np.float32, copy=False)
 
     # -----------------------------------------
     # Coords image (vertex) -> µm
     # -----------------------------------------
 
     if "coords_image" in v:
-        C_img_vox = np.asarray(v["coords_image"], dtype=np.float64)  # shape (N,3) vox
+        C_img_vox = np.asarray(v["coords_image"], dtype=np.float32)  # shape (N,3) vox
         v_R["coords_image_R"] = (C_img_vox * np.array([sx, sy, sz])).astype(np.float32)
 
     if "radii_atlas" in v:
-        R_atlas_vox = np.asarray(v["radii_atlas"], dtype=np.float64)  # shape (N,) vox
+        R_atlas_vox = np.asarray(v["radii_atlas"], dtype=np.float32)  # shape (N,) vox
         v_R["radii_atlas_R"] = (R_atlas_vox * sink_resolution).astype(np.float32)
     
     # --------------------------
     # distance_to_surface: vox -> approx in µm using sx due to isotropic assumption (Paris)
     # --------------------------
     if "distance_to_surface" in v:
-        dist_surf_vox = np.asarray(v["distance_to_surface"], dtype=np.float64)
+        dist_surf_vox = np.asarray(v["distance_to_surface"], dtype=np.float32)
         v_R["distance_to_surface_R"] = (dist_surf_vox * sx).astype(np.float32, copy=False)  # sx = 1.625
 
 
@@ -143,8 +143,8 @@ def convert_outgeom_pkl_to_um(
     if "lengths2_R" not in g_R:
         raise KeyError("geom_R['lengths2'] missing")
     
-    lengths2_R = np.asarray(g_R["lengths2_R"], dtype=np.float64)
-    edge_length_R = np.zeros(G.ecount(), dtype=np.float64)
+    lengths2_R = np.asarray(g_R["lengths2_R"], dtype=np.float32)
+    edge_length_R = np.zeros(G.ecount(), dtype=np.float32)
     
     start_idx = np.asarray(G.es["geom_start"], dtype=np.int64)
     end_idx = np.asarray(G.es["geom_end"], dtype=np.int64)
@@ -160,7 +160,7 @@ def convert_outgeom_pkl_to_um(
     # Radii geometry in µm   
     # --------------------------
     if "radii_atlas_geom" in g:  
-        r_atlas_vox = np.asarray(g["radii_atlas_geom"], dtype=np.float64)  # (nP,) in atlas vox
+        r_atlas_vox = np.asarray(g["radii_atlas_geom"], dtype=np.float32)  # (nP,) in atlas vox
         g_R["radii_atlas_geom_R"] = (r_atlas_vox * sink_resolution).astype(np.float32)  # µm
         g_R["diameters_atlas_geom_R"] = (2.0 * g_R["radii_atlas_geom_R"]).astype(np.float32)
 
@@ -173,8 +173,8 @@ def convert_outgeom_pkl_to_um(
     if "length_R" not in G.es.attributes():
         raise KeyError("length_R must be computed before tortuosity")
 
-    lt = np.asarray(G.es["length_R"], dtype=np.float64) # edge length
-    sd = np.zeros(G.ecount(), dtype=np.float64) # straight distance
+    lt = np.asarray(G.es["length_R"], dtype=np.float32) # edge length
+    sd = np.zeros(G.ecount(), dtype=np.float32) # straight distance
 
     for ei in range(G.ecount()):
         s = int(start_idx[ei])
@@ -187,12 +187,17 @@ def convert_outgeom_pkl_to_um(
             ))
 
     # Tortuosity
-    tort = np.full(G.ecount(), np.nan, dtype=np.float64)
+    tort = np.full(G.ecount(), np.nan, dtype=np.float32)
     m = sd >= float(min_straight_dist_um)  # boolean mask, sanity check, only calculates where sd not too small
     tort[m] = lt[m] / sd[m]
 
     G.es["tortuosity_R"] = tort.astype(np.float32).tolist()
 
+    #Diameter edge
+    diam_edge_vox = G.es["diameter_atlas"] if "diameter_atlas" in G.es.attributes() else None
+    if diam_edge_vox is not None:
+        diam_edge_R = np.asarray(diam_edge_vox, dtype=np.float32) * sink_resolution  # convert to µm
+        G.es["diameter_atlas_R"] = diam_edge_R.astype(np.float32).tolist()
 
     # --------------------------
     # Save (without overwriting voxels info)
@@ -200,6 +205,11 @@ def convert_outgeom_pkl_to_um(
     data["geom_R"] = g_R
     data["vertex_R"] = v_R
     data["graph"] = G
+
+    data["unit"] = {
+    "vox": "voxel",
+    "um": "micrometer"
+}
 
     with open(out_path, "wb") as f:
         pickle.dump(data, f, protocol=pickle.HIGHEST_PROTOCOL)

@@ -266,6 +266,7 @@ ann_geom = pd.read_csv(FOLDER + "edge_geometry_annotation.csv", header=None, dty
 r_geom = pd.read_csv(FOLDER + "edge_geometry_radii.csv", header=None, dtype=np.float32).to_numpy().reshape(-1)
 r_atlas_geom = pd.read_csv(FOLDER + "edge_geometry_radii_atlas.csv", header=None, dtype=np.float32).to_numpy().reshape(-1)
 
+diam_atlas_geom = 2 * r_atlas_geom  # atlas diameter per geometry point (25 µm grid)
 print("CSVs loaded")
 
 # =============================================================================
@@ -393,6 +394,8 @@ mask = straight_dist >= float(MIN_STRAIGHT_DIST)
 tortuosity[mask] = e_len[mask] / straight_dist[mask]
 G.es["tortuosity"] = tortuosity.tolist()
 
+G["unit"] = "voxels"
+
 print("Tortuosity computed")
 print("  NaN:", int(np.sum(~mask)))
 print("  Max:", float(np.nanmax(tortuosity)))
@@ -420,7 +423,8 @@ data = {
         "lengths2": lengths2,  # image voxel space (distance between consecutive geometry points)
         "annotation": ann_geom,
         "radii": r_geom,  # image voxel space
-        "radii_atlas_geom": r_atlas_geom,  # atlas voxel space (25 µm grid)  # !! needs to be extracted !!
+        "radii_atlas_geom": r_atlas_geom,  # atlas voxel space (25 µm grid)  
+        "diam_atlas_geom": diam_atlas_geom,  # atlas voxel space (25 µm grid)
     },
 }
 

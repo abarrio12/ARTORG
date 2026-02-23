@@ -20,12 +20,12 @@ The real goal: make vascular graph analysis transparent, reproducible, and easy 
 A complete system from raw data to visualization:
 
 - ✓ **Create analysis files** - Convert CSV vessel data into Python format (pkl) ready for analysis
-- ✓ **Convert measurements** - Switch between image pixels, atlas references, and physical measurements (micrometers)
+- ✓ **Convert measurements** - Switch between image pixels ("voxels of image"), atlas references ("voxels of image scaled to atlas at 25 um), and physical measurements (micrometers)
 - ✓ **Keep vessel curves** - Preserve the realistic curved paths of blood vessels through all processing
-- ✓ **Extract regional networks** - Focus on specific brain regions by cutting out rectangular areas
+- ✓ **Extract regional networks** - Focus on specific brain regions by selecting children points and cutting out rectangular areas in it
 - ✓ **Analyze vessel properties** - Study vessel sizes, connectivity, density, branching patterns, and node properties
 - ✓ **Create 3D visualizations** - Export data as files to view vessels in 3D inside ParaView
-- ✓ **Compare brain regions** - Study how vessel patterns differ between areas like Hippocampus and Somatomotor cortex
+- ✓ **Compare brain regions** - Study how vessel patterns and structure differ between areas like Hippocampus and Somatomotor cortex
 
 ---
 
@@ -38,10 +38,10 @@ Complete pipeline for processing vessel data from raw data to visualization.
 Takes the raw vessel data (in spreadsheet/table format) and converts it into a Python format that's easy to work with.
 
 **What each script does:**
-- **`CSV2Pickle_SOFIA.py`** - Quick conversion with basic information
-- **`build_graph_outgeom_voxels.py`** - Full conversion that keeps the curved shape of vessels
-- **`CSVtoPKL_FULLGEOM.py`** - Alternative way to store the curved vessel paths
-- **`convert_outgeom_voxels_to_um.py`** - Converts from pixel measurements to physical micrometers
+- **`CSV2Pickle_SOFIA.py`** - Conversion with basic information (non tortuous graph)
+- **`build_graph_outgeom_voxels.py`** - Full conversion that keeps the curved shape of vessels (important: converts to voxels of image!)
+- **`CSVtoPKL_FULLGEOM.py`** - Alternative way to store the curved vessel paths but instead of different arrays, information is stored in edges and vertex. This approach was not finally used due to the size of the graph. 
+- **`convert_outgeom_voxels_to_um.py`** - Converts from pixel (voxel) measurements to physical micrometers
 
 **Result:** A Python data file containing:
 - The vessel network (all the junctions and connections)

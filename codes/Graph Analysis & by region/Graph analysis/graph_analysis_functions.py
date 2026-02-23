@@ -1858,7 +1858,7 @@ def _nodes_by_label_in_subgraph(sub, vessel_type_map=EDGE_NKIND_TO_LABEL):
 
 
 
-def av_paths_in_box(graph, box, k=3,
+def av_paths_in_box(graph, box,
                            space=None, coords_attr=None,
                            node_eps=0.0):
     """
@@ -1899,11 +1899,11 @@ def av_paths_in_box(graph, box, k=3,
                 # map to original graph vertex ids
                 path_orig = [int(sub_to_orig[p]) for p in path_sub]
                 paths_orig.append(path_orig)
-                count += 1
-                if count >= k:
-                    return paths_orig
-
     return paths_orig
+
+
+
+
 
 
 def plot_av_paths_in_box(graph, box, paths_orig,

@@ -165,37 +165,25 @@ def outgeom_to_igraph_materialized(data, space="um"):
 
     return G2
 
-
 import pickle
 
 if __name__ == "__main__":
+    in_path  = "/home/admin/Ana/MicroBrain/output/graph_18_OutGeom_Hcut3_um.pkl"   
+    out_path = "/home/admin/Ana/MicroBrain/output/graph_18_OutGeom_Hcut3_um_gaia.pkl"
 
-    in_path = "/home/admin/Ana/MicroBrain/output/graph_18_OutGeom_Hcut3_um.pkl"
-
-    print("Loading:", in_path)
-
-    # 1️⃣ Cargar archivo
+    # load graph (cut)
     with open(in_path, "rb") as f:
         data = pickle.load(f)
 
-    print("Graph edge attrs BEFORE materializing:")
-    print(data["graph"].es.attributes())
-    print("Has diameter_atlas_R?",
-          "diameter_atlas_R" in data["graph"].es.attributes())
-    print("geom_R keys:", list(data["geom_R"].keys()))
-    print()
+    #materialize to Gaia format (change space if wanted)
+    G_gaia = outgeom_to_igraph_materialized(data, space="um")
 
-    # 2️⃣ Llamar a la función
-    G = outgeom_to_igraph_materialized(data, space="um")
+    # save igraph pkl
+    G_gaia.write_pickle(out_path)
 
-    # 3️⃣ Comprobaciones básicas
-    print("Units:", G["unit"])
-    print("Vertices:", G.vcount())
-    print("Edges:", G.ecount())
-    print("Vertex attributes:", G.vs.attributes())
-    print("Edge attributes:", G.es.attributes())
-
-    # 4️⃣ Mini sanity check
-    print("Example edge diameter (scalar):", G.es["diameter"][:5])
-    print("Example edge diameters (per-point):", G.es["diameters"][0][:5])
-    print("Example edge length:", G.es["length"][:5])
+    # 4) print mínimo
+    print("Saved:", out_path)
+    print("Units:", G_gaia["unit"])
+    print("V/E:", G_gaia.vcount(), G_gaia.ecount())
+    print("V attrs:", G_gaia.vs.attributes())
+    print("E attrs:", G_gaia.es.attributes())
