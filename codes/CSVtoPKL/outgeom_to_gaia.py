@@ -34,9 +34,7 @@ def outgeom_to_igraph_materialized(data, space="um"):
         e_len_key  = "length_R" if "length_R" in G.es.attributes() else None
 
         # robust diameter scalar fallback chain
-        e_diam_key = ("diameter_atlas_R" if "diameter_atlas_R" in G.es.attributes() else
-                      "diameter_atlas"   if "diameter_atlas"   in G.es.attributes() else
-                      "diameter"         if "diameter"         in G.es.attributes() else None)
+        e_diam_key = ("diameter_atlas_R" if "diameter_atlas_R" in G.es.attributes() else None)
 
     else:
         geom = data["geom"]
@@ -52,8 +50,7 @@ def outgeom_to_igraph_materialized(data, space="um"):
         r_p = np.asarray(geom[g_r_key], float) if g_r_key in geom else None
 
         e_len_key  = "length" if "length" in G.es.attributes() else None
-        e_diam_key = ("diameter_atlas" if "diameter_atlas" in G.es.attributes() else
-                      "diameter"       if "diameter"       in G.es.attributes() else None)
+        e_diam_key = ("diameter_atlas" if "diameter_atlas" in G.es.attributes() else None)
 
     # -------------------------
     # gaia vertex attrs
