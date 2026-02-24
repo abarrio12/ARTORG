@@ -129,6 +129,8 @@ def write_vtp(graph, filename, tortuous=True, verbose=False):
     # Delete self-loops
     G.delete_edges(np.nonzero(G.is_loop())[0].tolist())
 
+    
+
     ############################################################################
     # --> PAY ATTENTION TO THE UNITS FOR THE DEFINITION OF THE MINIMUM DISTANCE !!!
     ############################################################################
@@ -162,6 +164,9 @@ def write_vtp(graph, filename, tortuous=True, verbose=False):
     # Find unconnected vertices (indices)
     disconnected_vertices = [v.index for v in G.vs if G.degree(v) == 0]
     G.delete_vertices(disconnected_vertices)
+
+    # Rebuild connectivity to match current igraph indexing
+    G.es["connectivity"] = [e.tuple for e in G.es]
 
     vertices_array = G.vs["coords"]
     if pBC_array is not None: # << added by ana to comply with Paris graph (no pBC attribute)
@@ -296,5 +301,6 @@ graph = igraph.Graph.Read_Pickle(input_igraph_pkl_path)
 
 output_path = "/home/admin/Ana/MicroBrain/output/"
 
-write_vtp(graph, output_path+'graph_18_OutGeom_Hcut3_um_gaia.vtp', True)
 
+write_vtp(graph, output_path+'graph_18_OutGeom_Hcut3_um_gaia_tortuous.vtp', tortuous=True)
+write_vtp(graph, output_path+'graph_18_OutGeom_Hcut3_um_gaia_straight.vtp', tortuous=False)
