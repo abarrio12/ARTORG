@@ -549,6 +549,9 @@ def cut_outgeom_in_um(
         H.delete_vertices(iso)
         H_vertex_R["coords_image_R"] = H_vertex_R["coords_image_R"][keep]
 
+    # IMPORTANT: do it AFTER any delete_vertices(), because igraph reindexes.
+    H.es["connectivity"] = [e.tuple for e in H.es]
+
     out = {
         "graph": H,
         "vertex_R": H_vertex_R,
