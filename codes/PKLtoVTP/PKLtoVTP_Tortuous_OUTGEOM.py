@@ -15,7 +15,7 @@ VTP export:
 '''
 
 in_path = "/home/admin/Ana/MicroBrain/output/graph_18_OutGeom.pkl"
-out_vtp = "/home/admin/Ana/MicroBrain/output/graph_18_OutGeom.vtp"
+out_vtp = "/home/admin/Ana/MicroBrain/output/vtp/graph_18_OutGeom.vtp"
 
 data = pickle.load(open(in_path, "rb"))
 

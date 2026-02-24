@@ -643,6 +643,7 @@ def diameter_stats_nkind(
     label_dict=None,
     ranges=None,
     plot=True,
+    title_suffix=None,
 ):
     """
     Compute diameter statistics grouped by nkind.
@@ -711,13 +712,17 @@ def diameter_stats_nkind(
 
     # General plot
     if plot:
+        base_title = "Diameter distribution by vessel type"
+        if title_suffix is not None:
+            base_title = f"{base_title} | {title_suffix}"
+
         plot_violin_box_by_category(
             diam,
             nkind,
             label_dict=EDGE_NKIND_TO_LABEL,
             xlabel="Vessel type",
             ylabel="Diameter (µm)",
-            title="Diameter distribution by vessel type"
+            title=base_title
         )
 
     return stats_dict
@@ -1629,7 +1634,6 @@ def bc_faces_table(res, box_name="Box"):
     Create a pandas table from analyze_bc_faces() results (faces only).
     Columns: Face, count, % arteriole/venule/capillary/unknown, high degree %
     """
-    import pandas as pd
 
     rows = []
     for face, face_data in res.items():
