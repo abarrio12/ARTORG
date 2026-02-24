@@ -218,8 +218,8 @@ def convert_outgeom_pkl_to_um(
 
 
 if __name__ == "__main__":
-    in_path = "/home/admin/Ana/MicroBrain/output/graph_18_OutGeom_Hcut2.pkl"
-    out_path = "/home/admin/Ana/MicroBrain/output/graph_18_OutGeom_Hcut2_um.pkl"
+    in_path = "/home/admin/Ana/MicroBrain/output/graph_18_OutGeom_Hcut.pkl"
+    out_path = "/home/admin/Ana/MicroBrain/output/graph_18_OutGeom_Hcut_um.pkl"
 
     convert_outgeom_pkl_to_um(
         in_path=in_path,

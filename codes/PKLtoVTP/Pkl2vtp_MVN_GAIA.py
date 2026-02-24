@@ -165,9 +165,6 @@ def write_vtp(graph, filename, tortuous=True, verbose=False):
     disconnected_vertices = [v.index for v in G.vs if G.degree(v) == 0]
     G.delete_vertices(disconnected_vertices)
 
-    # Rebuild connectivity to match current igraph indexing
-    G.es["connectivity"] = [e.tuple for e in G.es]
-
     vertices_array = G.vs["coords"]
     if pBC_array is not None: # << added by ana to comply with Paris graph (no pBC attribute)
         pBC_array = [-1000 if value is None else value for value in G.vs['pBC']]
@@ -292,7 +289,7 @@ def write_vtp(graph, filename, tortuous=True, verbose=False):
 
 
 # Load a graph from a pickle file
-input_igraph_pkl_path = "/home/admin/Ana/MicroBrain/output/graph_18_OutGeom_Hcut3_um_gaia.pkl"
+input_igraph_pkl_path = "/home/admin/Ana/MicroBrain/output/graph_18_OutGeom_Hcut1_um_gaia.pkl"
 
 
 graph = igraph.Graph.Read_Pickle(input_igraph_pkl_path)
@@ -302,5 +299,5 @@ graph = igraph.Graph.Read_Pickle(input_igraph_pkl_path)
 output_path = "/home/admin/Ana/MicroBrain/output/"
 
 
-write_vtp(graph, output_path+'graph_18_OutGeom_Hcut3_um_gaia_tortuous.vtp', tortuous=True)
-write_vtp(graph, output_path+'graph_18_OutGeom_Hcut3_um_gaia_straight.vtp', tortuous=False)
+write_vtp(graph, output_path+'graph_18_OutGeom_Hcut1_um_gaia_tortuous.vtp', tortuous=True)
+write_vtp(graph, output_path+'graph_18_OutGeom_Hcut1_um_gaia_straight.vtp', tortuous=False)

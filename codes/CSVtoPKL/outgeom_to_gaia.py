@@ -165,8 +165,8 @@ def outgeom_to_igraph_materialized(data, space="um"):
 import pickle
 
 if __name__ == "__main__":
-    in_path  = "/home/admin/Ana/MicroBrain/output/graph_18_OutGeom_Hcut3_um.pkl"   
-    out_path = "/home/admin/Ana/MicroBrain/output/graph_18_OutGeom_Hcut3_um_gaia.pkl"
+    in_path  = "/home/admin/Ana/MicroBrain/output/graph_18_OutGeom_Hcut2_um.pkl"   
+    out_path = "/home/admin/Ana/MicroBrain/output/graph_18_OutGeom_Hcut2_um_gaia.pkl"
 
     # load graph (cut)
     with open(in_path, "rb") as f:
