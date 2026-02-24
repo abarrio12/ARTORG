@@ -557,6 +557,9 @@ def cut_outgeom_gaia_like(data, xBox, yBox, zBox, tol=1e-6, min_straight_dist=1.
         for k in H_vertex:
             H_vertex[k] = H_vertex[k][keep]
 
+    # rebuild it AFTER any vertex deletions (igraph reindexes vertices).
+    H.es["connectivity"] = [e.tuple for e in H.es]
+    
     # Build output geom dict:
     # - always include x,y,z,lengths2
     # - include lengths2, diameters
