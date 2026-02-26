@@ -2,12 +2,80 @@ import os
 import pickle
 import numpy as np
 
+import numpy as np
+
+def quick_unit_sanity_check(data):
+    G = data["graph"]
+    g = data.get("geom", {})
+    v = data.get("vertex", {})
+    gR = data.get("geom_R", {})
+    vR = data.get("vertex_R", {})
+
+    print("\n==============================")
+    print("GEOMETRY RANGE CHECK (VOX)")
+    print("==============================")
+
+    if {"x","y","z"} <= set(g.keys()):
+        x_vox = np.asarray(g["x"])
+        y_vox = np.asarray(g["y"])
+        z_vox = np.asarray(g["z"])
+        print(f"x_vox: min={x_vox.min():.2f}  max={x_vox.max():.2f}")
+        print(f"y_vox: min={y_vox.min():.2f}  max={y_vox.max():.2f}")
+        print(f"z_vox: min={z_vox.min():.2f}  max={z_vox.max():.2f}")
+    else:
+        print("No geom[x,y,z] found.")
+
+    print("\n==============================")
+    print("ATLAS COORD RANGE CHECK (VOX atlas grid)")
+    print("==============================")
+
+    if "coords" in v:
+        coords_atlas = np.asarray(v["coords"])
+        print(f"atlas coords shape: {coords_atlas.shape}")
+        print(f"atlas min per axis: {coords_atlas.min(axis=0)}")
+        print(f"atlas max per axis: {coords_atlas.max(axis=0)}")
+    else:
+        print("No vertex['coords'] found.")
+
+    print("\n==============================")
+    print("DIAMETER_ATLAS_R CHECK (µm)")
+    print("==============================")
+
+    if "diameter_atlas_R" in G.es.attributes():
+        d = np.asarray(G.es["diameter_atlas_R"], dtype=np.float32)
+        d = d[np.isfinite(d)]
+
+        if d.size == 0:
+            print("diameter_atlas_R exists but empty/NaN.")
+        else:
+            print(f"n = {d.size}")
+            print(f"min  = {np.min(d):.3f} µm")
+            print(f"p5   = {np.percentile(d,5):.3f} µm")
+            print(f"med  = {np.median(d):.3f} µm")
+            print(f"p95  = {np.percentile(d,95):.3f} µm")
+            print(f"max  = {np.max(d):.3f} µm")
+
+            if np.max(d) > 200:
+                print("⚠ WARNING: diameters > 200 µm detected → possible scale mixup.")
+            elif np.median(d) < 2:
+                print("⚠ WARNING: median < 2 µm → possible under-scaling.")
+            else:
+                print("✓ Diameter range looks biologically plausible (dataset dependent).")
+
+    else:
+        print("No edge attribute 'diameter_atlas_R' found.")
+
+    print("\n==============================\n")
+
+
+
 def convert_outgeom_pkl_to_um(
     in_path,
     out_path=None,
     res_um_per_vox=(1.625, 1.625, 2.5),   # µm/vox
     min_straight_dist_um=1.0,
 ):
+    
     # Paris conversion factor voxels to micrometers (source resolution)
     sx, sy, sz = map(float, res_um_per_vox)
 
@@ -15,6 +83,10 @@ def convert_outgeom_pkl_to_um(
     sink_resolution = 25
 
     data = pickle.load(open(in_path, "rb"))
+
+    quick_unit_sanity_check(data)
+
+
     G = data["graph"]
 
     g = data["geom"]
@@ -161,3 +233,5 @@ if __name__ == "__main__":
         res_um_per_vox=(1.625, 1.625, 2.5),
         min_straight_dist_um=1.0,
     )
+
+   

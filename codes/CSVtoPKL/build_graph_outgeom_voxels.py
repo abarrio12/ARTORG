@@ -246,8 +246,7 @@ nE = int(edges.shape[0])
 e_len = pd.read_csv(FOLDER + "length.csv", header=None, dtype=np.float32).to_numpy().reshape(-1)
 e_rad = pd.read_csv(FOLDER + "radii_edge.csv", header=None, dtype=np.float32).to_numpy().reshape(-1)
 
-# edge atlas radii (NEW): must exist as per-edge atlas radii
-# IMPORTANT: rename the filename if your export uses a different name.
+
 e_rad_atlas = pd.read_csv(FOLDER + "radii_atlas_edge.csv", header=None, dtype=np.float32).to_numpy().reshape(-1)
 
 e_vein = pd.read_csv(FOLDER + "vein.csv", header=None, dtype=np.int8).to_numpy().reshape(-1)
@@ -281,6 +280,7 @@ z = geom_xyz[:, 2]
 dx = np.diff(x.astype(np.float64))
 dy = np.diff(y.astype(np.float64))
 dz = np.diff(z.astype(np.float64))
+
 lengths2 = np.sqrt(dx*dx + dy*dy + dz*dz).astype(np.float32)
 
 # make it same length as x/y/z (last point has no next)
