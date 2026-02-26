@@ -14,36 +14,86 @@ VTP export:
 - PointData: per-point attributes (annotation, radii_atlas, etc.)
 '''
 
-in_path = "/home/admin/Ana/MicroBrain/output/graph_18_OutGeom.pkl"
-out_vtp = "/home/admin/Ana/MicroBrain/output/vtp/graph_18_OutGeom.vtp"
+import pickle
+import numpy as np
+
+import os
+
+name  = "graph_18_OutGeom_Hcut1"   # base name (no extension)
+space = "um"                       # "um" o "vox" IN PATH
+tag = "_um" if space == "um" else "_vox" # IN PATH
+
+pkl_root = "/home/admin/Ana/MicroBrain/output"
+vtp_root = "/home/admin/Ana/MicroBrain/output/vtp"
+
+# input pkl automático
+in_path = f"{pkl_root}/{space}/{name}{tag}.pkl"
+
+# output vtp automático
+out_vtp = f"{vtp_root}/{space}/{name}{tag}.vtp"
+os.makedirs(os.path.dirname(out_vtp), exist_ok=True)
+
+print("in_path :", in_path)
+print("out_vtp :", out_vtp)
+
 
 data = pickle.load(open(in_path, "rb"))
-
 G = data["graph"]
-geom = data["geom"]
 
-x = np.asarray(geom["x"], dtype=np.float32)
-y = np.asarray(geom["y"], dtype=np.float32)
-z = np.asarray(geom["z"], dtype=np.float32)
+# ------------------------------------------------------------------
+# Choose which space to export
+#   - "um"  -> use geom_R / vertex_R and *_R edge attrs
+#   - "vox" -> use geom / vertex and voxel edge attrs
+# ------------------------------------------------------------------
+
+space = "um"                                                        # !!! PAY ATTENTION TO THE UNITS YOU WANT THE PKL IN !!!
+
+if space == "um":
+    geom = data["geom_R"]
+
+    x = np.asarray(geom["x_R"], dtype=np.float32)
+    y = np.asarray(geom["y_R"], dtype=np.float32)
+    z = np.asarray(geom["z_R"], dtype=np.float32)
+
+    # point arrays (in µm space)
+    ann = None  # you did not convert annotation to geom_R in your converter
+    radii_atlas_p = np.asarray(geom["radii_atlas_geom_R"], dtype=np.float32) if "radii_atlas_geom_R" in geom else None
+    diam_atlas_p = np.asarray(geom["diameters_atlas_geom_R"], dtype=np.float32) if "diameters_atlas_geom_R" in geom else None
+    lengths2_p = np.asarray(geom["lengths2_R"], dtype=np.float32) if "lengths2_R" in geom else None
+
+elif space == "vox":
+    geom = data["geom"]
+
+    x = np.asarray(geom["x"], dtype=np.float32)
+    y = np.asarray(geom["y"], dtype=np.float32)
+    z = np.asarray(geom["z"], dtype=np.float32)
+
+    # point arrays (voxel space)
+    ann = np.asarray(geom["annotation"], dtype=np.int32) if "annotation" in geom else None
+    radii_atlas_p = np.asarray(geom["radii_atlas_geom"], dtype=np.float32) if "radii_atlas_geom" in geom else None
+    diam_atlas_p = np.asarray(geom["diam_atlas_geom"], dtype=np.float32) if "diam_atlas_geom" in geom else None
+    if diam_atlas_p is None and radii_atlas_p is not None:
+        diam_atlas_p = (2.0 * radii_atlas_p).astype(np.float32)
+    lengths2_p = np.asarray(geom["lengths2"], dtype=np.float32) if "lengths2" in geom else None
+
+else:
+    raise ValueError("space must be 'um' or 'vox'")
+
 nP = len(x)
-
-# -------- pointwise arrays (optional) ----------
-ann = np.asarray(geom["annotation"], dtype=np.int32) if "annotation" in geom else None
-radii_atlas_p = np.asarray(geom["radii_atlas_geom"], dtype=np.float32) if "radii_atlas_geom" in geom else None
-
-diam_atlas_p = None
-if radii_atlas_p is not None:
-    diam_atlas_p = (2.0 * radii_atlas_p).astype(np.float32)
-
-lengths2_p = np.asarray(geom["lengths2"], dtype=np.float32) if "lengths2" in geom else None
 
 def _check(name, arr):
     if arr is not None and len(arr) != nP:
-        raise ValueError(f"geom['{name}'] must match x/y/z length.")
+        raise ValueError(f"{space}: '{name}' must match x/y/z length (nP={nP}).")
+
 _check("annotation", ann)
-_check("radii_p_atlas", radii_atlas_p)
-_check("diameter_p_atlas", diam_atlas_p)
-_check("lengths2", lengths2_p)
+_check("radii_atlas_p", radii_atlas_p)
+_check("diam_atlas_p", diam_atlas_p)
+_check("lengths2_p", lengths2_p)
+
+print(f"[export] space={space}  nP={nP}")
+print(f"[export] x range: {float(x.min()):.3f} .. {float(x.max()):.3f}")
+print(f"[export] y range: {float(y.min()):.3f} .. {float(y.max()):.3f}")
+print(f"[export] z range: {float(z.min()):.3f} .. {float(z.max()):.3f}")
 
 
 # ============================

@@ -1715,10 +1715,14 @@ def count_microsegments_by_nkind(ms, label_map=None):
 
 
 
-def vessel_vol_frac_slabs_in_box(ms, box, slab=50.0, axis="z"):
+def vessel_vol_frac_slabs_in_box(ms, box, slab=None, axis="z"): 
     """
     Volume fraction inside a box, split into slabs along an axis.
     Uses MICRO-SEGMENTS (midpoint inside box).
+
+    Tune the slab thickness depending on how big you want the slabs. 
+    For small cutted boxes (400 um) do around 20 um. 
+    For whole ROI analysis 50 um is good. 
 
     Metric:
       vol_frac = sum(pi * r_mean^2 * L) / tissue_vol    (unitless)

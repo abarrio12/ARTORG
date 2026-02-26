@@ -33,7 +33,7 @@ def outgeom_to_igraph_materialized(data, space="um"):
         # edge scalars (copy)
         e_len_key  = "length_R" if "length_R" in G.es.attributes() else None
 
-        # robust diameter scalar fallback chain
+        #  diameter scalar
         e_diam_key = ("diameter_atlas_R" if "diameter_atlas_R" in G.es.attributes() else None)
 
     else:
@@ -144,7 +144,8 @@ def outgeom_to_igraph_materialized(data, space="um"):
             valid = arr[~np.isnan(arr)]
             diam_edge.append(float(valid.mean()) if valid.size else float("nan"))
         G2.es["diameter"] = diam_edge
-
+    
+    
     # -------------------------
     # only keep Gaia attributes (remove others)
     # -------------------------
@@ -159,14 +160,36 @@ def outgeom_to_igraph_materialized(data, space="um"):
     for a in list(G2.es.attributes()):
         if a not in keep_e:
             del G2.es[a]
+    
+        # -------------------------
+    # sanity check: min / max in µm
+    # -------------------------
 
+
+    if G_gaia["unit"] != "um":
+        print("WARNING: graph not in µm space")
+
+    if "length" in G_gaia.es.attributes():
+        L = np.asarray(G_gaia.es["length"], float)
+        print("Edge length (µm):")
+        print("   min =", float(np.nanmin(L)))
+        print("   max =", float(np.nanmax(L)))
+        print()
+
+    if "diameter" in G_gaia.es.attributes():
+        D = np.asarray(G_gaia.es["diameter"], float)
+        print("Edge diameter (µm):")
+        print("   min =", float(np.nanmin(D)))
+        print("   max =", float(np.nanmax(D)))
+        print()
     return G2
+
 
 import pickle
 
 if __name__ == "__main__":
-    in_path  = "/home/admin/Ana/MicroBrain/output/graph_18_OutGeom_Hcut2_um.pkl"   
-    out_path = "/home/admin/Ana/MicroBrain/output/graph_18_OutGeom_Hcut2_um_gaia.pkl"
+    in_path  = "/home/admin/Ana/MicroBrain/output/graph_18_OutGeom_um.pkl"   
+    out_path = "/home/admin/Ana/MicroBrain/output/graph_18_OutGeom_um_formatted.pkl"
 
     # load graph (cut)
     with open(in_path, "rb") as f:
@@ -184,3 +207,4 @@ if __name__ == "__main__":
     print("V/E:", G_gaia.vcount(), G_gaia.ecount())
     print("V attrs:", G_gaia.vs.attributes())
     print("E attrs:", G_gaia.es.attributes())
+ 

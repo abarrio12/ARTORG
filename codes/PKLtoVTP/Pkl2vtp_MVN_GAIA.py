@@ -289,15 +289,15 @@ def write_vtp(graph, filename, tortuous=True, verbose=False):
 
 
 # Load a graph from a pickle file
-input_igraph_pkl_path = "/home/admin/Ana/MicroBrain/output/graph_18_OutGeom_Hcut1_um_gaia.pkl"
+input_igraph_pkl_path = "/home/admin/Ana/MicroBrain/output/um_gaia/graph_18_OutGeom_Hcut1_um_gaia.pkl"
 
 
 graph = igraph.Graph.Read_Pickle(input_igraph_pkl_path)
 #print(graph.summary())
 
 
-output_path = "/home/admin/Ana/MicroBrain/output/"
+output_path = "/home/admin/Ana/MicroBrain/output/vtp/pkltovtp_GAIA/"
 
 
-write_vtp(graph, output_path+'graph_18_OutGeom_Hcut1_um_gaia_tortuous.vtp', tortuous=True)
+write_vtp(graph, output_path+'graph_18_OutGeom_Hcut1_um_gaia.vtp', tortuous=True)
 write_vtp(graph, output_path+'graph_18_OutGeom_Hcut1_um_gaia_straight.vtp', tortuous=False)
