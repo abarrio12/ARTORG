@@ -1,90 +1,120 @@
 import numpy as np
 import igraph as ig
 
+def _has_um(data):
+    return ("geom_R" in data) and ("vertex_R" in data)
 
-def outgeom_to_igraph_materialized(data, space="um"):
+def _pick_first(existing, candidates):
+    """Return first key in candidates that exists in dict-like `existing`, else None."""
+    for k in candidates:
+        if k in existing:
+            return k
+    return None
+
+def outgeom_to_igraph_materialized(data, space="auto", verbose=True):
+    """
+    Convert outgeom pseudo-json -> Gaia-like igraph where each edge stores:
+      - connectivity, nkind, length, diameter scalars
+      - points, lengths2 (per segment), diameters (per point)
+    Handles both VOX and UM outgeom files with correct attribute names.
+    """
     G = data["graph"]
     G2 = G.copy()
-
-    Vvox = data.get("vertex", {})
-    Vum  = data.get("vertex_R", {})
     nV = G.vcount()
     nE = G.ecount()
 
     # -------------------------
-    # select attr according to space
+    # Decide space
+    # -------------------------
+    if space == "auto":
+        space = "um" if _has_um(data) else "vox"
+    if space not in ("um", "vox"):
+        raise ValueError("space must be 'auto', 'um', or 'vox'")
+
+    # -------------------------
+    # Select sources by space
     # -------------------------
     if space == "um":
+        if "geom_R" not in data or "vertex_R" not in data:
+            raise KeyError("Requested space='um' but geom_R/vertex_R not found in data.")
         geom = data["geom_R"]
-        Vsrc = Vum
-        coords_attr = "coords_image_R"
-        v_r_key = "radii_atlas_R"          # vertex radii in µm
+        Vsrc = data["vertex_R"]
 
+        coords_attr = "coords_image_R"
         xk, yk, zk = "x_R", "y_R", "z_R"
         l2k = "lengths2_R"
 
-        # Prefer diameters per-point already computed in the UM converter
-        d_p = np.asarray(geom["diameters_atlas_geom_R"], float) if "diameters_atlas_geom_R" in geom else None
+        # Per-point atlas diameter in µm: prefer diam_atlas_geom_R, else radii_atlas_geom_R * 2
+        dpts_key = _pick_first(geom, ["diam_atlas_geom_R", "diameters_atlas_geom_R"]) # supporting both names just in case (they are the same)
+        rpts_key = _pick_first(geom, ["radii_atlas_geom_R"])
 
-        # Fallback (if diameters are not present): radii per-point (µm)
-        g_r_key = "radii_atlas_geom_R"
-        r_p = np.asarray(geom[g_r_key], float) if (d_p is None and g_r_key in geom) else None
+        # Edge scalar length in µm
+        e_len_key = _pick_first({k: True for k in G.es.attributes()}, ["length_R", "length_um"])
+        # Edge scalar atlas diameter in µm
+        e_diam_key = _pick_first({k: True for k in G.es.attributes()}, ["diameter_atlas_R"])
 
-        # edge scalars (copy)
-        e_len_key  = "length_R" if "length_R" in G.es.attributes() else None
+        # Vertex atlas radii in µm
+        v_r_key = "radii_atlas_R"
 
-        #  diameter scalar
-        e_diam_key = ("diameter_atlas_R" if "diameter_atlas_R" in G.es.attributes() else None)
+        unit_str = "um"
 
-    else:
+    else:  # vox
         geom = data["geom"]
-        Vsrc = Vvox
+        Vsrc = data["vertex"]
+
         coords_attr = "coords_image"
-        v_r_key = "radii_atlas"            # vertex radii in vox
-
         xk, yk, zk = "x", "y", "z"
-        l2k = "lengths2"
+        l2k = "lengths2"  
 
-        d_p = None
-        g_r_key = "radii_atlas_geom"
-        r_p = np.asarray(geom[g_r_key], float) if g_r_key in geom else None
+        # Per-point atlas diameter in atlas vox units: prefer diam_atlas_geom, else radii_atlas_geom * 2
+        dpts_key = _pick_first(geom, ["diam_atlas_geom"])
+        rpts_key = _pick_first(geom, ["radii_atlas_geom"])
 
-        e_len_key  = "length" if "length" in G.es.attributes() else None
-        e_diam_key = ("diameter_atlas" if "diameter_atlas" in G.es.attributes() else None)
+        # Edge scalar length in vox: your build stores arc length in G.es["length"]
+        e_len_key = _pick_first({k: True for k in G.es.attributes()}, ["length"])
+        e_len_steps_key = _pick_first({k: True for k in G.es.attributes()}, ["length_steps"])
+        # Edge scalar atlas diameter in atlas vox units
+        e_diam_key = _pick_first({k: True for k in G.es.attributes()}, ["diameter_atlas"])
+
+        # Vertex atlas radii in atlas vox units
+        v_r_key = "radii_atlas"
+
+        unit_str = "vox"
 
     # -------------------------
-    # gaia vertex attrs
+    # Vertex attributes (Gaia)
     # -------------------------
     if coords_attr not in Vsrc:
-        raise KeyError(f"Missing {coords_attr} in vertex dict for space='{space}'")
+        raise KeyError(f"Missing vertex['{coords_attr}'] for space='{space}'")
 
-    coords = np.asarray(Vsrc[coords_attr], float)
+    coords = np.asarray(Vsrc[coords_attr], dtype=np.float64)
+    if coords.shape != (nV, 3):
+        raise ValueError(f"{coords_attr} shape {coords.shape} != ({nV}, 3)")
+
     G2.vs["coords"] = [tuple(map(float, row)) for row in coords]
     G2.vs["index"] = list(range(nV))
 
-    # annotation
-    if "vertex_annotation" in G.vs.attributes() and len(G.vs["vertex_annotation"]) == nV:
-        G2.vs["annotation"] = list(G.vs["vertex_annotation"])
+    # annotation: prefer data["vertex"]["vertex_annotation"] (it is not in G.vs in your outgeom)
+    ann = None
+    if "vertex" in data and "vertex_annotation" in data["vertex"] and len(data["vertex"]["vertex_annotation"]) == nV:
+        ann = data["vertex"]["vertex_annotation"]
     elif "vertex_annotation" in Vsrc and len(Vsrc["vertex_annotation"]) == nV:
-        G2.vs["annotation"] = list(Vsrc["vertex_annotation"])
-    else:
-        G2.vs["annotation"] = [None] * nV
+        ann = Vsrc["vertex_annotation"]
 
-    # diameter(v) = 2 * radii_atlas(_R)
+    G2.vs["annotation"] = list(ann) if ann is not None else [None] * nV
+
+    # vertex diameter from atlas radii (whatever unit is in this space)
     if v_r_key in Vsrc and len(Vsrc[v_r_key]) == nV:
-        vr = np.asarray(Vsrc[v_r_key], float)
+        vr = np.asarray(Vsrc[v_r_key], dtype=np.float64)
         G2.vs["diameter"] = (2.0 * vr).astype(float).tolist()
     else:
         G2.vs["diameter"] = [float("nan")] * nV
 
     # -------------------------
-    # gaia edge attrs
+    # Edge attributes (Gaia)
     # -------------------------
     # nkind
-    if "nkind" in G.es.attributes():
-        G2.es["nkind"] = list(G.es["nkind"])
-    else:
-        G2.es["nkind"] = [None] * nE
+    G2.es["nkind"] = list(G.es["nkind"]) if "nkind" in G.es.attributes() else [None] * nE
 
     # connectivity
     G2.es["connectivity"] = [tuple(map(int, e.tuple)) for e in G2.es]
@@ -92,67 +122,93 @@ def outgeom_to_igraph_materialized(data, space="um"):
     # geom indices
     if "geom_start" not in G.es.attributes() or "geom_end" not in G.es.attributes():
         raise KeyError("Missing geom_start/geom_end in edges")
+
     G2.es["geom_start"] = list(G.es["geom_start"])
     G2.es["geom_end"]   = list(G.es["geom_end"])
 
-    gs = np.asarray(G.es["geom_start"], np.int64)
-    ge = np.asarray(G.es["geom_end"], np.int64)
+    gs = np.asarray(G.es["geom_start"], dtype=np.int64)
+    ge = np.asarray(G.es["geom_end"], dtype=np.int64)
 
     # polyline arrays
-    x = np.asarray(geom[xk], float); y = np.asarray(geom[yk], float); z = np.asarray(geom[zk], float)
-    L2 = np.asarray(geom[l2k], float)
+    for k in (xk, yk, zk, l2k):
+        if k not in geom:
+            raise KeyError(f"Missing geom['{k}'] for space='{space}'")
 
-    # per-edge lists
-    points, lengths2, diameters = [], [], []
+    x = np.asarray(geom[xk], dtype=np.float64)
+    y = np.asarray(geom[yk], dtype=np.float64)
+    z = np.asarray(geom[zk], dtype=np.float64)
+    L2 = np.asarray(geom[l2k], dtype=np.float64)
+
+    # per-point diameters (atlas)
+    d_p = None
+    r_p = None
+    if dpts_key is not None:
+        d_p = np.asarray(geom[dpts_key], dtype=np.float64)
+    elif rpts_key is not None:
+        r_p = np.asarray(geom[rpts_key], dtype=np.float64)
+
+    # Per-edge lists for Gaia
+    points, lengths2_list, diameters_list = [], [], []
 
     for eid in range(nE):
         s = int(gs[eid]); t = int(ge[eid])
+        if t <= s:
+            points.append([])
+            lengths2_list.append([])
+            diameters_list.append([])
+            continue
 
         pts = np.stack([x[s:t], y[s:t], z[s:t]], axis=1)
         points.append([tuple(map(float, row)) for row in pts])
 
-        l2 = [float(v) for v in L2[s:t-1]]   # n_points-1
-        lengths2.append(l2)
-
-        # per-point diameters
-        if d_p is not None:
-            diameters.append([float(v) for v in d_p[s:t]])              # already diameter
-        elif r_p is not None:
-            diameters.append([float(v) for v in (2.0 * r_p[s:t])])      # from radius
+        # segment lengths: s .. t-2 (t-1 segments)
+        if (t - s) >= 2:
+            l2 = [float(v) for v in L2[s:t-1]]
         else:
-            diameters.append([float("nan")] * (t - s))
+            l2 = []
+        lengths2_list.append(l2)
+
+        # per-point diameters: one per point
+        if d_p is not None:
+            diameters_list.append([float(v) for v in d_p[s:t]])
+        elif r_p is not None:
+            diameters_list.append([float(v) for v in (2.0 * r_p[s:t])])
+        else:
+            diameters_list.append([float("nan")] * (t - s))
 
     G2.es["points"] = points
-    G2.es["lengths2"] = lengths2
-    G2.es["diameters"] = diameters    # per-point diameters (Gaia)
+    G2.es["lengths2"] = lengths2_list
+    G2.es["diameters"] = diameters_list
+    G2["unit"] = unit_str
 
-    G2["unit"] = "um" if space == "um" else "vox"  # keep track of units
-
-    # edge scalar length: copy from graph if exists, else sum(lengths2)
+    # edge scalar length
     if e_len_key is not None:
-        G2.es["length"] = [float(v) for v in G.es[e_len_key]]
+        G2.es["length"] = [float(v) for v in np.asarray(G.es[e_len_key], dtype=np.float64)]
     else:
-        G2.es["length"] = [float(np.sum(v)) if len(v) else float("nan") for v in lengths2]
+        G2.es["length"] = [float(np.sum(v)) if len(v) else float("nan") for v in lengths2_list]
 
-    # edge scalar diameter: copy from graph if exists, else mean(per-point diameters) WITHOUT warnings
+    # optional length_steps in vox mode
+    if space == "vox" and 'e_len_steps_key' in locals() and e_len_steps_key is not None:
+        G2.es["length_steps"] = [float(v) for v in np.asarray(G.es[e_len_steps_key], dtype=np.float64)]
+
+    # edge scalar diameter: prefer edge attribute; else mean(per-point diameters)
     if e_diam_key is not None:
-        G2.es["diameter"] = [float(v) for v in G.es[e_diam_key]]
+        G2.es["diameter"] = [float(v) for v in np.asarray(G.es[e_diam_key], dtype=np.float64)]
     else:
         diam_edge = []
-        for v in diameters:
-            arr = np.asarray(v, float)
-            valid = arr[~np.isnan(arr)]
+        for vlist in diameters_list:
+            arr = np.asarray(vlist, dtype=np.float64)
+            valid = arr[np.isfinite(arr)]
             diam_edge.append(float(valid.mean()) if valid.size else float("nan"))
         G2.es["diameter"] = diam_edge
-    
-    
+
     # -------------------------
-    # only keep Gaia attributes (remove others)
+    # Only keep Gaia attributes
     # -------------------------
     keep_v = {"coords", "index", "annotation", "diameter"}
     keep_e = {"connectivity", "nkind", "diameter", "diameters",
               "length", "lengths2", "points",
-              "geom_start", "geom_end"}
+              "geom_start", "geom_end", "length_steps"}
 
     for a in list(G2.vs.attributes()):
         if a not in keep_v:
@@ -160,51 +216,33 @@ def outgeom_to_igraph_materialized(data, space="um"):
     for a in list(G2.es.attributes()):
         if a not in keep_e:
             del G2.es[a]
-    
-        # -------------------------
-    # sanity check: min / max in µm
+
     # -------------------------
+    # Sanity print
+    # -------------------------
+    if verbose:
+        L = np.asarray(G2.es["length"], dtype=np.float64)
+        D = np.asarray(G2.es["diameter"], dtype=np.float64)
+        print(f"[Gaia materialized] space={space} unit={G2['unit']} V={G2.vcount():,} E={G2.ecount():,}")
+        print(f"  length: min={float(np.nanmin(L)):.3f}  med={float(np.nanmedian(L)):.3f}  max={float(np.nanmax(L)):.3f}")
+        print(f"  diam  : min={float(np.nanmin(D)):.3f}  med={float(np.nanmedian(D)):.3f}  max={float(np.nanmax(D)):.3f}")
 
-
-    if G_gaia["unit"] != "um":
-        print("WARNING: graph not in µm space")
-
-    if "length" in G_gaia.es.attributes():
-        L = np.asarray(G_gaia.es["length"], float)
-        print("Edge length (µm):")
-        print("   min =", float(np.nanmin(L)))
-        print("   max =", float(np.nanmax(L)))
-        print()
-
-    if "diameter" in G_gaia.es.attributes():
-        D = np.asarray(G_gaia.es["diameter"], float)
-        print("Edge diameter (µm):")
-        print("   min =", float(np.nanmin(D)))
-        print("   max =", float(np.nanmax(D)))
-        print()
     return G2
 
 
 import pickle
 
-if __name__ == "__main__":
-    in_path  = "/home/admin/Ana/MicroBrain/output/graph_18_OutGeom_um.pkl"   
-    out_path = "/home/admin/Ana/MicroBrain/output/graph_18_OutGeom_um_formatted.pkl"
+in_path  = "/home/ana/MicroBrain/output/um/graph_18_OutGeom_um.pkl"
+out_path = "/home/ana/MicroBrain/output/formatted/graph_18_OutGeom_um_formatted.pkl"
 
-    # load graph (cut)
-    with open(in_path, "rb") as f:
-        data = pickle.load(f)
+with open(in_path, "rb") as f:
+    data = pickle.load(f)
 
-    #materialize to Gaia format (change space if wanted)
-    G_gaia = outgeom_to_igraph_materialized(data, space="um")
+G_gaia = outgeom_to_igraph_materialized(data, space="auto", verbose=True)
+G_gaia.write_pickle(out_path)
 
-    # save igraph pkl
-    G_gaia.write_pickle(out_path)
-
-    #minimal print to check
-    print("Saved:", out_path)
-    print("Units:", G_gaia["unit"])
-    print("V/E:", G_gaia.vcount(), G_gaia.ecount())
-    print("V attrs:", G_gaia.vs.attributes())
-    print("E attrs:", G_gaia.es.attributes())
- 
+print("Saved:", out_path)
+print("Units:", G_gaia["unit"])
+print("V/E:", G_gaia.vcount(), G_gaia.ecount())
+print("V attrs:", G_gaia.vs.attributes())
+print("E attrs:", G_gaia.es.attributes())
