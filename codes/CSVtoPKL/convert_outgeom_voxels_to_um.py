@@ -1,372 +1,257 @@
-"""
-Build vascular graph with indexed geometry (VOXEL SPACE)
+'''
+Code that converts from voxels to um. Takes the graph build from build_graph_outgeom_voxels.py
+As output, you have the new attributes converted to um and also keeps the old ones, in case 
+is necessary in future tasks. 
 
-Target attributes
------------------
-- G.es["length_steps"] : step-count from length.csv  (per edge)
-- geom["lengths2"]     : Euclidean distance between consecutive geometry points (per point)
-- G.es["length"]       : per-edge tortuous length = sum(lengths2[s:en-1])  (per edge)
+Transformations used:
+ - Image resolution: 1.625x1.625x2.5 (used in length, coordinates_image.... to go from voxels of image to um)
+ -  Atlas resolution: 25 um (used to go from voxels at 25 um grid to um ONLY used in radii atlas attr)
 
-Sanity check:
-- Added 0 in lengths2 at edge boundaries (index ge-1) to avoid counting jumps
-  between the last point of edge i and the first point of edge i+1 in the global arrays.
-  (with s:en-1 shoudn't happen, but just checking)
-
-Author: Ana
-Updated: 27 Feb 2026
-"""
-
+ Author: Ana
+ Updated: 27 Feb 2026
+'''
 import os
 import pickle
-import igraph as ig
 import numpy as np
-import pandas as pd
 
-# =============================================================================
-# Parameters
-# =============================================================================
-FOLDER = "/home/ana/MicroBrain/CSV/"
-OUT_PATH = "/home/ana/MicroBrain/output/graph_18_OutGeom.pkl"
-MIN_STRAIGHT_DIST = 1.0  # voxels (image space)
 
-# =============================================================================
-# Helpers
-# =============================================================================
-def data_summary_pseudojson(data, max_show=12):
+def quick_unit_sanity_check(data, max_print=5):
     G = data["graph"]
-    print(G.summary())
+    g = data.get("geom", {})
+    v = data.get("vertex", {})
 
-    if "vertex" in data:
-        vkeys = sorted(list(data["vertex"].keys()))
-        print("\nvertex attrs (v):", ", ".join(vkeys[:max_show]) + (" ..." if len(vkeys) > max_show else ""))
-        for k in vkeys[:max_show]:
-            arr = data["vertex"][k]
-            print(f"  {k} (v): {arr.shape} {arr.dtype}")
+    print("\n==============================")
+    print("GEOMETRY RANGE CHECK (VOX)")
+    print("==============================")
+    if {"x","y","z"} <= set(g.keys()):
+        x_vox = np.asarray(g["x"])
+        y_vox = np.asarray(g["y"])
+        z_vox = np.asarray(g["z"])
+        print(f"x_vox: min={x_vox.min():.2f}  max={x_vox.max():.2f}")
+        print(f"y_vox: min={y_vox.min():.2f}  max={y_vox.max():.2f}")
+        print(f"z_vox: min={z_vox.min():.2f}  max={z_vox.max():.2f}")
+    else:
+        print("No geom[x,y,z] found.")
 
-    if "geom" in data:
-        pkeys = sorted(list(data["geom"].keys()))
-        print("\ngeom attrs (p):", ", ".join(pkeys[:max_show]) + (" ..." if len(pkeys) > max_show else ""))
-        for k in pkeys[:max_show]:
-            arr = data["geom"][k]
-            print(f"  {k} (p): {arr.shape} {arr.dtype}")
+    print("\n==============================")
+    print("EDGE LENGTH ATTRS (VOX)")
+    print("==============================")
+    for name in ["length_steps", "length"]:
+        if name in G.es.attributes():
+            arr = np.asarray(G.es[name], dtype=np.float32)
+            arr = arr[np.isfinite(arr)]
+            if arr.size:
+                print(f"{name}: n={arr.size}  min={arr.min():.3f}  p50={np.median(arr):.3f}  p95={np.percentile(arr,95):.3f}  max={arr.max():.3f}")
+            else:
+                print(f"{name}: exists but empty/NaN")
+        else:
+            print(f"{name}: not found")
 
-    if "geom" in data and {"x", "y", "z"} <= set(data["geom"].keys()):
-        nP = int(data["geom"]["x"].shape[0])
-        ok = (data["geom"]["y"].shape[0] == nP) and (data["geom"]["z"].shape[0] == nP)
-        print(f"\npoints count (p): {nP:,}  xyz aligned: {ok}")
-    print()
+    print("\n==============================")
+    print("ATLAS COORD RANGE CHECK (atlas vox grid)")
+    print("==============================")
+    if "coords" in v:
+        coords_atlas = np.asarray(v["coords"])
+        print(f"atlas coords shape: {coords_atlas.shape}")
+        print(f"atlas min per axis: {coords_atlas.min(axis=0)}")
+        print(f"atlas max per axis: {coords_atlas.max(axis=0)}")
+    else:
+        print("No vertex['coords'] found.")
+
+    print("\n==============================")
+    print("DIAMETER_ATLAS (raw units)")
+    print("==============================")
+    if "diameter_atlas" in G.es.attributes():
+        d = np.asarray(G.es["diameter_atlas"], dtype=np.float32)
+        d = d[np.isfinite(d)]
+        if d.size:
+            print(f"diameter_atlas: n={d.size}  p50={np.median(d):.3f}  p95={np.percentile(d,95):.3f}  max={d.max():.3f}  (RAW atlas units)")
+    else:
+        print("No edge diameter_atlas found.")
+
+    print("\n==============================\n")
 
 
-def reorient_edge_geometry_to_vertices(
-    edges,
-    geom_start,
-    geom_end,
-    x, y, z,
-    coords_image,
-    ann_geom=None,
-    r_geom_list=None,
-    tol=1e-6,
-    verbose=True,
+def _auto_out_path(in_path: str) -> str:
+    in_dir = os.path.dirname(in_path)
+    base = os.path.splitext(os.path.basename(in_path))[0]
+    base_um = base if base.endswith("_um") else f"{base}_um"
+
+    # if inside ".../vox/", output sibling ".../um/"
+    if os.path.basename(in_dir) == "vox":
+        out_dir = os.path.join(os.path.dirname(in_dir), "um")
+    else:
+        out_dir = os.path.join(in_dir, "um")
+
+    os.makedirs(out_dir, exist_ok=True)
+    return os.path.join(out_dir, f"{base_um}.pkl")
+
+
+def convert_outgeom_pkl_to_um(
+    in_path,
+    out_path=None,
+    res_um_per_vox=(1.625, 1.625, 2.5),   # µm/vox (image space)
+    atlas_um_per_vox=25.0,                # µm/vox (atlas grid)
+    min_straight_dist_um=1.0,
 ):
-    """Flip per-edge polyline direction to match edge (u->v). In-place."""
-    u = edges[:, 0].astype(np.int64, copy=False)
-    v = edges[:, 1].astype(np.int64, copy=False)
+    """
+    Convert VOX outgeom -> UM outgeom.
 
-    P0 = np.column_stack([x[geom_start], y[geom_start], z[geom_start]])
-    P1 = np.column_stack([x[geom_end - 1], y[geom_end - 1], z[geom_end - 1]])
+    Assumptions (aligned with your new VOX builder):
+    - geom[x,y,z] are in IMAGE VOXELS
+    - geom lengths2 (if present) is VOX Euclidean, but we recompute in µm anyway
+    - G.es["geom_start"], G.es["geom_end"] define per-edge point ranges in the global arrays
+    - IMPORTANT: global geometry arrays are concatenated, so we must zero the segment at (ge-1)
+      to kill cross-edge jumps.
+    """
 
-    Cu = coords_image[u]
-    Cv = coords_image[v]
+    sx, sy, sz = map(float, res_um_per_vox)
+    spacing = np.array([sx, sy, sz], dtype=np.float32)
 
-    d_direct = np.sum((P0 - Cu) ** 2, axis=1) + np.sum((P1 - Cv) ** 2, axis=1)
-    d_swap   = np.sum((P0 - Cv) ** 2, axis=1) + np.sum((P1 - Cu) ** 2, axis=1)
+    data = pickle.load(open(in_path, "rb"))
+    quick_unit_sanity_check(data)
 
-    flip = d_swap + tol < d_direct
+    G = data["graph"]
+    g = data["geom"]
+    v = data["vertex"]
 
-    if verbose:
-        print(f"[reorient] flipping {int(np.sum(flip))} / {len(flip)} edges")
+    # Required
+    for k in ("x", "y", "z"):
+        if k not in g:
+            raise KeyError(f"geom['{k}'] missing in VOX PKL")
 
-    for ei in np.where(flip)[0]:
-        s = int(geom_start[ei])
-        en = int(geom_end[ei])
-        if en - s < 2:
-            continue
+    if "geom_start" not in G.es.attributes() or "geom_end" not in G.es.attributes():
+        raise KeyError("Edges must have geom_start / geom_end.")
 
-        x[s:en] = x[s:en][::-1]
-        y[s:en] = y[s:en][::-1]
-        z[s:en] = z[s:en][::-1]
+    gs = np.asarray(G.es["geom_start"], dtype=np.int64)
+    ge = np.asarray(G.es["geom_end"], dtype=np.int64)
 
-        if ann_geom is not None:
-            ann_geom[s:en] = ann_geom[s:en][::-1]
+    # -------------------------
+    # 1) Convert geometry points to µm
+    # -------------------------
+    x_vox = np.asarray(g["x"], dtype=np.float32)
+    y_vox = np.asarray(g["y"], dtype=np.float32)
+    z_vox = np.asarray(g["z"], dtype=np.float32)
 
-        if r_geom_list is not None:
-            for r in r_geom_list:
-                if r is not None:
-                    r[s:en] = r[s:en][::-1]
+    x_um = x_vox * sx
+    y_um = y_vox * sy
+    z_um = z_vox * sz
 
-    return flip
+    g_R = {
+        "x_R": x_um.astype(np.float32, copy=False),
+        "y_R": y_um.astype(np.float32, copy=False),
+        "z_R": z_um.astype(np.float32, copy=False),
+    }
+
+    # -------------------------
+    # 2) Vertex coords_image -> µm
+    # -------------------------
+    v_R = {}
+    if "coords_image" in v:
+        C_img_vox = np.asarray(v["coords_image"], dtype=np.float32)
+        v_R["coords_image_R"] = (C_img_vox * spacing[None, :]).astype(np.float32)
+
+    # distance_to_surface (approx scale by sx)
+    if "distance_to_surface" in v:
+        dist_surf_vox = np.asarray(v["distance_to_surface"], dtype=np.float32)
+        v_R["distance_to_surface_R"] = (dist_surf_vox * sx).astype(np.float32, copy=False)
+
+    # atlas radii (vertex): atlas vox -> µm
+    if "radii_atlas" in v:
+        R_atlas_vox = np.asarray(v["radii_atlas"], dtype=np.float32)
+        v_R["radii_atlas_R"] = (R_atlas_vox * float(atlas_um_per_vox)).astype(np.float32)
+
+    # -------------------------
+    # 3) Compute lengths2_R in µm (Euclidean segments)
+    # -------------------------
+    dx = np.diff(x_um.astype(np.float64))
+    dy = np.diff(y_um.astype(np.float64))
+    dz = np.diff(z_um.astype(np.float64))
+
+    lengths2_R = np.sqrt(dx*dx + dy*dy + dz*dz).astype(np.float32)
+    lengths2_R = np.append(lengths2_R, np.float32(0.0))  # same length as x/y/z
+
+    # sanity check: be sure that i am using the indices i want. 
+    # Last point of the edge is [en-1]. This ensures in case there's a lengths2[s:en]
+    boundary_idx = (ge - 1).astype(np.int64, copy=False)
+    boundary_idx = boundary_idx[(boundary_idx >= 0) & (boundary_idx < lengths2_R.shape[0])]
+    lengths2_R[boundary_idx] = np.float32(0.0)
+
+    g_R["lengths2_R"] = lengths2_R
+
+    # -------------------------
+    # 4) Compute length_R per edge = sum(lengths2_R[s:en-1])  
+    # -------------------------
+    seg = lengths2_R[:-1].astype(np.float64, copy=False)       # true segments only
+    pref = np.concatenate([[0.0], np.cumsum(seg)])             # pref[k] = sum(seg[0:k])
+
+    length_R = (pref[ge - 1] - pref[gs]).astype(np.float32)
+    length_R[(ge - gs) < 2] = 0.0
+
+    G.es["length_R"] = length_R.tolist()
+   
+
+    # -------------------------
+    # 5) Straight distance in µm + tortuosity_R
+    # -------------------------
+    dxs = (x_um[ge - 1] - x_um[gs]).astype(np.float32, copy=False)
+    dys = (y_um[ge - 1] - y_um[gs]).astype(np.float32, copy=False)
+    dzs = (z_um[ge - 1] - z_um[gs]).astype(np.float32, copy=False)
+    straight_um = np.sqrt(dxs*dxs + dys*dys + dzs*dzs).astype(np.float32)
+
+    tort = np.full(G.ecount(), np.nan, dtype=np.float32)
+    m = straight_um >= float(min_straight_dist_um)
+    tort[m] = length_R[m] / straight_um[m]
+    G.es["tortuosity_R"] = tort.tolist()
 
 
-def sanity_length_is_segcount_or_raise(e_len_steps, gs, ge, tol=0.0, max_report=10):
-    """Check length.csv equals (ge-gs-1) for ALL edges."""
-    segcount = (ge - gs - 1).astype(np.float32)
-    diff = np.abs(e_len_steps.astype(np.float32) - segcount)
-    bad = np.where(diff > tol)[0]
-    if bad.size:
-        print(f"[ERROR] length.csv != (ge-gs-1) for {bad.size} edges. Showing first {min(max_report, bad.size)}:")
-        for ei in bad[:max_report]:
-            print(f"  ei={int(ei)}  length={float(e_len_steps[ei])}  segcount={float(segcount[ei])}  "
-                  f"s={int(gs[ei])} en={int(ge[ei])}")
-        raise ValueError("length.csv sanity check failed.")
-    print("[OK] length.csv equals segcount (ge-gs-1) for all edges.")
+    # -------------------------
+    # 6) Atlas geometry radii -> µm (per point)
+    # -------------------------
+    if "radii_atlas_geom" in g:
+        r_atlas_vox = np.asarray(g["radii_atlas_geom"], dtype=np.float32)
+        r_atlas_um = (r_atlas_vox * float(atlas_um_per_vox)).astype(np.float32)
+        g_R["radii_atlas_geom_R"] = r_atlas_um
+        g_R["diam_atlas_geom_R"] = (2.0 * r_atlas_um).astype(np.float32)
+
+    # edge atlas diameter -> µm
+    if "diameter_atlas" in G.es.attributes():
+        diam_edge_atlas_vox = np.asarray(G.es["diameter_atlas"], dtype=np.float32)
+        G.es["diameter_atlas_R"] = (diam_edge_atlas_vox * float(atlas_um_per_vox)).astype(np.float32).tolist()
+
+    # -------------------------
+    # 7) Store metadata + save
+    # -------------------------
+    # keep original VOX units in data; add *_R 
+    data["geom_R"] = g_R
+    data["vertex_R"] = v_R
+    data["graph"] = G
+
+    # metadata to stop future confusion
+    data["unit"] = {"vox": "voxel", "um": "micrometer"}
+    data["spacing_um_per_voxel"] = list(map(float, res_um_per_vox))
+    data["atlas_um_per_voxel"] = float(atlas_um_per_vox)
+
+    # default output
+    if out_path is None:
+        out_path = _auto_out_path(in_path)
+
+    with open(out_path, "wb") as f:
+        pickle.dump(data, f, protocol=pickle.HIGHEST_PROTOCOL)
+
+    print("Saved:", out_path)
+    return data
 
 
-def sanity_length_equals_sum_lengths2_or_raise(length_edge, gs, ge, lengths2, n_check=10, seed=0, tol=1e-3):
-    """Random check: length_edge == sum(lengths2[s:en-1]) for a few edges."""
-    rng = np.random.default_rng(seed)
-    idx = rng.choice(len(length_edge), size=min(n_check, len(length_edge)), replace=False)
-    for ei in idx:
-        s = int(gs[ei]); en = int(ge[ei])
-        if en - s < 2:
-            continue
-        sm = float(np.sum(lengths2[s:en-1]))
-        if abs(float(length_edge[ei]) - sm) > tol:
-            raise ValueError(f"edge {ei}: length != sum(lengths2) -> {float(length_edge[ei])} vs {sm}")
-    print(f"[OK] length equals sum(lengths2) on {len(idx)} sampled edges.")
+if __name__ == "__main__":
+    name = "graph_18_OutGeom"  # adjust
+    root = "/home/ana/MicroBrain/output"
+    in_path = f"{root}/{name}.pkl"  # adjust to location
 
-
-def sanity_e_rad_equals_max_r_geom(e_rad, gs, ge, r_geom, n_check=5, seed=0, tol=1e-6):
-    rng = np.random.default_rng(seed)
-    idx = rng.choice(len(e_rad), size=min(n_check, len(e_rad)), replace=False)
-    all_true = True
-    for ei in idx:
-        s, en = int(gs[ei]), int(ge[ei])
-        if en - s < 1:
-            continue
-        equal = abs(float(e_rad[ei]) - float(np.max(r_geom[s:en]))) <= tol
-        print(f"edge {ei}: e_rad == max(r_geom) ? {equal}")
-        all_true = all_true and equal
-    return all_true
-
-
-def sanity_e_rad_atlas_equals_max_r_atlas_geom(e_rad_atlas, gs, ge, r_atlas_geom, n_check=5, seed=0, tol=1e-6):
-    rng = np.random.default_rng(seed)
-    idx = rng.choice(len(e_rad_atlas), size=min(n_check, len(e_rad_atlas)), replace=False)
-    all_true = True
-    for ei in idx:
-        s, en = int(gs[ei]), int(ge[ei])
-        if en - s < 1:
-            continue
-        equal = abs(float(e_rad_atlas[ei]) - float(np.max(r_atlas_geom[s:en]))) <= tol
-        print(f"edge {ei}: e_rad_atlas == max(r_atlas_geom) ? {equal}")
-        all_true = all_true and equal
-    return all_true
-
-
-# =============================================================================
-# Load CSVs
-# =============================================================================
-print("=== START CSV → PKL (OUTGEOM pseudo-json) ===")
-
-vid = pd.read_csv(os.path.join(FOLDER, "vertices.csv"), header=None, dtype=np.int64).to_numpy().reshape(-1)
-nV = int(vid.shape[0])
-
-coords_atlas = pd.read_csv(os.path.join(FOLDER, "coordinates_atlas.csv"), header=None, dtype=np.float32).to_numpy()
-coords_img   = pd.read_csv(os.path.join(FOLDER, "coordinates.csv"), header=None, dtype=np.float32).to_numpy()
-
-v_radii       = pd.read_csv(os.path.join(FOLDER, "radii.csv"), header=None, dtype=np.float32).to_numpy().reshape(-1)
-v_ann         = pd.read_csv(os.path.join(FOLDER, "annotation.csv"), header=None, dtype=np.int32).to_numpy().reshape(-1)
-v_dist        = pd.read_csv(os.path.join(FOLDER, "distance_to_surface.csv"), header=None, dtype=np.float32).to_numpy().reshape(-1)
-v_radii_atlas = pd.read_csv(os.path.join(FOLDER, "radii_atlas.csv"), header=None, dtype=np.float32).to_numpy().reshape(-1)
-
-edges = pd.read_csv(os.path.join(FOLDER, "edges.csv"), header=None, dtype=np.int64).to_numpy()
-nE = int(edges.shape[0])
-
-e_len_steps = pd.read_csv(os.path.join(FOLDER, "length.csv"), header=None, dtype=np.float32).to_numpy().reshape(-1)
-e_rad       = pd.read_csv(os.path.join(FOLDER, "radii_edge.csv"), header=None, dtype=np.float32).to_numpy().reshape(-1)
-e_rad_atlas = pd.read_csv(os.path.join(FOLDER, "radii_atlas_edge.csv"), header=None, dtype=np.float32).to_numpy().reshape(-1)
-e_vein      = pd.read_csv(os.path.join(FOLDER, "vein.csv"), header=None, dtype=np.int8).to_numpy().reshape(-1)
-e_art       = pd.read_csv(os.path.join(FOLDER, "artery.csv"), header=None, dtype=np.int8).to_numpy().reshape(-1)
-
-geom_idx = pd.read_csv(os.path.join(FOLDER, "edge_geometry_indices.csv"), header=None, dtype=np.int64).to_numpy()
-gs = geom_idx[:, 0].astype(np.int64, copy=False)
-ge = geom_idx[:, 1].astype(np.int64, copy=False)
-
-geom_xyz = pd.read_csv(os.path.join(FOLDER, "edge_geometry_coordinates.csv"), header=None, dtype=np.float32).to_numpy()
-ann_geom     = pd.read_csv(os.path.join(FOLDER, "edge_geometry_annotation.csv"), header=None, dtype=np.int32).to_numpy().reshape(-1)
-r_geom       = pd.read_csv(os.path.join(FOLDER, "edge_geometry_radii.csv"), header=None, dtype=np.float32).to_numpy().reshape(-1)
-r_atlas_geom = pd.read_csv(os.path.join(FOLDER, "edge_geometry_radii_atlas.csv"), header=None, dtype=np.float32).to_numpy().reshape(-1)
-
-print("CSVs loaded")
-
-nP = int(geom_xyz.shape[0])
-print(f"nV={nV:,}  nE={nE:,}  nP={nP:,}")
-
-# =============================================================================
-# Basic shape checks
-# =============================================================================
-if coords_atlas.shape != (nV, 3): raise ValueError("coordinates_atlas shape mismatch")
-if coords_img.shape   != (nV, 3): raise ValueError("coordinates (image) shape mismatch")
-if e_len_steps.shape[0] != nE: raise ValueError("length.csv mismatch with edges.csv")
-if e_rad.shape[0] != nE or e_rad_atlas.shape[0] != nE: raise ValueError("radii_edge mismatch with edges.csv")
-if gs.shape[0] != nE or ge.shape[0] != nE: raise ValueError("edge_geometry_indices mismatch with edges.csv")
-if ann_geom.shape[0] != nP: raise ValueError("edge_geometry_annotation length mismatch with geometry coords")
-if r_geom.shape[0] != nP: raise ValueError("edge_geometry_radii length mismatch with geometry coords")
-if r_atlas_geom.shape[0] != nP: raise ValueError("edge_geometry_radii_atlas length mismatch with geometry coords")
-
-# =============================================================================
-# Geometry arrays (mutable copies)
-# =============================================================================
-x = geom_xyz[:, 0].copy()
-y = geom_xyz[:, 1].copy()
-z = geom_xyz[:, 2].copy()
-
-# =============================================================================
-# Build igraph
-# =============================================================================
-e_nkind = np.full(nE, 4, dtype=np.int16)  # default capillary
-e_nkind[e_art == 1] = 2
-e_nkind[e_vein == 1] = 3
-
-G = ig.Graph(n=nV, edges=edges.tolist(), directed=False)
-G.vs["id"] = vid.tolist()
-G.es["nkind"] = e_nkind.tolist()
-
-# per-edge step count
-G.es["length_steps"] = e_len_steps.astype(np.float32).tolist()
-
-# other edge attrs
-G.es["radius"] = e_rad.tolist()
-G.es["radius_atlas"] = e_rad_atlas.tolist()
-G.es["diameter"] = (2 * e_rad).tolist()
-G.es["diameter_atlas"] = (2 * e_rad_atlas).tolist()
-G.es["geom_start"] = gs.tolist()
-G.es["geom_end"] = ge.tolist()
-
-# =============================================================================
-# Reorient polylines (in-place)
-# =============================================================================
-edgesG = np.asarray(G.get_edgelist(), dtype=np.int64)
-_ = reorient_edge_geometry_to_vertices(
-    edges=edgesG,
-    geom_start=gs,
-    geom_end=ge,
-    x=x, y=y, z=z,
-    coords_image=coords_img,
-    ann_geom=ann_geom,
-    r_geom_list=[r_geom, r_atlas_geom],
-    tol=1e-6,
-    verbose=True,
-)
-
-# derived atlas diameter AFTER flips
-diam_atlas_geom = (2.0 * r_atlas_geom).astype(np.float32, copy=False)
-
-# =============================================================================
-# lengths2 (global) = Euclidean distances between consecutive geometry points (VOX)
-# =============================================================================
-dx = np.diff(x.astype(np.float64))
-dy = np.diff(y.astype(np.float64))
-dz = np.diff(z.astype(np.float64))
-lengths2 = np.sqrt(dx*dx + dy*dy + dz*dz).astype(np.float32)
-lengths2 = np.append(lengths2, np.float32(0.0))
-
-# kill cross-edge jumps in the global array
-boundary_idx = (ge - 1).astype(np.int64, copy=False)
-boundary_idx = boundary_idx[(boundary_idx >= 0) & (boundary_idx < lengths2.shape[0])]
-lengths2[boundary_idx] = np.float32(0.0)
-
-# =============================================================================
-# length (per edge) = sum(lengths2[s:en-1]) 
-# =============================================================================
-start_idx = gs.astype(np.int64, copy=False)
-end_idx   = ge.astype(np.int64, copy=False)
-
-seg = lengths2[:-1].astype(np.float64, copy=False)          # only true segments
-pref = np.concatenate([[0.0], np.cumsum(seg)])              # pref[k] = sum(seg[0:k])
-
-length_edge = (pref[end_idx - 1] - pref[start_idx]).astype(np.float32)
-length_edge[(end_idx - start_idx) < 2] = 0.0
-G.es["length"] = length_edge.tolist()
-
-# =============================================================================
-# Sanity checks
-# =============================================================================
-sanity_length_is_segcount_or_raise(e_len_steps, gs, ge, tol=0.0, max_report=10)
-sanity_length_equals_sum_lengths2_or_raise(length_edge, gs, ge, lengths2, n_check=10, seed=0, tol=1e-3)
-
-ok_rad = sanity_e_rad_equals_max_r_geom(e_rad, gs, ge, r_geom, n_check=5, seed=0, tol=1e-6)
-print("All 5 radius checks OK?", ok_rad)
-
-ok_rad_atlas = sanity_e_rad_atlas_equals_max_r_atlas_geom(e_rad_atlas, gs, ge, r_atlas_geom, n_check=5, seed=0, tol=1e-6)
-print("All 5 atlas radius checks OK?", ok_rad_atlas)
-
-# =============================================================================
-# Tortuosity (use REAL tortuous length in vox)
-# =============================================================================
-straight_dist = np.zeros(nE, dtype=np.float32)
-for ei in range(nE):
-    s = int(gs[ei]); en = int(ge[ei])
-    if en - s < 2:
-        continue
-    ddx = x[en - 1] - x[s]
-    ddy = y[en - 1] - y[s]
-    ddz = z[en - 1] - z[s]
-    straight_dist[ei] = np.sqrt(ddx * ddx + ddy * ddy + ddz * ddz)
-
-tortuosity = np.full(nE, np.nan, dtype=np.float32)
-mask = straight_dist >= float(MIN_STRAIGHT_DIST)
-tortuosity[mask] = length_edge[mask] / straight_dist[mask]
-G.es["tortuosity"] = tortuosity.tolist()
-
-# (optional) keep step-based tortuosity too
-tortuosity_steps = np.full(nE, np.nan, dtype=np.float32)
-tortuosity_steps[mask] = e_len_steps[mask] / straight_dist[mask]
-G.es["tortuosity_steps"] = tortuosity_steps.tolist()
-
-# metadata (so you never forget)
-G["unit"] = "voxels"
-G["coords_unit"] = "voxels"
-G["length_unit"] = "voxels (euclidean length)"
-G["length_steps_unit"] = "steps"
-G["lengths2_unit"] = "voxels"
-G["length_definition"] = "length = sum(lengths2) per edge; lengths2 are Euclidean distances between consecutive geometry points; length_steps is segment count."
-
-print("Tortuosity computed (arc-length in vox)")
-print("  NaN:", int(np.sum(~mask)))
-print("  Max:", float(np.nanmax(tortuosity)))
-
-# =============================================================================
-# Save (pseudo-json)
-# =============================================================================
-data = {
-    "graph": G,
-    "vertex": {
-        "id": vid,
-        "coords": coords_atlas,
-        "coords_image": coords_img,
-        "vertex_annotation": v_ann,
-        "distance_to_surface": v_dist,
-        "radii": v_radii,
-        "radii_atlas": v_radii_atlas,
-    },
-    "geom": {
-        "x": x,
-        "y": y,
-        "z": z,
-        "lengths2": lengths2,                 # distances between points
-        "annotation": ann_geom,
-        "radii": r_geom,
-        "radii_atlas_geom": r_atlas_geom,
-        "diam_atlas_geom": diam_atlas_geom,
-    },
-}
-
-data_summary_pseudojson(data)
-
-os.makedirs(os.path.dirname(OUT_PATH), exist_ok=True)
-with open(OUT_PATH, "wb") as f:
-    pickle.dump(data, f, protocol=pickle.HIGHEST_PROTOCOL)
-
-print("Saved graph to:", OUT_PATH)
-print("=== DONE ===")
+    convert_outgeom_pkl_to_um(
+        in_path=in_path,
+        out_path=None,
+        res_um_per_vox=(1.625, 1.625, 2.5),
+        atlas_um_per_vox=25.0,
+        min_straight_dist_um=1.0,
+    )
