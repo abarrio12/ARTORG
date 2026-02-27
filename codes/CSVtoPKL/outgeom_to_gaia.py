@@ -1,3 +1,13 @@
+'''
+This code reformats the attributes into Gaia's structure so data is stored at edge/vertex level. 
+
+Be aware of the space you are working with. Depending on space, different attributes are considered. 
+
+This code exports in the unit you pass as parameter. THere is no conversion here. 
+
+Author: Ana
+Updated: 27 Feb 2026
+'''
 import numpy as np
 import igraph as ig
 
