@@ -318,11 +318,11 @@ def qc_border_nodes(G, coords_attr="coords"):
 
 if __name__ == "__main__":
     in_path  = "/home/ana/MicroBrain/output/formatted/graph_18_OutGeom_um_formatted.pkl"
-    out_path = "/home/ana/MicroBrain/output/formatted/graph_18_OutGeom_um_formatted_Hcut_gaia_like.pkl"
+    out_path = "/home/ana/MicroBrain/output/formatted/graph_18_OutGeom_um_formatted_Hcut2.pkl"
 
     # your requested box definition
     res_um_per_vox = np.array([1.625, 1.625, 2.5], dtype=float)
-    center_vox = np.array([2100, 4200, 750], dtype=float)
+    center_vox = np.array([1300,  3900, 1000], dtype=float)
     box_um = np.array([400, 400, 400], dtype=float)
 
     box = make_box_from_center_vox(center_vox, box_um, res_um_per_vox)
@@ -330,7 +330,7 @@ if __name__ == "__main__":
     G = ig.Graph.Read_Pickle(in_path)
 
     # debug: near-plane (optional sanity)
-    debug_near_plane_counts(G, box, coords_attr="coords", eps_um=5.0)
+    #debug_near_plane_counts(G, box, coords_attr="coords", eps_um=5.0)
 
     H = cut_formatted_graph_gaia_like(
         G,
