@@ -361,13 +361,8 @@ tortuosity_steps = np.full(nE, np.nan, dtype=np.float32)
 tortuosity_steps[mask] = e_len_steps[mask] / straight_dist[mask]
 G.es["tortuosity_steps"] = tortuosity_steps.tolist()
 
-# metadata (so you never forget)
-G["unit"] = "voxels"
-G["coords_unit"] = "voxels"
-G["length_unit"] = "voxels (euclidean length)"
-G["length_steps_unit"] = "steps"
-G["lengths2_unit"] = "voxels"
-G["length_definition"] = "length = sum(lengths2) per edge; lengths2 are Euclidean distances between consecutive geometry points; length_steps is segment count."
+# metadata
+G["unit"] = "voxels of image (res: 1.625 x 1.625 x 2.5)"
 
 print("Tortuosity computed (arc-length in vox)")
 print("  NaN:", int(np.sum(~mask)))
