@@ -1,14 +1,17 @@
 """
 Build vascular graph with indexed geometry (VOXEL SPACE)
 
-This script builds a vascular graph from ClearMap CSV exports and stores it
-as a pseudo-JSON PKL structure.
+IMPORTANT (based on what we learned)
+-----------------------------------
+- length.csv is NOT a geometric distance.
+- length.csv == number of polyline segments per edge:
+      length_steps = geom_end - geom_start - 1
+  (diagonals do NOT count extra; every tiny-step counts as 1)
 
-Key idea
---------
-- Keep igraph lightweight (topology + scalar edge attributes + geometry indices).
-- Store tortuous polylines globally in NumPy arrays under data["geom"].
-- Each edge stores only geom_start / geom_end indices into the global arrays.
+Therefore, in this VOX build file we store:
+- G.es["length_steps"]  : step-count length from CSV
+- (optionally also keep G.es["length"] = length_steps for compatibility)
+- geom["lengths2"]      : per-segment costs (1 inside edges, 0 at boundaries)
 
 Units
 -----

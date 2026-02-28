@@ -170,8 +170,8 @@ Your vessel data uses **three different measurement systems**. This can be compl
 
 ### Why Three Systems Exist
 
-1. **Scan Image Pixels** - Grid of the brain scan (1.625 µm in X/Y, 2.5 µm in Z)
-2. **Brain Atlas Units** - Standard reference used by neuroscientists (25 µm per unit)
+1. **Image-derived attributes** -  voxels of brain image grid (1.625 µm in X/Y, 2.5 µm in Z)
+2. **Atlas-derived attributes** - voxels of atlas grid (25 µm per voxel)
 3. **Micrometers** - Actual physical measurements
 
 The key: **track which system your file uses**.

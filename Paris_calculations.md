@@ -23,17 +23,41 @@ $$r_{vertex} = \max(r_1, r_2, r_3, ..., r_n)$$
 
 where $r_1, r_2, ..., r_n$ are the radii of each individual point in the polyline. This maximum radius value is then assigned to both endpoints (vertices) of the edge.
 
-### 3. Length of the Edge
+### 3. Length of the edges (tortuous graph)
 
-**Measurement unit:** Voxels from the original image (resolution 1.625 × 1.625 × 2.5 μm)
+Euclidean per adjacency edge (diagonals weighted, spacing-aware).
+
+First, they compute the lengths from the tortuous graph. with https://github.com/ClearAnatomics/ClearMap/blob/6d6e37f98457b821fb9f8a56cd7b4cb048bf272e/ClearMap/Analysis/graphs/graph_processing.py#L107 they annotate the edge lengths, 
+taking the two nodes and calculating euclidean distance but taking into account that if the neighbour is in straight 
+distance is 1 voxel, but if it is in a diagonal is sqrt(2) or sqrt(3) and scaled by the spacing (image resolution). So then
+length is already rescaled to um. 
+
+Here is the building the graph where they assign this length: https://github.com/ClearAnatomics/ClearMap/blob/6d6e37f98457b821fb9f8a56cd7b4cb048bf272e/ClearMap/Analysis/graphs/graph_processing.py#L317C1-L319C73
+
+
+### 4. Length of the Edge (non tortuous graph)
+
+**Measurement unit:** um?
 
 **How it is calculated:** For the tortuous graph, the edge length is computed by summing the distances between all consecutive points along the line segment (polyline):
 
-$$L_{edge} = \sum_{i=1}^{n-1} d(p_i, p_{i+1})$$
+$$L_{edge} = \sum_{i=1}^{n-1} d(p_i, p_{i+1})$$ 
+https://github.com/ClearAnatomics/ClearMap/blob/6d6e37f98457b821fb9f8a56cd7b4cb048bf272e/ClearMap/Analysis/graphs/graph_processing.py#L946
 
 where $p_1, p_2, ..., p_n$ are the points in the polyline and $d(p_i, p_{i+1})$ is the Euclidean distance between consecutive points. This gives the total path length along the tortuous path rather than just the straight-line distance between endpoints.
 
-### 4. Radii in Atlas Space
+THis is done in the reduction of the graph. https://github.com/ClearAnatomics/ClearMap/blob/6d6e37f98457b821fb9f8a56cd7b4cb048bf272e/ClearMap/Analysis/graphs/graph_processing.py#L884C1-L887C41 
+
+Note: length.csv = n segments = (geom end - geom start -1)
+so it means:
+- how many 26-connected skeleton steps the vessel has inside the edge
+-  not euclidean distance, not physical length.
+- diagonals count the same as axis moves (each step = 1)
+https://github.com/ClearAnatomics/ClearMap/blob/6d6e37f98457b821fb9f8a56cd7b4cb048bf272e/ClearMap/Analysis/graphs/graph_processing.py#L1227C1-L1282C17
+
+
+
+### 5. Radii in Atlas Space
 
 **How it is calculated:** The vertex radii are rescaled from the original image space to the atlas space (25 μm voxel grid). This rescaling uses a transformation factor computed from the dimensions of the source and target images:
 
