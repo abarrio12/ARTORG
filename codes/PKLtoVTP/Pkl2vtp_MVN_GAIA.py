@@ -66,7 +66,6 @@ def WriteOnFileVTP(filename, vertices_array, connectivity_array, point_data, cel
     with open(filename, 'w') as vtkOutput:
         vtkOutput.write(xml.tostring(vtkTag, pretty_print=True, encoding="unicode"))
 
-
 def write_vtp(graph, filename, tortuous=True, verbose=False):
     """
         INPUT:
@@ -118,39 +117,37 @@ def write_vtp(graph, filename, tortuous=True, verbose=False):
 
     # Make a copy of the graph to avoid modifying the original
     G = deepcopy(graph)
+    
+    # We maintain the index attributes, but we will rely on graph topology for connectivity
     G.vs['index'] = list(range(G.vcount()))
     if G.ecount() > 0:
         G.es['index'] = list(range(G.ecount())) 
 
-    pBC_array = None
-    pressure_array = None
-
-
     # Delete self-loops
     G.delete_edges(np.nonzero(G.is_loop())[0].tolist())
-
-    
 
     ############################################################################
     # --> PAY ATTENTION TO THE UNITS FOR THE DEFINITION OF THE MINIMUM DISTANCE !!!
     ############################################################################
 
-    ############################################################################
     # Select and delete the edges with length 0
+    # FIX: We use edge.tuple (live indices) instead of 'connectivity' attribute
+    edges_to_remove = []
     for edge in G.es:
-        ps = G.es[edge.index]['points']
-        v1 = G.es[edge.index]['connectivity'][0]
-        v2 = G.es[edge.index]['connectivity'][1]
+        v1, v2 = edge.tuple
+        ps = edge['points']
+        
         if distance(G.vs[v1]['coords'], G.vs[v2]['coords']) < 0.01 * 1e-6:
             ps = [G.vs[v1]['coords'], G.vs[v2]['coords']]
-            G.es[edge.index]['length'] = 0.0
+            edge['length'] = 0.0
+            edges_to_remove.append(edge.index)
+        
         # remove possibly repeated points in points
         ps = [ps[0], *[p for i, p in enumerate(ps[1:]) if distance(p, ps[i]) > 0.01 * 1e-6]]
         if len(ps) < 2:
             ps = [G.vs[v1]['coords'], G.vs[v2]['coords']]
-        G.es[edge.index]['points'] = ps
+        edge['points'] = ps
 
-    edges_to_remove = [e.index for e in G.es if e['length'] == 0]
     G.delete_edges(edges_to_remove)
     ############################################################################
 
@@ -161,19 +158,23 @@ def write_vtp(graph, filename, tortuous=True, verbose=False):
             G.vs[substance] = [v['substance'][substance] for v in G.vs]
         del G.vs['substance']
 
-    # Find unconnected vertices (indices)
+    # Find unconnected vertices (indices) and delete them
     disconnected_vertices = [v.index for v in G.vs if G.degree(v) == 0]
     G.delete_vertices(disconnected_vertices)
 
-    vertices_array = G.vs["coords"]
-    if pBC_array is not None: # << added by ana to comply with Paris graph (no pBC attribute)
+    # Prepare base point arrays from the cleaned graph
+    vertices_array = list(G.vs["coords"])
+    
+    # Check for optional attributes safely
+    pBC_array = None
+    if 'pBC' in G.vs.attribute_names():
         pBC_array = [-1000 if value is None else value for value in G.vs['pBC']]
-    #degree_array = G.vs["degree"]
-    if pressure_array is not None: # << added by ana to comply with Paris graph (no pressure attribute)
-        pressure_array = G.vs["pressure"]
-    new_vertex_index_array = [*[j for j in range(len(vertices_array))]]
+        
+    pressure_array = None
+    if 'pressure' in G.vs.attribute_names():
+        pressure_array = list(G.vs["pressure"])
 
-
+    new_vertex_index_array = [float(j) for j in range(len(vertices_array))]
 
     if tortuous:
         connectivity_array = []
@@ -185,7 +186,6 @@ def write_vtp(graph, filename, tortuous=True, verbose=False):
         diameters_edge_array = []
         lengths2_edge_array = []
 
-
         # go over direct edges (bifurcation->bifurcation) and add tortuous points for each segment
         #
         # B.___________________________________.B    direct edge
@@ -193,12 +193,21 @@ def write_vtp(graph, filename, tortuous=True, verbose=False):
         #         \_______________/   \__/           tortuous edges
         #
         print("-- Processing tortuous edges...")
-        edge_index = 0
-        for edge, vessel_length, ps, vessel_diameter, nkind, diameters, lengths2 in zip(
-                G.es["connectivity"], G.es["length"], G.es["points"], G.es["diameter"], G.es["nkind"],
-                G.es["diameters"], G.es["lengths2"]):
+        
+        # FIX: iterate over edge objects to get LIVE source/target indices
+        for edge_obj in G.es:
+            ps = edge_obj['points']
+            vessel_length = edge_obj['length']
+            vessel_diameter = edge_obj['diameter']
+            nkind = edge_obj['nkind']
+            diameters = edge_obj['diameters']
+            lengths2 = edge_obj['lengths2']
+            edge_index = edge_obj.index # The current edge ID
+
             assert len(ps) >= 2
-            assert len(edge) == 2
+            
+            node_0 = edge_obj.source
+            node_1 = edge_obj.target
 
             firstIndex = len(vertices_array)
             R = 0.5 * vessel_diameter
@@ -208,35 +217,27 @@ def write_vtp(graph, filename, tortuous=True, verbose=False):
                 step = 1 / 1000
             else:
                 step = 1 / 10
-            V = np.asarray(vertices_array)
-                # new points and point data only if there is tortuous segments
-            if len(np.where(np.all(V == ps[0], axis=1))[0]) == 1:
-                if edge[0] != int(np.where(np.all(V == ps[0], axis=1))[0]):
-                    node_0 = edge[1]
-                    node_1 = edge[0]
-                else:
-                    node_0 = edge[0]
-                    node_1 = edge[1]
-            elif len(np.where(np.all(V == ps[-1], axis=1))[0]) == 1:
-                if edge[1] != int(np.where(np.all(V == ps[-1], axis=1))[0]):
-                    node_0 = edge[1]
-                    node_1 = edge[0]
-                else:
-                    node_0 = edge[0]
-                    node_1 = edge[1]
+
+            # ORIENTATION CHECK: Ensure ps[0] is physically near node_0
+            # This replaces the unreliable 'np.where' search
+            dist_0_start = distance(vertices_array[node_0], ps[0])
+            dist_0_end = distance(vertices_array[node_0], ps[-1])
+            if dist_0_start > dist_0_end:
+                ps = ps[::-1]
 
             if n_points > 2:
-                vertices_array += ps[1:-1]  # add points except first and last which is the bifurcation point (already in the list)
+                vertices_array += ps[1:-1]  # add points except first and last
                 if pBC_array is not None:
                     pBC_array += [-1000, ] * (n_points - 2)
-                #degree_array += [2, ] * (n_points - 2)
-                new_vertex_index_array += [*[edge_index + j * step for j in range(1, n_points-1)]]  # adding also the bifurcation point (first and last)
+                
+                new_vertex_index_array += [edge_index + j * step for j in range(1, n_points-1)]
+                
                 if pressure_array is not None:
                     p1, p2 = pressure_array[node_0], pressure_array[node_1]
                     step_pr = (p2 - p1) / (n_points - 1.0)
-                    pressure_array += [*[p1 + j * step_pr for j in range(1, n_points - 1)]]  # add points except first and last
+                    pressure_array += [p1 + j * step_pr for j in range(1, n_points - 1)]
 
-            # append tortuous edges
+            # append tortuous edges (the connectivity "thread")
             assert n_points >= 2
             if n_points == 2:
                 new_cells = [(node_0, node_1)]
@@ -248,56 +249,65 @@ def write_vtp(graph, filename, tortuous=True, verbose=False):
                              (firstIndex + n_points - 3, node_1)]
 
             connectivity_array += new_cells
-            radius_array += [R, ] * len(new_cells)
-            vessel_diameter_array += [vessel_diameter, ] * len(new_cells)
-            vessel_length_array += [vessel_length, ] * len(new_cells)
-            vessel_nkind_array += [nkind, ] * len(new_cells)
-            edge_index_array += [*[edge_index + j * step for j in range(len(new_cells))]]
-            diameters_edge_array += [*[(diameters[j] + diameters[j + 1]) / 2 for j in range(len(diameters) - 1)]]
-            lengths2_edge_array += [*[j for j in lengths2]]
-            edge_index += 1
+            num_new_segs = len(new_cells)
+            
+            radius_array += [R, ] * num_new_segs
+            vessel_diameter_array += [vessel_diameter, ] * num_new_segs
+            vessel_length_array += [vessel_length, ] * num_new_segs
+            vessel_nkind_array += [nkind, ] * num_new_segs
+            edge_index_array += [edge_index + j * step for j in range(num_new_segs)]
+            
+            if diameters is not None:
+                diameters_edge_array += [(diameters[j] + diameters[j + 1]) / 2 for j in range(len(diameters) - 1)]
+            if lengths2 is not None:
+                lengths2_edge_array += [j for j in lengths2]
 
-        
+        # Prepare final point data dict
+        p_data = {"index": new_vertex_index_array}
+        if pBC_array is not None: p_data["pBC"] = pBC_array
+        if pressure_array is not None: p_data["pressure"] = pressure_array
+
         WriteOnFileVTP(
             filename=filename,
             vertices_array=vertices_array,
             connectivity_array=connectivity_array,
-            point_data={#"pBC": pBC_array, "pressure": pressure_array, "degree": degree_array,
-                        "index": new_vertex_index_array},
-            cell_data={"connectivity": connectivity_array, "radius": radius_array,
-                       "vessel_diameter": vessel_diameter_array, "vessel_nkind": vessel_nkind_array,
-                       "vessel_length": vessel_length_array, "index": edge_index_array, "lengths2": lengths2_edge_array,
-                       "diameters": diameters_edge_array},
+            point_data=p_data,
+            cell_data={
+                "connectivity": connectivity_array, 
+                "radius": radius_array,
+                "vessel_diameter": vessel_diameter_array, 
+                "vessel_nkind": vessel_nkind_array,
+                "vessel_length": vessel_length_array, 
+                "index": edge_index_array, 
+                "lengths2": lengths2_edge_array,
+                "diameters": diameters_edge_array
+            },
         )
 
     else:
-        
-        connectivity_non_tortuous = G.es["connectivity"]
-        nkind_non_tortuous = G.es["nkind"]
-        length_non_tortuous = G.es["length"]
-        diameter_non_tortuous = G.es["diameter"]
-
+        # NON-TORTUOUS: Direct source -> target mapping
+        connectivity_non_tortuous = [(e.source, e.target) for e in G.es]
         
         WriteOnFileVTP(
             filename=filename,
             vertices_array=vertices_array,
             connectivity_array=connectivity_non_tortuous,
-            point_data={#"pBC": pBC_array, "pressure": pressure_array,#"degree": degree_array,
-                        "index": new_vertex_index_array, },
-            cell_data={"connectivity": connectivity_non_tortuous, "diameter": diameter_non_tortuous, "length": length_non_tortuous, "nkind": nkind_non_tortuous},
+            point_data={"index": new_vertex_index_array},
+            cell_data={
+                "connectivity": connectivity_non_tortuous, 
+                "diameter": G.es["diameter"], 
+                "length": G.es["length"], 
+                "nkind": G.es["nkind"]
+            },
         )
-
-
 # Load a graph from a pickle file
-input_igraph_pkl_path = "/home/admin/Ana/MicroBrain/output/um_gaia/graph_18_OutGeom_Hcut1_um_gaia.pkl"
-
+input_igraph_pkl_path = "/home/admin/Ana/MicroBrain/output/um_gaia/formatted/graph_18_OutGeom_um_formatted_Hcut3.pkl"
 
 graph = igraph.Graph.Read_Pickle(input_igraph_pkl_path)
 #print(graph.summary())
 
 
-output_path = "/home/admin/Ana/MicroBrain/output/vtp/pkltovtp_GAIA/"
+output_path = "/home/admin/Ana/MicroBrain/output/vtp/formatted/"
 
-
-write_vtp(graph, output_path+'graph_18_OutGeom_Hcut1_um_gaia.vtp', tortuous=True)
-write_vtp(graph, output_path+'graph_18_OutGeom_Hcut1_um_gaia_straight.vtp', tortuous=False)
+write_vtp(graph, output_path+'graph_18_OutGeom_um_formatted_Hcut3_tortuous.vtp', tortuous=True)
+write_vtp(graph, output_path+'graph_18_OutGeom_um_formatted_Hcut3_straight.vtp', tortuous=False)

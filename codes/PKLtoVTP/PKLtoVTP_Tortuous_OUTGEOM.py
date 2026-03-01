@@ -19,7 +19,7 @@ import numpy as np
 
 import os
 
-name  = "graph_18_OutGeom_Hcut1"   # base name (no extension)
+name  = "graph_18_OutGeom_Hcut3"   # base name (no extension)
 space = "um"                       # "um" o "vox" IN PATH
 tag = "_um" if space == "um" else "_vox" # IN PATH
 
