@@ -310,6 +310,111 @@ def diameter_stats_nkind(
 
 
 # ======================================================================
+# Diameter proxy ratios (unitless) — recommended when diameter is atlas-based
+# ======================================================================
+# The idea of these section is to try to find a factor/"patter" in between
+# the values of diameter for the vessels and see if it is consistent across
+# the boxes. This is due to using atlas attr, as we cant do a proper 
+# comparison with literature.
+
+def _finite_pos(x):
+    x = np.asarray(x, float)
+    x = x[np.isfinite(x)]
+    return x[x > 0]
+
+def diameter_proxy_ratios_nkind(
+    G: ig.Graph,
+    graph_name="",
+    diameter_attr="diameter",
+    nkind_attr="nkind",
+    label_dict=EDGE_NKIND_TO_LABEL,
+):
+    """
+    Compute unitless diameter ratios by vessel type.
+    This is the safe thing to do when `diameter` is an atlas-derived proxy:
+      - Do NOT interpret absolute diameter values
+      - Compare ratios across boxes/types
+
+    Returns a dict (one row) suitable for pd.DataFrame([...]).
+    """
+    check_attr(G, [diameter_attr, nkind_attr], "es")
+
+    D = np.asarray(G.es[diameter_attr], float)
+    nk = np.asarray(G.es[nkind_attr], int)
+
+    # Per-type medians (proxy scale, but useful for ratios)
+    med = {}
+    medlog = {}
+    n = {}
+
+    for k in sorted(np.unique(nk)):
+        x = _finite_pos(D[nk == k])
+        n[int(k)] = int(x.size)
+        med[int(k)] = float(np.median(x)) if x.size else np.nan
+        medlog[int(k)] = float(np.median(np.log(x))) if x.size else np.nan  # robust on log scale
+
+    # Convenience getters
+    def M(k): return med.get(int(k), np.nan)
+    def L(k): return medlog.get(int(k), np.nan)
+
+    # Unitless ratios vs capillary (nkind=4)
+    ratio_A_C = (M(2) / M(4)) if np.isfinite(M(2)) and np.isfinite(M(4)) and M(4) > 0 else np.nan
+    ratio_V_C = (M(3) / M(4)) if np.isfinite(M(3)) and np.isfinite(M(4)) and M(4) > 0 else np.nan
+    ratio_A_V = (M(2) / M(3)) if np.isfinite(M(2)) and np.isfinite(M(3)) and M(3) > 0 else np.nan
+
+    # Log differences (unitless): exp(diff) ≈ typical ratio (robust)
+    dlog_A_C = (L(2) - L(4)) if np.isfinite(L(2)) and np.isfinite(L(4)) else np.nan
+    dlog_V_C = (L(3) - L(4)) if np.isfinite(L(3)) and np.isfinite(L(4)) else np.nan
+    dlog_A_V = (L(2) - L(3)) if np.isfinite(L(2)) and np.isfinite(L(3)) else np.nan
+
+    out = {
+        "graph": graph_name,
+
+        # counts
+        "n_arteriole": n.get(2, 0),
+        "n_venule": n.get(3, 0),
+        "n_capillary": n.get(4, 0),
+
+        # medians (proxy µm; keep for context, but don’t interpret biologically)
+        "median_D_arteriole_proxy_um": M(2),
+        "median_D_venule_proxy_um": M(3),
+        "median_D_capillary_proxy_um": M(4),
+
+        # unitless ratios (recommended)
+        "ratio_median_A_over_C": ratio_A_C,
+        "ratio_median_V_over_C": ratio_V_C,
+        "ratio_median_A_over_V": ratio_A_V,
+
+        # log-ratio equivalents (robust)
+        "median_logD_A_minus_C": dlog_A_C,
+        "median_logD_V_minus_C": dlog_V_C,
+        "median_logD_A_minus_V": dlog_A_V,
+        "exp_median_logD_A_minus_C": float(np.exp(dlog_A_C)) if np.isfinite(dlog_A_C) else np.nan,
+        "exp_median_logD_V_minus_C": float(np.exp(dlog_V_C)) if np.isfinite(dlog_V_C) else np.nan,
+        "exp_median_logD_A_minus_V": float(np.exp(dlog_A_V)) if np.isfinite(dlog_A_V) else np.nan,
+    }
+    return out
+
+def summarize_ratio_stability(df: pd.DataFrame, cols=("ratio_median_A_over_C", "ratio_median_V_over_C")):
+    """
+    Print a quick stability summary across boxes.
+    """
+    print("\n=== Diameter proxy ratio stability across boxes ===")
+    for c in cols:
+        if c not in df.columns:
+            print(f"{c}: missing")
+            continue
+        x = np.asarray(df[c], float)
+        x = x[np.isfinite(x)]
+        if x.size == 0:
+            print(f"{c}: no finite values")
+            continue
+        sd = float(np.std(x, ddof=1)) if x.size > 1 else 0.0
+        mean = float(np.mean(x))
+        cv = sd / mean if mean != 0 else np.nan
+        print(f"{c}: mean={mean:.3f}  sd={sd:.3f}  CV={cv:.3f}  min={float(x.min()):.3f}  max={float(x.max()):.3f}")
+
+# ======================================================================
 # Plotting: general
 # ======================================================================
 
@@ -951,12 +1056,14 @@ def plot_bc_3_cubes_tinted(
     plt.show()
 
 
+
 # ======================================================================
 # Density from formatted edges (microsegments)
 # ======================================================================
-
 def microsegments_from_formatted_graph(G: ig.Graph):
-    check_attr(G, ["points", "diameters", "nkind"], "es")
+    check_attr(G, ["points", "nkind"], "es")
+    has_dpts = ("diameters" in G.es.attributes())
+    has_dedge = ("diameter" in G.es.attributes())
 
     mids, lens, nk, r0s, r1s = [], [], [], [], []
 
@@ -965,29 +1072,37 @@ def microsegments_from_formatted_graph(G: ig.Graph):
         if pts.shape[0] < 2:
             continue
 
+        # 1) Prefer per-point diameters if present + aligned + finite
         d = None
-        if "diameters" in G.es.attributes() and e["diameters"] is not None:
+        if has_dpts and e["diameters"] is not None:
             dd = np.asarray(e["diameters"], float)
-            if dd.shape[0] == pts.shape[0]:
+            if dd.shape[0] == pts.shape[0] and np.all(np.isfinite(dd)) and np.all(dd > 0):
                 d = dd
+
+        # 2) Fallback: use scalar edge diameter repeated
+        if d is None and has_dedge:
+            de = e["diameter"]
+            if de is not None and np.isfinite(de) and de > 0:
+                d = np.full(pts.shape[0], float(de), dtype=float)
+
+        # If still no diameter info, we cannot compute volume reliably -> skip this edge
+        if d is None:
+            continue
 
         nkind_e = int(e["nkind"]) if e["nkind"] is not None else -1
 
         for i in range(pts.shape[0] - 1):
             p0 = pts[i]; p1 = pts[i + 1]
             L = float(np.linalg.norm(p1 - p0))
-            if L <= 0:
+            if not np.isfinite(L) or L <= 0:
                 continue
 
             mids.append(((p0 + p1) * 0.5).tolist())
             lens.append(L)
             nk.append(nkind_e)
 
-            if d is not None:
-                r0s.append(float(d[i]) * 0.5)
-                r1s.append(float(d[i + 1]) * 0.5)
-            else:
-                r0s.append(np.nan); r1s.append(np.nan)
+            r0s.append(0.5 * float(d[i]))
+            r1s.append(0.5 * float(d[i + 1]))
 
     return {
         "midpoints": np.asarray(mids, float),
@@ -996,6 +1111,7 @@ def microsegments_from_formatted_graph(G: ig.Graph):
         "r0": np.asarray(r0s, float),
         "r1": np.asarray(r1s, float),
     }
+
 
 def count_microsegments_by_nkind(ms, label_map=None):
     if label_map is None:
@@ -1007,13 +1123,15 @@ def count_microsegments_by_nkind(ms, label_map=None):
     print(f"  TOTAL micro-segments: {len(nk)}")
     return out
 
+
 def vessel_vol_frac_slabs_in_box(ms, box, slab, axis="z"):
     validate_box_faces(box)
 
     mids = ms["midpoints"]
     L = ms["lengths"]
     nk = ms["nkind"]
-    r0 = ms["r0"]; r1 = ms["r1"]
+    r0 = ms["r0"]
+    r1 = ms["r1"]
 
     if not (np.all(np.isfinite(r0)) and np.all(np.isfinite(r1))):
         raise ValueError("microsegment radii contain NaN/inf (missing diameters?)")
@@ -1027,7 +1145,12 @@ def vessel_vol_frac_slabs_in_box(ms, box, slab, axis="z"):
         (mids[:, 2] >= box["zmin"]) & (mids[:, 2] <= box["zmax"])
     )
 
-    mids = mids[inside]; d = d[inside]; L = L[inside]; nk = nk[inside]; r0 = r0[inside]; r1 = r1[inside]
+    mids = mids[inside]
+    d = d[inside]
+    L = L[inside]
+    nk = nk[inside]
+    r0 = r0[inside]
+    r1 = r1[inside]
 
     dmin = float({"x": box["xmin"], "y": box["ymin"], "z": box["zmin"]}[axis])
     dmax = float({"x": box["xmax"], "y": box["ymax"], "z": box["zmax"]}[axis])
@@ -1044,7 +1167,7 @@ def vessel_vol_frac_slabs_in_box(ms, box, slab, axis="z"):
         A = (box["xmax"] - box["xmin"]) * (box["ymax"] - box["ymin"])
 
     rmean = 0.5 * (r0 + r1)
-    amount = np.pi * (rmean ** 2) * L
+    amount = np.pi * (rmean ** 2) * L  # vessel volume per microsegment
 
     rows = []
     kinds = np.unique(nk)
@@ -1074,6 +1197,7 @@ def vessel_vol_frac_slabs_in_box(ms, box, slab, axis="z"):
     print(df)
     return df
 
+
 def plot_density_slabs(df, title, out_png=None):
     if df is None or df.empty:
         return
@@ -1095,6 +1219,148 @@ def plot_density_slabs(df, title, out_png=None):
         fig.savefig(out_png, dpi=200)
     plt.show()
 
+
+# ======================================================================
+# Density extras: total-in-box + whole-region depth profile
+# ======================================================================
+
+def vessel_vol_frac_total_in_box(ms, box):
+    """
+    ONE number for vessel density inside a box:
+      total_vol_frac = total vessel volume / tissue volume(box)
+
+    Uses the same microsegment cylinder model as vessel_vol_frac_slabs_in_box().
+
+    Returns a dict with:
+      - tissue_vol
+      - vessel_vol
+      - total_vol_frac
+      - optional per-type *_vol_frac (arteriole/venule/capillary) if present
+    """
+    validate_box_faces(box)
+
+    mids = ms["midpoints"]
+    L = ms["lengths"]
+    nk = ms["nkind"]
+    r0 = ms["r0"]
+    r1 = ms["r1"]
+
+    if not (np.all(np.isfinite(r0)) and np.all(np.isfinite(r1))):
+        raise ValueError("microsegment radii contain NaN/inf (missing diameters?)")
+
+    inside = (
+        (mids[:, 0] >= box["xmin"]) & (mids[:, 0] <= box["xmax"]) &
+        (mids[:, 1] >= box["ymin"]) & (mids[:, 1] <= box["ymax"]) &
+        (mids[:, 2] >= box["zmin"]) & (mids[:, 2] <= box["zmax"])
+    )
+
+    L = L[inside]
+    nk = nk[inside]
+    r0 = r0[inside]
+    r1 = r1[inside]
+
+    tissue_vol = float((box["xmax"] - box["xmin"]) *
+                       (box["ymax"] - box["ymin"]) *
+                       (box["zmax"] - box["zmin"]))
+
+    if tissue_vol <= 0:
+        return {"tissue_vol": tissue_vol, "vessel_vol": np.nan, "total_vol_frac": np.nan}
+
+    rmean = 0.5 * (r0 + r1)
+    seg_vol = np.pi * (rmean ** 2) * L
+    vessel_vol = float(np.sum(seg_vol))
+
+    out = {
+        "tissue_vol": tissue_vol,
+        "vessel_vol": vessel_vol,
+        "total_vol_frac": vessel_vol / tissue_vol,
+    }
+
+    for k in np.unique(nk):
+        k = int(k)
+        if k not in EDGE_NKIND_TO_LABEL:
+            continue
+        vv = float(np.sum(seg_vol[nk == k]))
+        out[f"{EDGE_NKIND_TO_LABEL[k]}_vol_frac"] = vv / tissue_vol
+
+    return out
+
+
+def vessel_vol_frac_total_from_graph_in_box(G: ig.Graph, box: dict):
+    """
+    Convenience wrapper:
+      - builds microsegments from formatted graph
+      - returns vessel_vol_frac_total_in_box(ms, box)
+    """
+    ms = microsegments_from_formatted_graph(G)
+    return vessel_vol_frac_total_in_box(ms, box)
+
+
+def density_profile_by_depth_whole_region(
+    G: ig.Graph,
+    slab_um=50.0,
+    axis="z",
+    coords_attr="coords",
+):
+    """
+    Whole-region vessel density vs depth (relative 0→1).
+
+    1) REGION BOX = bounding box of vertex coords.
+    2) Slab volume fractions along axis via vessel_vol_frac_slabs_in_box().
+    3) Add rel_depth_0_1 from slab midpoints.
+
+    Returns: df_slabs, region_box
+
+    NOTE: Tissue volume per slab uses the REGION BOUNDING BOX cross-section
+          (absolute % may be approximate if region is not box-shaped).
+    """
+    P = get_coords(G, coords_attr=coords_attr)
+
+    region_box = {
+        "xmin": float(P[:, 0].min()), "xmax": float(P[:, 0].max()),
+        "ymin": float(P[:, 1].min()), "ymax": float(P[:, 1].max()),
+        "zmin": float(P[:, 2].min()), "zmax": float(P[:, 2].max()),
+    }
+    validate_box_faces(region_box)
+
+    ms = microsegments_from_formatted_graph(G)
+    df = vessel_vol_frac_slabs_in_box(ms, region_box, slab=float(slab_um), axis=axis)
+
+    mid = 0.5 * (df["slab_lo"].to_numpy(float) + df["slab_hi"].to_numpy(float))
+    dmin = float({"x": region_box["xmin"], "y": region_box["ymin"], "z": region_box["zmin"]}[axis])
+    dmax = float({"x": region_box["xmax"], "y": region_box["ymax"], "z": region_box["zmax"]}[axis])
+
+    if dmax > dmin:
+        rel = (mid - dmin) / (dmax - dmin)
+    else:
+        rel = np.full_like(mid, np.nan, dtype=float)
+
+    df["slab_mid"] = mid
+    df["rel_depth_0_1"] = rel
+    df["total_vol_frac_pct"] = df["total_vol_frac"].to_numpy(float) * 100.0
+
+    return df, region_box
+
+
+def plot_density_vs_relative_depth(df: pd.DataFrame, title="Density vs relative depth"):
+    """
+    Plot helper for density_profile_by_depth_whole_region().
+    Plots total volume fraction (%) vs rel_depth_0_1.
+    """
+    if df is None or df.empty:
+        return
+
+    x = df["rel_depth_0_1"].to_numpy(float)
+    y = df["total_vol_frac_pct"].to_numpy(float)
+
+    plt.figure(figsize=(7, 4.5))
+    plt.plot(x, y, marker="o", linewidth=1.5)
+    plt.title(title)
+    plt.xlabel("Relative depth (0→1)")
+    plt.ylabel("Vessel volume fraction per slab (%)")
+    plt.grid(alpha=0.25)
+    plt.tight_layout()
+    plt.show()
 
 # ======================================================================
 # Redundancy + AV paths

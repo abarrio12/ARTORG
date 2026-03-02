@@ -324,7 +324,7 @@ pref = np.concatenate([[0.0], np.cumsum(seg)])              # pref[k] = sum(seg[
 
 length_edge = (pref[end_idx - 1] - pref[start_idx]).astype(np.float32)
 length_edge[(end_idx - start_idx) < 2] = 0.0
-G.es["length"] = length_edge.tolist()
+G.es["length"] = length_edge.tolist() 
 
 # =============================================================================
 # Sanity checks

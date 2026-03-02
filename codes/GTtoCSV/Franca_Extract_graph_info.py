@@ -35,9 +35,11 @@ class ReadWriteGraph(object):
         array = self.graph.edge_properties.artery.get_array()
         self.saveFile(array, file)
 
+    # this length is not edge length, but the number of segments in between endpoints    
     def writeEdgePropertyLength(self, file = 'length.csv'):
         array = self.graph.edge_properties.length.get_array()
         self.saveFile(array, file)
+    
 
     def writeVertices(self, file = 'vertices.csv'):
         array = self.graph.get_vertices()
@@ -102,7 +104,7 @@ class ReadWriteGraph(object):
         v1 = numpy.transpose(self.graph.edge_properties.edge_geometry_indices.get_2d_array((0,1)))
 
         for k, i, j in zip(range(self.graph.num_edges()), v1[:,0], v1[:,1]-1):
-            self.edge_length[k] = numpy.sum(seg_length[i:j])
+            self.edge_length[k] = numpy.sum(seg_length[i:j]) # the edge length of "non tortuous" is computed here, but was never called when writing the graph
             edge_resistance[k] = numpy.sum(seg_resistance[i:j])
 
         self.edge_radii = self.computeEffectiveRadii(self.edge_length, edge_resistance)
@@ -125,6 +127,7 @@ class ReadWriteGraph(object):
         self.writeVertexPropertyRadiiAtlas()
         self.writeVertexPropertyAnnotation()
         self.writeVertexPropertyDistanceToSurface()
+        
 
 
 class QualityCheck(object):

@@ -13,7 +13,7 @@ from collections import Counter
 
 
 # -----------------------------
-# Box builder (your requested way)
+# Box builder 
 # -----------------------------
 def make_box_from_center_vox(center_vox, box_um, res_um_per_vox):
     center_vox = np.asarray(center_vox, float)

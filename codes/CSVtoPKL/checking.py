@@ -1,6 +1,6 @@
 import pickle
 import numpy as np
-
+import igraph as ig
 
 
 # ======================================================================
@@ -94,9 +94,64 @@ def print_edge_debug(pkl_path, ei=0, max_show=50):
 
     print("====================================================\n")
 
+def print_edge_debug_formatted_with_indices(pkl_path, ei=0):
+    """
+    Debugs a materialized edge to verify point-segment alignment.
+    In the formatted graph:
+    - len(points) = N
+    - len(lengths2) = N - 1
+    - len(diameters) = N
+    """
+    G = load_formatted_graph(pkl_path)
+    e = G.es[ei]
+
+    pts = e["points"]
+    l2  = e["lengths2"]
+    dia = e["diameters"]
+    
+    n_pts = len(pts)
+    n_seg = len(l2)
+    n_dia = len(dia)
+
+    print(f"\n==================== FORMATTED ALIGNMENT CHECK ====================")
+    print(f"Edge Index: {ei}")
+    print(f"Points (N):    {n_pts}")
+    print(f"Segments (N-1): {n_seg}")
+    print(f"Diameters (N): {n_dia}")
+
+    print("\n--- Structural Alignment ---")
+    if n_pts - 1 == n_seg:
+        print("✅ SUCCESS: Segment count (N-1) matches Point count (N).")
+    else:
+        print(f"❌ ERROR: Mismatch! Points={n_pts}, Segments={n_seg}. Should be {n_pts-1}.")
+
+    if n_pts == n_dia:
+        print("✅ SUCCESS: Diameter count matches Point count.")
+    else:
+        print(f"❌ ERROR: Mismatch! Points={n_pts}, Diameters={n_dia}.")
+
+    print("\n--- Local Index Trace (First 3 steps) ---")
+    # This shows how point i and point i+1 create segment i
+    for i in range(min(3, n_seg)):
+        p1 = np.array(pts[i])
+        p2 = np.array(pts[i+1])
+        dist_calc = np.linalg.norm(p2 - p1)
+        dist_stored = l2[i]
+        
+        print(f"Step {i}: Point[{i}] -> Point[{i+1}]")
+        print(f"  Calc Dist: {dist_calc:.6f} | Stored Dist: {dist_stored:.6f}")
+        print(f"  Point Diameter: {dia[i]:.4f}")
+
+    print("\n--- Edge Scalar Comparison ---")
+    sum_l2 = sum(l2)
+    stored_len = e["length"]
+    print(f"Sum of segments: {sum_l2:.6f}")
+    print(f"Stored length:   {stored_len:.6f}")
+    print(f"Difference:      {abs(sum_l2 - stored_len):.2e}")
+    
+    print("===================================================================\n")
 
 
-#print_edge_debug("/home/ana/MicroBrain/output/um/graph_18_OutGeom_um.pkl", ei=12, max_show=30)
 
 
 def print_edge_debug_um(pkl_path, ei=0, max_show=50):
@@ -514,15 +569,13 @@ def check_global_jump_is_zero(um_pkl, tol=1e-6):
 vox = "/home/ana/MicroBrain/output/graph_18_OutGeom.pkl"
 um  = "/home/ana/MicroBrain/output/um/graph_18_OutGeom_um.pkl"
 
-total_length_summary(vox, um)
-summarize_by_nkind(vox, space="vox")
-summarize_by_nkind(um,  space="um")
+#total_length_summary(vox, um)
+#summarize_by_nkind(vox, space="vox")
+#summarize_by_nkind(um,  space="um")
 
 #check_global_jump_is_zero(um, tol=1e-6)
 
-import pickle
-import numpy as np
-import igraph as ig
+
 
 
 # ============================================================
@@ -825,20 +878,97 @@ def topk_edges_formatted(pkl_path, attr="length", k=20):
     print("================================================================\n")
 
 
-# ============================================================
-# EXAMPLE RUN (EDIT PATHS)
-# ============================================================
-pkl_formatted = "/home/ana/MicroBrain/output/formatted/graph_18_OutGeom_um_formatted.pkl"
 
-summarize_formatted(pkl_formatted)
-summarize_formatted_by_nkind(pkl_formatted)
+def verify_edge_terminal_alignment(pkl_path, ei=12):
+    """
+    Specifically checks connectivity, length_steps, and the LAST segment 
+    to ensure the tail of the edge isn't missing points or geometry.
+    """
+    G = load_formatted_graph(pkl_path)
+    e = G.es[ei]
+
+    gs = e["geom_start"]
+    ge = e["geom_end"]
+    
+    # 1. Connectivity and Indices
+    # In igraph, e.tuple gives the (source, target) vertex indices
+    v_start_idx, v_end_idx = e.tuple
+    conn = e["connectivity"] if "connectivity" in G.es.attributes() else e.tuple
+    
+    # 2. Geometry Data
+    pts = np.array(e["points"])
+    l2  = np.array(e["lengths2"])
+    steps = e["length_steps"]
+    total_L = e["length"]
+    
+    n_pts = len(pts)
+    n_seg = len(l2)
+
+    print(f"\n================ ALIGNMENT EDGE {ei} ================")
+    print(f"Connectivity (Vertex Indices): {v_start_idx} -> {v_end_idx}")
+    print(f"Stored Connectivity Attr:      {conn}")
+    print(f"Length Steps (N-1):      {steps}")
+    print(f"Total Points: {n_pts} | Total Segments: {n_seg}")
+
+    # 3. Check the "Last" segment connection
+    # Segment[N-2] should be the distance between Point[N-2] and Point[N-1]
+    p_penultimate = pts[-2]
+    p_last = pts[-1]
+    dist_calc = np.linalg.norm(p_last - p_penultimate)
+    dist_stored = l2[-1]
+
+    print("\n--- Verification ---")
+    print(f"Point[N-2] coords: {p_penultimate}")
+    print(f"Point[N-1] coords: {p_last}")
+    print(f"Last Segment Calc Dist:   {dist_calc:.6f}")
+    print(f"Last Segment Stored Dist: {dist_stored:.6f}")
+    
+    if abs(dist_calc - dist_stored) < 1e-6:
+        print("GOOD: The last point of tail is = last geometry segment.")
+    else:
+        print("ERROR: Tail mismatch. The geometry points and lengths2 list are out of sync at the end.")
+
+    # 4. Check if length_steps matches point count
+    if steps == n_seg:
+        print(f"GOOD: length_steps ({steps}) matches segment count ({n_seg}).")
+    else:
+        print(f"WARNING: length_steps ({steps}) != segments ({n_seg}).")
+
+    # 5. Summation Check
+    sum_l2 = np.sum(l2)
+    print(f"\nSum of all segments: {sum_l2:.6f}")
+    print(f"Stored edge length (sum lengths2):  {total_L:.6f}")
+    print(f"Difference:          {abs(sum_l2 - total_L):.2e}")
+    print(f"Edge steps: {steps}")
+    print("===============================================================\n")
+
+
+# ============================================================
+#  RUN 
+# ============================================================
+pkl_formatted = "/home/admin/Ana/MicroBrain/output/um_gaia/formatted/graph_18_OutGeom_um_formatted_Hcut1.pkl"
+
+#summarize_formatted(pkl_formatted)
+#summarize_formatted_by_nkind(pkl_formatted)
 
 # Check for inconsistencies (sampled)
-check_formatted_integrity(pkl_formatted, sample=50000, seed=0, tol_len=1e-6)
+#check_formatted_integrity(pkl_formatted, sample=50000, seed=0, tol_len=1e-6)
+
 
 # If things look insane: find largest edges
-topk_edges_formatted(pkl_formatted, attr="length", k=20)
-topk_edges_formatted(pkl_formatted, attr="diameter", k=20)
+#topk_edges_formatted(pkl_formatted, attr="length", k=20)
+#topk_edges_formatted(pkl_formatted, attr="diameter", k=20)
 
 # Inspect one edge in detail
-print_edge_debug_formatted(pkl_formatted, ei=12, max_show=30)
+#print_edge_debug_formatted(pkl_formatted, ei=12, max_show=30)
+
+
+#print_edge_debug(pkl_formatted, ei=12, max_show=30)
+
+#print_edge_debug_formatted_with_indices(pkl_formatted, ei=12)
+
+verify_edge_terminal_alignment(pkl_formatted, ei = 12)
+verify_edge_terminal_alignment(pkl_formatted, ei = 120)
+verify_edge_terminal_alignment(pkl_formatted, ei = 1200)
+verify_edge_terminal_alignment(pkl_formatted, ei = 500)
+verify_edge_terminal_alignment(pkl_formatted, ei = 50)

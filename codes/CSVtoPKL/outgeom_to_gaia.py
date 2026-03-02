@@ -242,8 +242,8 @@ def outgeom_to_igraph_materialized(data, space="auto", verbose=True):
 
 import pickle
 
-in_path  = "/home/ana/MicroBrain/output/um/graph_18_OutGeom_um.pkl"
-out_path = "/home/ana/MicroBrain/output/formatted/graph_18_OutGeom_um_formatted.pkl"
+in_path  = "/home/admin/Ana/MicroBrain/output/graph_18_OutGeom_um.pkl"
+out_path = "/home/admin/Ana/MicroBrain/output/graph_18_OutGeom_um_formatted.pkl"
 
 with open(in_path, "rb") as f:
     data = pickle.load(f)
