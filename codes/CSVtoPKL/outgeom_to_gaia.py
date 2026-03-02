@@ -8,18 +8,21 @@ Diameter source:
 - We use TubeMap radii from image space (data["geom"]["radii"] / data["vertex"]["radii"]).
 - We do NOT use atlas-derived radii/diameters (radii_atlas*, diameter_atlas*).
 
-Unit handling:
-- If output is in voxels, diameters are stored in voxel units (diam_vox = 2 * radii_vox).
-- If output is in micrometers, we rescale TubeMap radii from voxels to µm using the image voxel
-  spacing (radius_um ≈ radii_vox * sx; diam_um ≈ 2 * radii_vox * sx).
+Unit handling (UPDATED):
+- Space controls COORDINATES + LENGTHS:
+    * space="vox" -> coords/lengths from geom + vertex (vox)
+    * space="um"  -> coords/lengths from geom_R + vertex_R (µm)
+
+- diameter_unit controls DIAMETERS ONLY (independent from space):
+    * diameter_unit="vox": store diameters in voxel units (diam_vox = 2 * radii_vox)
+    * diameter_unit="um" : store diameters in µm using voxel spacing (diam_um ≈ 2 * radii_vox * sx)
 
 Note:
-- This assumes radii are defined in the image XY plane. When sx == sy (like here), using sx is
-  consistent. If sx != sy, should be (sqrt(sx*sy)).Bare in mind please that this is a diameter 
-  approximation.
+- We assume TubeMap radii are defined in the image XY plane. When sx == sy (like here), using sx is
+  consistent. If sx != sy, we use sqrt(sx*sy). This is an approximation.
 
 Author: Ana
-Updated: 27 Feb 2026
+Updated: 27 Feb 2026 (revised for separate diameter_unit)
 '''
 import numpy as np
 import igraph as ig
@@ -34,74 +37,57 @@ def _pick_first(existing, candidates):
             return k
     return None
 
-def outgeom_to_igraph_materialized(data, space="auto", verbose=True):
+# BE AWARE OF DIAMETER UNIT (now is autom to vox due to wanting the analysis in vox)
+
+def outgeom_to_igraph_materialized(data, space="auto", diameter_unit="vox", verbose=True):
     """
     Convert outgeom pseudo-json -> Gaia-like igraph where each edge stores:
       - connectivity, nkind, length, diameter scalars
       - points, lengths2 (per segment), diameters (per point)
+
     Handles both VOX and UM outgeom files with correct attribute names.
+
+    Parameters
+    ----------
+    space : {"auto","um","vox"}
+        Controls which geometry arrays are used for coords/lengths.
+    diameter_unit : {"vox","um"}
+        Controls units of stored diameters (edge + per-point + vertex).
+        Independent from `space`.
     """
     G = data["graph"]
     G2 = G.copy()
     nV = G.vcount()
     nE = G.ecount()
 
-
     # -------------------------
-    # Decide space
+    # Decide space (coords/lengths)
     # -------------------------
     if space == "auto":
         space = "um" if _has_um(data) else "vox"
     if space not in ("um", "vox"):
         raise ValueError("space must be 'auto', 'um', or 'vox'")
 
-    '''
-    # THIS CODE WAS MADE WHEN USING DIAMETER ATLAS, NOW WE FOCUS ON DIAMETER IN VOX.
-    # KEPT IN CASE IN FUTURE IS NEEDED 
-    if space == "auto":
-        space = "um" if _has_um(data) else "vox"
-    if space not in ("um", "vox"):
-        raise ValueError("space must be 'auto', 'um', or 'vox'")
+    # -------------------------
+    # Decide diameter unit (diameters only)
+    # -------------------------
+    if diameter_unit not in ("vox", "um"):
+        raise ValueError("diameter_unit must be 'vox' or 'um'")
 
     # -------------------------
-    # Select sources by space
+    # Pick geometry source
     # -------------------------
     if space == "um":
         if "geom_R" not in data or "vertex_R" not in data:
             raise KeyError("Requested space='um' but geom_R/vertex_R not found in data.")
-        geom = data["geom_R"]
-        Vsrc = data["vertex_R"]
-
-        coords_attr = "coords_image_R"
-        xk, yk, zk = "x_R", "y_R", "z_R"
-        l2k = "lengths2_R"
-
-        # Per-point atlas diameter in µm: prefer diam_atlas_geom_R, else radii_atlas_geom_R * 2
-        dpts_key = _pick_first(geom, ["diam_atlas_geom_R", "diameters_atlas_geom_R"]) # supporting both names just in case (they are the same)
-        rpts_key = _pick_first(geom, ["radii_atlas_geom_R"])
-
-        # Edge scalar length in µm
-        e_len_key = _pick_first({k: True for k in G.es.attributes()}, ["length_R", "length_um"])
-        # Edge scalar atlas diameter in µm
-        e_diam_key = _pick_first({k: True for k in G.es.attributes()}, ["diameter_atlas_R"])
-
-        # Vertex atlas radii in µm
-        v_r_key = "radii_atlas_R"
-
-        unit_str = "um"
-    '''
-
-
-    # -------------------------
-    # Pick geometry source 
-    # -------------------------
-    if space == "um":
         geom_pts = data["geom_R"]         # x_R,y_R,z_R,lengths2_R (µm)
         Vsrc     = data["vertex_R"]       # coords_image_R (µm)
         coords_attr = "coords_image_R"
         xk, yk, zk, l2k = "x_R", "y_R", "z_R", "lengths2_R"
         unit_str = "um"
     else:
+        if "geom" not in data or "vertex" not in data:
+            raise KeyError("Requested space='vox' but geom/vertex not found in data.")
         geom_pts = data["geom"]           # x,y,z,lengths2 (vox)
         Vsrc     = data["vertex"]         # coords_image (vox)
         coords_attr = "coords_image"
@@ -111,6 +97,8 @@ def outgeom_to_igraph_materialized(data, space="auto", verbose=True):
     # -------------------------
     # TubeMap radii source (always from VOX geom)
     # -------------------------
+    if "geom" not in data:
+        raise KeyError("data missing 'geom' (required for TubeMap radii)")
     geom_vox = data["geom"]
     rpts_key_vox = _pick_first(geom_vox, ["radii", "radii_geom"])
     if rpts_key_vox is None:
@@ -118,16 +106,18 @@ def outgeom_to_igraph_materialized(data, space="auto", verbose=True):
 
     r_vox = np.asarray(geom_vox[rpts_key_vox], dtype=np.float64)
 
-    # scale radii to match output unit
-    if unit_str == "um":
+    # ---------------------------------------------------------
+    # Convert per-point diameters using diameter_unit (independent of space)
+    # ---------------------------------------------------------
+    if diameter_unit == "um":
         sx, sy, sz = map(float, data.get("spacing_um_per_voxel", (1.625, 1.625, 2.5)))
         scale_r = sx if abs(sx - sy) < 1e-9 else np.sqrt(sx * sy)
-        d_p = 2.0 * (r_vox * scale_r)   # diameters in µm
+        d_p = 2.0 * (r_vox * scale_r)     # diameters in µm
     else:
-        d_p = 2.0 * r_vox               # diameters in vox
+        d_p = 2.0 * r_vox                 # diameters in vox
 
     # -------------------------
-    # Vertex attributes 
+    # Vertex attributes (coords in chosen space)
     # -------------------------
     if coords_attr not in Vsrc:
         raise KeyError(f"Missing vertex['{coords_attr}'] for space='{space}'")
@@ -145,14 +135,13 @@ def outgeom_to_igraph_materialized(data, space="auto", verbose=True):
         ann = data["vertex"]["vertex_annotation"]
     elif "vertex_annotation" in Vsrc and len(Vsrc["vertex_annotation"]) == nV:
         ann = Vsrc["vertex_annotation"]
-    
+
     G2.vs["annotation"] = list(ann) if ann is not None else [None] * nV
 
-
-    # vertex diameter from TubeMap vertex radii (stored in voxel vertex dict)
+    # vertex diameter from TubeMap vertex radii (stored in voxel vertex dict) -> controlled by diameter_unit
     if "vertex" in data and "radii" in data["vertex"] and len(data["vertex"]["radii"]) == nV:
         vr_vox = np.asarray(data["vertex"]["radii"], dtype=np.float64)
-        if unit_str == "um":
+        if diameter_unit == "um":
             sx, sy, sz = map(float, data.get("spacing_um_per_voxel", (1.625, 1.625, 2.5)))
             scale_r = sx if abs(sx - sy) < 1e-9 else np.sqrt(sx * sy)
             G2.vs["diameter"] = (2.0 * vr_vox * scale_r).astype(float).tolist()
@@ -160,17 +149,6 @@ def outgeom_to_igraph_materialized(data, space="auto", verbose=True):
             G2.vs["diameter"] = (2.0 * vr_vox).astype(float).tolist()
     else:
         G2.vs["diameter"] = [float("nan")] * nV
-
-
-    '''
-    # vertex diameter from atlas radii (whatever unit is in this space)
-    if v_r_key in Vsrc and len(Vsrc[v_r_key]) == nV:
-        vr = np.asarray(Vsrc[v_r_key], dtype=np.float64)
-        G2.vs["diameter"] = (2.0 * vr).astype(float).tolist()
-    else:
-        G2.vs["diameter"] = [float("nan")] * nV
-    '''
-
 
     # -------------------------
     # Edge attributes
@@ -195,23 +173,11 @@ def outgeom_to_igraph_materialized(data, space="auto", verbose=True):
     for k in (xk, yk, zk, l2k):
         if k not in geom_pts:
             raise KeyError(f"Missing geom['{k}'] for space='{space}'")
-        
 
     x = np.asarray(geom_pts[xk], dtype=np.float64)
     y = np.asarray(geom_pts[yk], dtype=np.float64)
     z = np.asarray(geom_pts[zk], dtype=np.float64)
     L2 = np.asarray(geom_pts[l2k], dtype=np.float64)
-
- 
-    '''
-    # per-point diameters (atlas)
-    d_p = None
-    r_p = None
-    if dpts_key is not None:
-        d_p = np.asarray(geom[dpts_key], dtype=np.float64)
-    elif rpts_key is not None:
-        r_p = np.asarray(geom[rpts_key], dtype=np.float64)
-    '''
 
     # alignment check (tube diameters must index same concatenated point array)
     if d_p.shape[0] != x.shape[0]:
@@ -240,17 +206,19 @@ def outgeom_to_igraph_materialized(data, space="auto", verbose=True):
     G2.es["points"] = points
     G2.es["lengths2"] = lengths2_list
     G2.es["diameters"] = diameters_list
-    G2["unit"] = unit_str
+
+    # store metadata
+    G2["unit"] = unit_str                 # coords/length unit
+    G2["diameter_unit"] = diameter_unit   # diameter unit
 
     # scalar edge length
     e_len_key = _pick_first({k: True for k in G.es.attributes()},
                             ["length_R", "length_um"] if unit_str == "um" else ["length"])
-    
+
     if e_len_key is not None:
         G2.es["length"] = [float(v) for v in np.asarray(G.es[e_len_key], dtype=np.float64)]
     else:
         G2.es["length"] = [float(np.sum(v)) if len(v) else float("nan") for v in lengths2_list]
-
 
     # scalar edge diameter from per-point diameters
     diam_edge = []
@@ -259,7 +227,6 @@ def outgeom_to_igraph_materialized(data, space="auto", verbose=True):
         valid = arr[np.isfinite(arr)]
         diam_edge.append(float(valid.mean()) if valid.size else float("nan"))
     G2.es["diameter"] = diam_edge
-
 
     # -------------------------
     # Only keep Gaia attributes
@@ -282,7 +249,7 @@ def outgeom_to_igraph_materialized(data, space="auto", verbose=True):
     if verbose:
         L = np.asarray(G2.es["length"], dtype=np.float64)
         D = np.asarray(G2.es["diameter"], dtype=np.float64)
-        print(f"[Gaia materialized] space={space} unit={G2['unit']} V={G2.vcount():,} E={G2.ecount():,}")
+        print(f"[Gaia materialized] space={space} unit={G2['unit']} diameter_unit={G2['diameter_unit']} V={G2.vcount():,} E={G2.ecount():,}")
         print(f"  length: min={float(np.nanmin(L)):.3f}  med={float(np.nanmedian(L)):.3f}  max={float(np.nanmax(L)):.3f}")
         print(f"  diam  : min={float(np.nanmin(D)):.3f}  med={float(np.nanmedian(D)):.3f}  max={float(np.nanmax(D)):.3f}")
 
@@ -297,11 +264,13 @@ out_path = "/home/admin/Ana/MicroBrain/output/graph_18_OutGeom_um_formatted.pkl"
 with open(in_path, "rb") as f:
     data = pickle.load(f)
 
-G_gaia = outgeom_to_igraph_materialized(data, space="auto", verbose=True)
+# coords/lengths in UM (auto detects geom_R), but diameters stored in VOX:
+G_gaia = outgeom_to_igraph_materialized(data, space="auto", diameter_unit="vox", verbose=True)
 G_gaia.write_pickle(out_path)
 
 print("Saved:", out_path)
-print("Units:", G_gaia["unit"])
+print("Units (coords/length):", G_gaia["unit"])
+print("Units (diameter):", G_gaia["diameter_unit"])
 print("V/E:", G_gaia.vcount(), G_gaia.ecount())
 print("V attrs:", G_gaia.vs.attributes())
 print("E attrs:", G_gaia.es.attributes())
