@@ -875,15 +875,28 @@ def bc_faces_table(res: dict, box_name="Box") -> pd.DataFrame:
 # ======================================================================
 # BC plots
 # ======================================================================
+# ---------------------------------------------------------------------
+# Shared BC face colors (USE THIS IN BOTH FUNCTIONS)
+# ---------------------------------------------------------------------
+BC_FACE_COLORS = {
+    "z_max": "#9ECAE1",
+    "y_max": "#A1D99B",
+    "x_min": "#FDD0A2",
+    "x_max": "#FCBBA1",
+    "y_min": "#C7C1E3",
+    "z_min": "#D9D9D9",
+}
+
 
 def plot_bc_cube_net(
     res: dict,
     title="BC composition per face (cube net)",
-    face_alpha=0.35,
+    face_alpha=0.65,
     fontsize=10,
     pct_decimals=1,
     show_unknown=False,
-    show_high_degree=True
+    show_high_degree=True,
+    face_colors=None,          # <-- NEW (optional override)
 ):
     layout = {
         "y_max": (1, 2),
@@ -894,14 +907,8 @@ def plot_bc_cube_net(
         "y_min": (1, 0),
     }
 
-    face_colors = {
-        "z_max": "#9ECAE1",
-        "y_max": "#A1D99B",
-        "x_min": "#FDD0A2",
-        "x_max": "#FCBBA1",
-        "y_min": "#C7C1E3",
-        "z_min": "#D9D9D9",
-    }
+    if face_colors is None:
+        face_colors = BC_FACE_COLORS
 
     vessel_order = ["arteriole", "venule", "capillary"]
     if show_unknown:
@@ -949,17 +956,20 @@ def plot_bc_cube_net(
     plt.tight_layout()
     plt.show()
 
+
 def plot_bc_3_cubes_tinted(
     G: ig.Graph, box: dict,
     coords_attr="coords",
     space="um",
     eps_vox=2.0,
     elev=18, azim=35,
-    face_alpha=0.10,
+    face_alpha=0.30,
     point_alpha=0.85,
     point_size=8,
     sample_max=20000,
     mode="auto",   # border/plane/auto
+    face_colors=None,         # <-- NEW (optional override)
+    vessel_colors=None,       # <-- optional override if you want
 ):
     validate_box_faces(box)
     coords = get_coords(G, coords_attr).astype(float)
@@ -1004,12 +1014,13 @@ def plot_bc_3_cubes_tinted(
             ids = np.random.choice(ids, size=int(sample_max), replace=False)
         face_nodes[face] = ids
 
-    vessel_colors = {"arteriole":"red","venule":"blue","capillary":"gray","unknown":"black"}
-    face_colors = {
-        "x_min": "tab:orange", "x_max": "tab:orange",
-        "y_min": "tab:green",  "y_max": "tab:green",
-        "z_min": "tab:purple", "z_max": "tab:purple",
-    }
+    # default node colors (can override via vessel_colors=...)
+    if vessel_colors is None:
+        vessel_colors = {"arteriole":"red","venule":"blue","capillary":"gray","unknown":"black"}
+
+    # IMPORTANT: use SAME face colors as cube-net
+    if face_colors is None:
+        face_colors = BC_FACE_COLORS
 
     def draw_panel(ax, faces_subset, title_panel):
         for a,b in edges:
@@ -1054,8 +1065,6 @@ def plot_bc_3_cubes_tinted(
     ax3.legend(handles=handles, title="Vessel type", loc="upper left")
     plt.tight_layout()
     plt.show()
-
-
 
 # ======================================================================
 # Density from formatted edges (microsegments)
