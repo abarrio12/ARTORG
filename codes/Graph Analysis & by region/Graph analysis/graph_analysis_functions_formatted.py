@@ -1060,6 +1060,8 @@ def plot_bc_3_cubes_tinted(
 # ======================================================================
 # Density from formatted edges (microsegments)
 # ======================================================================
+
+
 def microsegments_from_formatted_graph(G: ig.Graph):
     check_attr(G, ["points", "nkind"], "es")
     has_dpts = ("diameters" in G.es.attributes())
@@ -1072,7 +1074,7 @@ def microsegments_from_formatted_graph(G: ig.Graph):
         if pts.shape[0] < 2:
             continue
 
-        # 1) Prefer per-point diameters if present + aligned + finite
+        # 1) Prefer per-point diameters if present
         d = None
         if has_dpts and e["diameters"] is not None:
             dd = np.asarray(e["diameters"], float)
@@ -1155,7 +1157,7 @@ def vessel_vol_frac_slabs_in_box(ms, box, slab, axis="z"):
     dmin = float({"x": box["xmin"], "y": box["ymin"], "z": box["zmin"]}[axis])
     dmax = float({"x": box["xmax"], "y": box["ymax"], "z": box["zmax"]}[axis])
 
-    edges = np.arange(dmin, dmax + slab, slab)
+    edges = np.arange(dmin, dmax, slab)
     if edges[-1] < dmax:
         edges = np.append(edges, dmax)
 
@@ -1295,6 +1297,8 @@ def vessel_vol_frac_total_from_graph_in_box(G: ig.Graph, box: dict):
     ms = microsegments_from_formatted_graph(G)
     return vessel_vol_frac_total_in_box(ms, box)
 
+
+# WHOLE REGION
 
 def density_profile_by_depth_whole_region(
     G: ig.Graph,
