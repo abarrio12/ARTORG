@@ -113,8 +113,8 @@ def selecting_points_from_json(descendants, given_name, annotation_array, degree
 
 # ========================== RUN FOR ANY REGION =============================
 #given_name = "Hypothalamus"   # change this if needed
-#given_name = "Somatomotor areas"   
-given_name = "Hippocampal region"
+given_name = "Somatomotor areas"   
+#given_name = "Hippocampal region"
 
 region_node = find_node_by_name(root, given_name)
 if region_node is None:

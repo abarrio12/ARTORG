@@ -19,7 +19,7 @@ import numpy as np
 
 import os
 
-name  = "graph_18_OutGeom_Hcut3"   # base name (no extension)
+name  = "graph_18_OutGeom"   # base name (no extension)
 space = "um"                       # "um" o "vox" IN PATH
 tag = "_um" if space == "um" else "_vox" # IN PATH
 
@@ -27,7 +27,7 @@ pkl_root = "/home/admin/Ana/MicroBrain/output"
 vtp_root = "/home/admin/Ana/MicroBrain/output/vtp"
 
 # input pkl automático
-in_path = f"{pkl_root}/{space}/{name}{tag}.pkl"
+in_path = f"{pkl_root}/{name}{tag}.pkl"
 
 # output vtp automático
 out_vtp = f"{vtp_root}/{space}/{name}{tag}.vtp"

@@ -301,13 +301,13 @@ def write_vtp(graph, filename, tortuous=True, verbose=False):
             },
         )
 # Load a graph from a pickle file
-input_igraph_pkl_path = "/home/admin/Ana/MicroBrain/output/graph_18_OutGeom_um.pkl"
+input_igraph_pkl_path = "/home/admin/Ana/MicroBrain/output/um_gaia/formatted/formatted2/graph_18_OutGeom_um_formatted_Scut1.pkl"
 
 graph = igraph.Graph.Read_Pickle(input_igraph_pkl_path)
 #print(graph.summary())
 
 
-output_path = "/home/admin/Ana/MicroBrain/output/vtp/"
+output_path = "/home/admin/Ana/MicroBrain/output/vtp/formatted/"
 
-write_vtp(graph, output_path+'graph_18_OutGeom_um_tortuous.vtp', tortuous=True)
-write_vtp(graph, output_path+'graph_18_OutGeom_um_straight.vtp', tortuous=False)
+write_vtp(graph, output_path+'graph_18_OutGeom_um_formatted_Scut1_tortuous.vtp', tortuous=True)
+write_vtp(graph, output_path+'graph_18_OutGeom_um_formatted_Scut1_straigth.vtp', tortuous=False)
