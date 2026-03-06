@@ -613,198 +613,103 @@ def microsegments_from_formatted_graph(G: ig.Graph):
     }
 
 
+def generate_boxes(box, box_size=100, stride=50):
+    ''' creates boxes of 100 um in each axis but instead of adjaced to each
+    other, the centers are shifted 50 um (stride), so there is some overlapping
+    between adjacent boxes.  
+   '''
+    xs = np.arange(box["xmin"], box["xmax"]-box_size+1, stride)
+    ys = np.arange(box["ymin"], box["ymax"]-box_size+1, stride)
+    zs = np.arange(box["zmin"], box["zmax"]-box_size+1, stride)
 
-# -------------------------------------------------------------------
-# Density by slab (mini box)                                            TODO: FRANCA DICE QUE SUPERPONGA LOS SLABS 50 UM Y HACERLOS DE 100 UM  
-# -------------------------------------------------------------------
+    boxes = []
 
-def vessel_vol_frac_slabs_in_box(ms, box, slab, axis="z"):
-    validate_box_faces(box)
+    for x in xs:
+        for y in ys:
+            for z in zs:
+                boxes.append({
+                    "xmin":x,
+                    "xmax":x+box_size,
+                    "ymin":y,
+                    "ymax":y+box_size,
+                    "zmin":z,
+                    "zmax":z+box_size
+                })
 
+    return boxes
+
+
+def vessel_volume_density(ms, box): # mm³/mm³
+    ''' 
+    calculates volume density. Takes the vessels volume (computed as cylinders in microsegment code)
+    and then divides it by the total volume of the box (tissue, 400um³). 
+    For compliance with literature units, they values are returned in mm³/mm³
+    '''
     mids = ms["midpoints"]
     L = ms["lengths"]
-    nk = ms["nkind"]
     r0 = ms["r0"]
     r1 = ms["r1"]
-
-    if not (np.all(np.isfinite(r0)) and np.all(np.isfinite(r1))):
-        raise ValueError("microsegment radii contain NaN/inf (missing diameters?)")
-
-    ax_i = {"x": 0, "y": 1, "z": 2}[axis]
-    d = mids[:, ax_i]
 
     inside = (
-        (mids[:, 0] >= box["xmin"]) & (mids[:, 0] <= box["xmax"]) &
-        (mids[:, 1] >= box["ymin"]) & (mids[:, 1] <= box["ymax"]) &
-        (mids[:, 2] >= box["zmin"]) & (mids[:, 2] <= box["zmax"])
+        (mids[:,0]>=box["xmin"]) & (mids[:,0]<=box["xmax"]) &
+        (mids[:,1]>=box["ymin"]) & (mids[:,1]<=box["ymax"]) &
+        (mids[:,2]>=box["zmin"]) & (mids[:,2]<=box["zmax"])
     )
 
-    mids = mids[inside]
-    d = d[inside]
     L = L[inside]
-    nk = nk[inside]
     r0 = r0[inside]
     r1 = r1[inside]
-
-    dmin = float({"x": box["xmin"], "y": box["ymin"], "z": box["zmin"]}[axis])
-    dmax = float({"x": box["xmax"], "y": box["ymax"], "z": box["zmax"]}[axis])
-
-    edges = np.arange(dmin, dmax, slab)
-    if edges[-1] < dmax:
-        edges = np.append(edges, dmax)
-
-    if axis == "x":
-        A = (box["ymax"] - box["ymin"]) * (box["zmax"] - box["zmin"])
-    elif axis == "y":
-        A = (box["xmax"] - box["xmin"]) * (box["zmax"] - box["zmin"])
-    else:
-        A = (box["xmax"] - box["xmin"]) * (box["ymax"] - box["ymin"])
-
-    rmean = 0.5 * (r0 + r1)
-    amount = np.pi * (rmean ** 2) * L  # vessel volume per microsegment
-
-    rows = []
-    kinds = np.unique(nk)
-
-    for i in range(len(edges) - 1):
-        lo, hi = float(edges[i]), float(edges[i + 1])
-        m = (d >= lo) & (d < hi) if i < (len(edges) - 2) else (d >= lo) & (d <= hi)
-
-        tissue_vol = A * (hi - lo)
-        tot = float(np.sum(amount[m]))
-
-        row = {
-            "slab_lo": lo,
-            "slab_hi": hi,
-            "tissue_vol": tissue_vol,
-            "total_vol_frac": (tot / tissue_vol) if tissue_vol > 0 else np.nan,
-        }
-
-        for k in kinds:
-            vv = float(np.sum(amount[m & (nk == k)]))
-            row[f"{EDGE_NKIND_TO_LABEL.get(int(k), k)}_vol_frac"] = (vv / tissue_vol) if tissue_vol > 0 else np.nan
-
-        rows.append(row)
-
-    df = pd.DataFrame(rows)
-    print(f"\n=== Volume fraction slabs (axis={axis}, slab={slab}) ===")
-    print(df)
-    return df
-
-
-
-def plot_density_slabs(df, title, out_png=None):
-    if df is None or df.empty:
-        return
-    mid = 0.5 * (df["slab_lo"].values + df["slab_hi"].values)
-    cols = [c for c in df.columns if c.endswith("_vol_frac") or c == "total_vol_frac"]
-
-    fig, ax = plt.subplots(figsize=(7, 4))
-    for c in cols:
-        ax.plot(mid, df[c].values, marker="o", linewidth=1.5, label=c)
-
-    ax.set_xlabel("Slab midpoint")
-    ax.set_ylabel("Volume fraction")
-    ax.set_title(title)
-    ax.grid(True, alpha=0.2)
-    ax.legend(fontsize=8)
-    plt.tight_layout()
-
-    if out_png:
-        fig.savefig(out_png, dpi=200)
-    plt.show()
-
-
-
-def density_grid_fast(ms, box, box_size=100, stride=50):
-
-    mids = ms["midpoints"]
-    r0 = ms["r0"]
-    r1 = ms["r1"]
-    L = ms["lengths"]
 
     rmean = 0.5*(r0+r1)
-    vol = np.pi * rmean**2 * L
 
-    xs = np.arange(box["xmin"], box["xmax"]+stride, stride)
-    ys = np.arange(box["ymin"], box["ymax"]+stride, stride)
-    zs = np.arange(box["zmin"], box["zmax"]+stride, stride)
+    vessel_vol_um3 = np.sum(np.pi*rmean**2 * L)
 
-    hist, _ = np.histogramdd(mids, bins=[xs,ys,zs], weights=vol)
+    tissue_vol_um3 = (
+        (box["xmax"]-box["xmin"])*
+        (box["ymax"]-box["ymin"])*
+        (box["zmax"]-box["zmin"])
+    )
 
-    box_volume = box_size**3
+    # convert to mm³
+    vessel_vol_mm3 = vessel_vol_um3 * 1e-9
+    tissue_vol_mm3 = tissue_vol_um3 * 1e-9
 
-    density = hist / box_volume
+    return vessel_vol_mm3 / tissue_vol_mm3
 
-    return density
-# -------------------------------------------------------------------
-# Density Total-in-box 
-# -------------------------------------------------------------------
 
-def vessel_vol_frac_total_in_box(ms, box):
-    """
-    ONE number for vessel density inside a box:
-      total_vol_frac = total vessel volume / tissue volume(box)
-
-    Uses the same microsegment cylinder model as vessel_vol_frac_slabs_in_box().
-
-    Returns a dict with:
-      - tissue_vol
-      - vessel_vol
-      - total_vol_frac
-      - optional per-type *_vol_frac (arteriole/venule/capillary) if present
-    """
-    validate_box_faces(box)
+def vessel_length_density(ms, box):
+    '''
+    Total length of blood vessels within a volume.
+    calculates the vessel length as the total vessel length (in mm)
+    divided by the total volume of the tissue (mm³)
+    '''
 
     mids = ms["midpoints"]
     L = ms["lengths"]
-    nk = ms["nkind"]
-    r0 = ms["r0"]
-    r1 = ms["r1"]
-
-    if not (np.all(np.isfinite(r0)) and np.all(np.isfinite(r1))):
-        raise ValueError("microsegment radii contain NaN/inf (missing diameters?)")
 
     inside = (
-        (mids[:, 0] >= box["xmin"]) & (mids[:, 0] <= box["xmax"]) &
-        (mids[:, 1] >= box["ymin"]) & (mids[:, 1] <= box["ymax"]) &
-        (mids[:, 2] >= box["zmin"]) & (mids[:, 2] <= box["zmax"])
+        (mids[:,0]>=box["xmin"]) & (mids[:,0]<=box["xmax"]) &
+        (mids[:,1]>=box["ymin"]) & (mids[:,1]<=box["ymax"]) &
+        (mids[:,2]>=box["zmin"]) & (mids[:,2]<=box["zmax"])
     )
 
     L = L[inside]
-    nk = nk[inside]
-    r0 = r0[inside]
-    r1 = r1[inside]
 
-    tissue_vol = float((box["xmax"] - box["xmin"]) *
-                       (box["ymax"] - box["ymin"]) *
-                       (box["zmax"] - box["zmin"]))
+    length_um = np.sum(L)
 
-    if tissue_vol <= 0:
-        return {"tissue_vol": tissue_vol, "vessel_vol": np.nan, "total_vol_frac": np.nan}
+    tissue_vol_um3 = (
+        (box["xmax"]-box["xmin"])*
+        (box["ymax"]-box["ymin"])*
+        (box["zmax"]-box["zmin"])
+    )
 
-    rmean = 0.5 * (r0 + r1)
-    seg_vol = np.pi * (rmean ** 2) * L
-    vessel_vol = float(np.sum(seg_vol))
+    length_mm = length_um * 1e-3
+    tissue_vol_mm3 = tissue_vol_um3 * 1e-9
 
-    out = {
-        "tissue_vol": tissue_vol,
-        "vessel_vol": vessel_vol,
-        "total_vol_frac": vessel_vol / tissue_vol,
-    }
-
-    for k in np.unique(nk):
-        k = int(k)
-        if k not in EDGE_NKIND_TO_LABEL:
-            continue
-        vv = float(np.sum(seg_vol[nk == k]))
-        out[f"{EDGE_NKIND_TO_LABEL[k]}_vol_frac"] = vv / tissue_vol
-
-    return out
+    return length_mm / tissue_vol_mm3
 
 
-
-def compute_graph_density_metrics(G, graph_name):
+def graph_density_metrics(G, graph_name):
     """
     Devuelve métricas 1-number-per-graph:
       - V, E
@@ -815,44 +720,14 @@ def compute_graph_density_metrics(G, graph_name):
     V = int(G.vcount())
     E = int(G.ecount())
 
-    E_over_V = (E / V) if V > 0 else np.nan
-    mean_deg = (2.0 * E / V) if V > 0 else np.nan
-    dens_simple = (2.0 * E / (V * (V - 1))) if V > 1 else np.nan
+    graph_density = (2.0 * E / (V * (V - 1))) if V > 1 else np.nan
 
     return {
         "graph": graph_name,
         "V": V,
         "E": E,
-        "E_over_V": float(E_over_V),
-        "mean_degree_2E_over_V": float(mean_deg),
-        "density_2E_over_VVminus1": float(dens_simple),
+        "graph_density": float(graph_density),
     }
-
-
-# checking heterogenity of the boxes (not combined, but per box)
-def plot_intra_box_heterogeneity(df_box, box_name, slab_um):
-    if df_box is None or df_box.empty:
-        return
-
-    if "total_vol_frac_pct" in df_box.columns:
-        y_values = df_box["total_vol_frac_pct"].to_numpy(float)
-    else:
-        y_values = df_box["total_vol_frac"].to_numpy(float) * 100.0
-
-    x_mid = 0.5 * (df_box["slab_lo"].values + df_box["slab_hi"].values)
-
-    plt.figure(figsize=(8, 4))
-    plt.plot(x_mid, y_values, marker="o", color="firebrick", linewidth=2)
-    plt.fill_between(x_mid, y_values, alpha=0.1, color="firebrick")
-    plt.axhline(np.nanmean(y_values), color="black", linestyle="--", alpha=0.5,
-                label=f"Mean: {np.nanmean(y_values):.2f}%")
-    plt.title(f"Intra-Box Density Profile ({slab_um}µm slabs) | {box_name}")
-    plt.xlabel(f"Depth along {slab_axis}-axis (µm)")
-    plt.ylabel("Vessel Volume Fraction (%)")
-    plt.legend()
-    plt.grid(alpha=0.3)
-    plt.tight_layout()
-    plt.show()
 
 
 # ======================================================================
@@ -1345,14 +1220,19 @@ def av_path_stats(graph, graph_name, paths):
         "all_connected": all_connected
     }
 
-
+'''
 # export a few paths for paraview visualization
 def sample_paths(paths, n=20):
     step = max(1, len(paths) // n)
     return paths[::step][:n]
+'''
+# takes the first n paths generated. Normally they come from the same
+# artery, so the path will be very similar. 
 
-
-def sample_paths(paths, n): if len(paths) <= n: return paths return paths[:n]
+def sample_paths(paths, n): 
+    if len(paths) <= n: 
+        return paths 
+    return paths[:n]
 
 import pandas as pd
 import vtk
