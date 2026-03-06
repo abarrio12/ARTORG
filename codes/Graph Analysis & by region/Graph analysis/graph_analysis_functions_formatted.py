@@ -49,6 +49,8 @@ import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 import igraph as ig
+import pickle
+import random
 
 from collections import Counter
 from matplotlib.lines import Line2D
@@ -79,24 +81,44 @@ VESSEL_COLORS = {
     "arteriole":"#ff2828",
     "venule":"#0072c4",
     "capillary":"#7f7f7f",
-    "unknown":"#000000"
 }
+
+DEFAULT_DEPTH_BINS_UM = 10
 
 # ======================================================================
 # IO helpers
 # ======================================================================
 
-def load_graph(path: str) -> ig.Graph:
-    return ig.Graph.Read_Pickle(path)
+
+def load_graph(path: str) -> ig.Graph: 
+    with open(path, "rb") as f: 
+        obj = pickle.load(f) 
+    if isinstance(obj, ig.Graph): 
+        return obj 
+    if isinstance(obj, dict) and "graph" in obj and isinstance(obj["graph"], ig.Graph): 
+        return obj["graph"] 
+    raise TypeError(f"File does not contain an igraph.Graph: {path} (type={type(obj)})")
+
 
 def save_graph(G: ig.Graph, path: str) -> None:
     G.write_pickle(path)
     print("Saved:", path)
 
 
+def keep_giant_component(G: ig.Graph) -> ig.Graph: 
+    comps = G.components() 
+    if len(comps) <= 1: 
+        return G 
+    keep = np.asarray(comps[np.argmax(comps.sizes())], dtype=int) 
+    return G.induced_subgraph(keep)
+
+
 # ======================================================================
 # Basic helpers
 # ======================================================================
+def get_vessel_color(k):
+    k = EDGE_NKIND_TO_LABEL.get(k, "unknown")
+    return VESSEL_COLORS.get(k, "black")
 
 def check_attr(graph: ig.Graph, names, where="vs"):
     if isinstance(names, str):
@@ -211,7 +233,19 @@ def get_edges_types(graph: ig.Graph, label_dict=EDGE_NKIND_TO_LABEL, return_dict
     return results if return_dict else (unique, counts)
 
 
-
+def edge_type_counts(nk, label_dict): 
+    counts = {"arteriole": 0, "venule": 0, "capillary": 0, "unknown": 0} 
+    for k in np.asarray(nk, int): 
+        lab = str(label_dict.get(int(k), "unknown")).lower().strip() 
+        if "arter" in lab: 
+            counts["arteriole"] += 1 
+        elif "ven" in lab: 
+            counts["venule"] += 1 
+        elif "cap" in lab: 
+            counts["capillary"] += 1 
+        else: 
+            counts["unknown"] += 1 
+    return counts
 
 def get_degrees(graph: ig.Graph, threshold=4):
     deg = np.asarray(graph.degree(), dtype=int)
@@ -223,6 +257,8 @@ def get_degrees(graph: ig.Graph, threshold=4):
     print("Unique degrees:", np.unique(deg))
     print(f"HDN (>= {threshold}): {hdn_idx.size}")
     return np.unique(deg), hdn_idx
+
+
 
 def plot_degree_nodes_spatial(
     graph: ig.Graph,
@@ -275,6 +311,9 @@ def plot_degree_nodes_spatial(
     plt.tight_layout()
     plt.show()
     return fig, ax
+
+
+
 
 def distance_to_surface_stats(
     graph: ig.Graph,
@@ -330,6 +369,8 @@ def distance_to_surface_stats(
         }
 
     return out
+
+
 
 
 def analyze_hdn_pattern_in_box(
@@ -432,7 +473,7 @@ def get_avg_length_nkind(graph: ig.Graph):
     L = np.asarray(graph.es["length"], float)
     nk = np.asarray(graph.es["nkind"], int)
 
-    print("\nAverage length by nkind:\n")
+    print("\n- Average length by nkind:\n")
     out = {}
     for k in np.unique(nk):
         m = nk == k
@@ -440,18 +481,6 @@ def get_avg_length_nkind(graph: ig.Graph):
         print(f"nkind={k} ({EDGE_NKIND_TO_LABEL.get(int(k),k)}): mean length = {out[int(k)]:.6f}")
     return out
 
-def get_avg_diameter_nkind(graph: ig.Graph):
-    check_attr(graph, ["diameter", "nkind"], "es")
-    D = np.asarray(graph.es["diameter"], float)
-    nk = np.asarray(graph.es["nkind"], int)
-
-    print("\nAverage diameter by nkind:\n")
-    out = {}
-    for k in np.unique(nk):
-        m = nk == k
-        out[int(k)] = float(np.mean(D[m]))
-        print(f"nkind={k} ({EDGE_NKIND_TO_LABEL.get(int(k),k)}): mean diameter = {out[int(k)]:.6f}")
-    return out
 
 def diameter_stats_nkind(
     graph: ig.Graph,
@@ -494,9 +523,11 @@ def diameter_stats_nkind(
             "perc_in_range": perc_in_range,
             "range": rng,
         }
-
+    
+    print("\n- Average diameter by nkind:\n")
     for k in sorted(stats_dict.keys()):
         s = stats_dict[k]
+        
         print(f"{s['name']} (nkind={k}, n={s['n']}):")
         print(f"  mean:   {s['mean']:.2f}")
         print(f"  median: {s['median']:.2f}")
@@ -684,6 +715,28 @@ def plot_density_slabs(df, title, out_png=None):
     plt.show()
 
 
+
+def density_grid_fast(ms, box, box_size=100, stride=50):
+
+    mids = ms["midpoints"]
+    r0 = ms["r0"]
+    r1 = ms["r1"]
+    L = ms["lengths"]
+
+    rmean = 0.5*(r0+r1)
+    vol = np.pi * rmean**2 * L
+
+    xs = np.arange(box["xmin"], box["xmax"]+stride, stride)
+    ys = np.arange(box["ymin"], box["ymax"]+stride, stride)
+    zs = np.arange(box["zmin"], box["zmax"]+stride, stride)
+
+    hist, _ = np.histogramdd(mids, bins=[xs,ys,zs], weights=vol)
+
+    box_volume = box_size**3
+
+    density = hist / box_volume
+
+    return density
 # -------------------------------------------------------------------
 # Density Total-in-box 
 # -------------------------------------------------------------------
@@ -751,7 +804,55 @@ def vessel_vol_frac_total_in_box(ms, box):
 
 
 
+def compute_graph_density_metrics(G, graph_name):
+    """
+    Devuelve métricas 1-number-per-graph:
+      - V, E
+      - E_over_V  (edges per node)
+      - density_simple_undirected = 2E/(V*(V-1))  (si V>1)
+      - mean_degree = 2E/V (para grafo no dirigido)
+    """
+    V = int(G.vcount())
+    E = int(G.ecount())
 
+    E_over_V = (E / V) if V > 0 else np.nan
+    mean_deg = (2.0 * E / V) if V > 0 else np.nan
+    dens_simple = (2.0 * E / (V * (V - 1))) if V > 1 else np.nan
+
+    return {
+        "graph": graph_name,
+        "V": V,
+        "E": E,
+        "E_over_V": float(E_over_V),
+        "mean_degree_2E_over_V": float(mean_deg),
+        "density_2E_over_VVminus1": float(dens_simple),
+    }
+
+
+# checking heterogenity of the boxes (not combined, but per box)
+def plot_intra_box_heterogeneity(df_box, box_name, slab_um):
+    if df_box is None or df_box.empty:
+        return
+
+    if "total_vol_frac_pct" in df_box.columns:
+        y_values = df_box["total_vol_frac_pct"].to_numpy(float)
+    else:
+        y_values = df_box["total_vol_frac"].to_numpy(float) * 100.0
+
+    x_mid = 0.5 * (df_box["slab_lo"].values + df_box["slab_hi"].values)
+
+    plt.figure(figsize=(8, 4))
+    plt.plot(x_mid, y_values, marker="o", color="firebrick", linewidth=2)
+    plt.fill_between(x_mid, y_values, alpha=0.1, color="firebrick")
+    plt.axhline(np.nanmean(y_values), color="black", linestyle="--", alpha=0.5,
+                label=f"Mean: {np.nanmean(y_values):.2f}%")
+    plt.title(f"Intra-Box Density Profile ({slab_um}µm slabs) | {box_name}")
+    plt.xlabel(f"Depth along {slab_axis}-axis (µm)")
+    plt.ylabel("Vessel Volume Fraction (%)")
+    plt.legend()
+    plt.grid(alpha=0.3)
+    plt.tight_layout()
+    plt.show()
 
 
 # ======================================================================
@@ -764,6 +865,10 @@ def vessel_vol_frac_total_in_box(ms, box):
 # ======================================================================
 
 def debug_face_plane_counts(G: ig.Graph, box: dict, coords_attr="coords", eps_vox=2.0, space="um"):
+    '''How many vertices lie close to each face of the box
+    For each face, checks min distance from any node (does not need to be BC) 
+    to that plane and how many nodes lie within the tolerance eps
+    '''
     validate_box_faces(box)
     P = np.asarray(G.vs[coords_attr], float)
     print("\n=== DEBUG: vertices close to each face plane ===")
@@ -775,6 +880,8 @@ def debug_face_plane_counts(G: ig.Graph, box: dict, coords_attr="coords", eps_vo
         val = float(box[key])
         dist = np.abs(P[:, axis] - val)
         print(face, "min_dist", float(dist.min()), "n_within_eps", int((dist <= eps).sum()))
+
+
 
 def bc_nodes_on_face_plane(graph: ig.Graph, axis: int, value: float, box: dict, coords_attr="coords", eps=5.0):
     C = get_coords(graph, coords_attr).astype(float)
@@ -801,7 +908,8 @@ def analyze_bc_faces(
     space="um",
     eps_vox=2.0,          # ALWAYS specified in vox, converted if space="um"
     degree_thr=4,
-    mode="auto",          # "border" | "plane" | "auto"
+    mode="auto",          # "border" | "plane" | "auto" -> border after cutting 
+                          # (is_border/border_face present), plane checks if node is close in eps to the face (when "border" attr not present)
     return_node_ids=False,
 ):
     validate_box_faces(box)
@@ -959,6 +1067,124 @@ def plot_bc_cube_net(
     plt.show()
 
 
+# same as before but summarizes the 3 boxes results, instead of classifying by face and nkind. 
+def plot_cube_net_counts_per_face(
+    bc_all,
+    out_path=None,
+    title="BC nodes per face (counts per box)",
+    face_col="Face",
+    graph_col="graph",
+    value_col="BC nodes",
+    box_order=("HPC_1", "HPC_2", "HPC_3"),
+):
+    """
+    Draws a single cube-net (like your example) but text is:
+      HPC_1: N
+      HPC_2: N
+      HPC_3: N
+    per face.
+
+    bc_all must have columns: Face, graph, BC nodes
+    """
+    df = bc_all.copy()
+
+    # --- normalize face labels (robust)
+    if face_col not in df.columns:
+        raise ValueError(f"'{face_col}' not in bc_all. Columns: {df.columns.tolist()}")
+    if graph_col not in df.columns:
+        raise ValueError(f"'{graph_col}' not in bc_all. Columns: {df.columns.tolist()}")
+    if value_col not in df.columns:
+        raise ValueError(f"'{value_col}' not in bc_all. Columns: {df.columns.tolist()}")
+
+    df[face_col] = df[face_col].astype(str).str.strip().str.lower()
+    df[face_col] = df[face_col].replace({
+        "xmin":"x_min","xmax":"x_max",
+        "ymin":"y_min","ymax":"y_max",
+        "zmin":"z_min","zmax":"z_max",
+        "x min":"x_min","x max":"x_max",
+        "y min":"y_min","y max":"y_max",
+        "z min":"z_min","z max":"z_max",
+    })
+
+    df[graph_col] = df[graph_col].astype(str).str.strip()
+    df[value_col] = np.asarray(pd.to_numeric(df[value_col], errors="coerce").fillna(0.0), float)
+
+    faces = ["x_min","x_max","y_min","y_max","z_min","z_max"]
+
+    # --- table face x graph
+    tab = (
+        df.groupby([face_col, graph_col], as_index=False)[value_col].sum()
+          .pivot(index=face_col, columns=graph_col, values=value_col)
+          .fillna(0.0)
+    )
+
+    # guarantee faces + box_order exist
+    for f in faces:
+        if f not in tab.index:
+            tab.loc[f] = 0.0
+    tab = tab.reindex(index=faces)
+
+    for g in box_order:
+        if g not in tab.columns:
+            tab[g] = 0.0
+    tab = tab.reindex(columns=list(box_order))
+
+    # --- cube-net layout positions (same as your example)
+    # coordinates are in "square units"
+    pos = {
+        "y_max": (1, 2),
+        "z_min": (1, 1),
+        "y_min": (1, 0),
+        "x_min": (0, 1),
+        "x_max": (2, 1),
+        "z_max": (3, 1),
+    }
+
+    fig, ax = plt.subplots(figsize=(7.2, 6.2))
+    ax.set_aspect("equal")
+    ax.axis("off")
+    ax.set_title(title, fontsize=14, pad=12)
+
+    # draw squares + text
+    for face in faces:
+        x, y = pos[face]
+        # square
+        rect = plt.Rectangle(
+            (x, y), 1, 1,
+            facecolor=BC_FACE_COLORS.get(face, "#dddddd"),
+            edgecolor="black",
+            linewidth=1.5
+        )
+        ax.add_patch(rect)
+
+        # text lines
+        lines = [face]
+        for g in box_order:
+            n = int(round(float(tab.loc[face, g])))
+            lines.append(f"{g}: {n} nodes")
+
+        ax.text(
+            x + 0.5, y + 0.5,
+            "\n".join(lines),
+            ha="center", va="center",
+            fontsize=9
+        )
+
+    # set limits
+    ax.set_xlim(-0.2, 4.2)
+    ax.set_ylim(-0.2, 3.4)
+
+    plt.tight_layout()
+
+    if out_path is not None:
+        plt.savefig(out_path, dpi=300, bbox_inches="tight")
+        print("Saved:", out_path)
+
+    plt.show()
+
+
+
+
 def plot_bc_3_cubes_tinted(
     G: ig.Graph, box: dict,
     coords_attr="coords",
@@ -1078,39 +1304,94 @@ def plot_bc_3_cubes_tinted(
 # Resilience
 # ======================================================================
 
-def nodes_by_label(graph: ig.Graph, vessel_type_map=EDGE_NKIND_TO_LABEL):
-    labels = [infer_node_type_from_incident_edges(graph, v.index, vessel_type_map=vessel_type_map) for v in graph.vs]
-    labels = np.asarray(labels, dtype=object)
-    out = {}
-    for lab in ("arteriole", "venule", "capillary", "unknown"):
-        out[lab] = np.where(labels == lab)[0].astype(int)
-    return out
+def nodes_by_label(graph):
+    out = {"arteriole": [], "venule": [], "capillary": [], "unknown": []}
 
-def _av_sets(graph: ig.Graph):
-    groups = nodes_by_label(graph)
-    A = np.asarray(groups.get("arteriole", []), dtype=int)
-    V = np.asarray(groups.get("venule", []), dtype=int)
-    return A, V
+    for v in graph.vs:
+        lab = infer_node_type_from_incident_edges(graph, v.index)
+        out[lab].append(v.index)
 
-def shortest_av_paths(graph: ig.Graph, A=None, V=None):
-    if A is None or V is None:
-        A, V = _av_sets(graph)
-    if A.size == 0 or V.size == 0:
-        return []
+    return {k: np.array(v, dtype=int) for k, v in out.items()}
 
+def _av_sets(graph):
+    nodes = nodes_by_label(graph)
+    return nodes["arteriole"], nodes["venule"]
+
+def shortest_av_paths(graph):
+    A, V = _av_sets(graph)
     paths = []
+    # search paths in all AxV combination
     for a in A:
         for v in V:
-            p = graph.get_shortest_paths(int(a), to=int(v))[0]
+            p = graph.get_shortest_paths(a, to=v)[0]
             if len(p) > 1:
-                paths.append([int(x) for x in p])
+                paths.append(p)
     return paths
 
 
+def av_path_stats(graph, graph_name, paths):
+    A, V = _av_sets(graph)
 
-def av_shortest_paths_all(graph: ig.Graph):
-    return shortest_av_paths(graph)
+    pairs_searched = len(A) * len(V)
+    pairs_with_path = len(paths)
+    all_connected = pairs_with_path == pairs_searched
 
+    return {
+        "graph": graph_name,
+        "arterioles": len(A),
+        "venules": len(V),
+        "pairs_searched": pairs_searched,
+        "pairs_with_path": pairs_with_path,
+        "all_connected": all_connected
+    }
+
+
+# export a few paths for paraview visualization
+def sample_paths(paths, n=20):
+    step = max(1, len(paths) // n)
+    return paths[::step][:n]
+
+
+def sample_paths(paths, n): if len(paths) <= n: return paths return paths[:n]
+
+import pandas as pd
+import vtk
+
+def export_paths_vtp(graph, paths, filename, coords_attr="coords"):
+    P = graph.vs[coords_attr]
+
+    points = vtk.vtkPoints()
+    lines = vtk.vtkCellArray()
+
+    pid_array = vtk.vtkIntArray()
+    pid_array.SetName("path_id")
+
+    point_id = 0
+
+    for pid, path in enumerate(paths):
+        polyline = vtk.vtkPolyLine()
+        polyline.GetPointIds().SetNumberOfIds(len(path))
+
+        for i, v in enumerate(path):
+            x,y,z = P[v]
+            points.InsertNextPoint(x,y,z)
+            polyline.GetPointIds().SetId(i, point_id)
+
+            pid_array.InsertNextValue(pid)
+
+            point_id += 1
+
+        lines.InsertNextCell(polyline)
+
+    polydata = vtk.vtkPolyData()
+    polydata.SetPoints(points)
+    polydata.SetLines(lines)
+    polydata.GetPointData().AddArray(pid_array)
+
+    writer = vtk.vtkXMLPolyDataWriter()
+    writer.SetFileName(filename)
+    writer.SetInputData(polydata)
+    writer.Write()
 
 
 def induced_subgraph_box(graph: ig.Graph, box: dict, coords_attr="coords", node_eps=0.0):
@@ -1136,8 +1417,8 @@ def induced_subgraph_box(graph: ig.Graph, box: dict, coords_attr="coords", node_
     orig_to_sub = {int(o): int(i) for i, o in enumerate(sub_to_orig)}
     return sub, sub_to_orig, orig_to_sub
 
-
-
+# <<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<
+# TODO: THIS COULD BE DELETED IF I AM DOING VISUALIZATION IN PARAVIEW
 def av_paths_in_box(graph: ig.Graph, box: dict, coords_attr="coords", node_eps=0.0):
     sub, sub_to_orig, _ = induced_subgraph_box(graph, box, coords_attr=coords_attr, node_eps=node_eps)
     if sub is None or sub.ecount() == 0:
@@ -1191,31 +1472,70 @@ def plot_av_paths_in_box(
     plt.tight_layout()
     plt.show()
 
-
-
+# <<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<
 def max_edge_disjoint_av(graph: ig.Graph):
     A, V = _av_sets(graph)
     if A.size == 0 or V.size == 0:
-        return {"n_edge_disjoint_av": 0, "nA": int(A.size), "nV": int(V.size)}
+        return {"n_edge_disjoint_av": 0, "nA": int(A.size), "nV": int(V.size), "paths": []}
 
+    # directed graph
     D = graph.as_directed(mutual=True) if not graph.is_directed() else graph.copy()
-    D.es["cap"] = [1.0] * D.ecount()
 
+    # source / sink
     s = D.vcount()
     t = D.vcount() + 1
     D.add_vertices(2)
 
-    BIG = float(max(1, D.ecount()))
+    # connect source→A and V→sink
     extra_edges = [(s, int(a)) for a in A] + [(int(v), t) for v in V]
+    D.add_edges(extra_edges)
+
+    BIG = float(max(1, D.ecount()))
     extra_caps = [BIG] * len(extra_edges)
 
-    D.add_edges(extra_edges)
     D.es["cap"] = [1.0] * (D.ecount() - len(extra_caps)) + extra_caps
 
     mf = D.maxflow(s, t, capacity="cap")
-    return {"n_edge_disjoint_av": int(round(mf.value)), "nA": int(A.size), "nV": int(V.size)}
 
+    # -------- reconstruct paths ----------
+    flow_edges = [e.tuple for e, f in zip(D.es, mf.flow) if f > 0]
 
+    # remove source/sink edges
+    flow_edges = [(u, v) for (u, v) in flow_edges if u != s and v != t]
+
+    # adjacency
+    adj = {}
+    for u, v in flow_edges:
+        adj.setdefault(u, []).append(v)
+
+    paths = []
+
+    Vset = set(V)
+
+    # start from arterioles that have outgoing flow
+    for a in A:
+        if a not in adj:
+            continue
+
+        stack = [(a, [a])]
+
+        while stack:
+            node, path = stack.pop()
+
+            if node in Vset:
+                paths.append(path)
+                break
+
+            for nxt in adj.get(node, []):
+                if nxt not in path:
+                    stack.append((nxt, path + [nxt]))
+
+    return {
+        "n_edge_disjoint_av": int(round(mf.value)),
+        "nA": int(A.size),
+        "nV": int(V.size),
+        "paths": paths
+    }
 
 
 
@@ -1296,11 +1616,12 @@ def plot_hist_by_category_general(
         n = int(subset.size)
         pct = (100.0 * n / N_total) if N_total else 0.0
 
-        ax.hist(subset, bins=edges, density=density, alpha=0.7)
+        color = get_vessel_color(c)
+        ax.hist(subset, bins=edges, density=density, alpha=0.7, color = color)
 
         if show_mean and len(subset):
             mean_val = subset.mean()
-            ax.axvline(mean_val, linestyle="--")
+            ax.axvline(mean_val, linestyle="--", color = color)
             ax.legend([f"Mean = {mean_val:.2f}"])
 
         name = label_dict.get(c, str(c)) if label_dict else str(c)
@@ -1367,3 +1688,177 @@ def plot_violin_box_by_category(values, category, label_dict=None,
     plt.show()
 
 
+# gives back a set of boxplots for the data stored in the df, for each column
+def plot_boxplot_by_graph(df_long, value_col, title, ylabel, graphs_order=("HPC_1", "HPC_2", "HPC_3")):
+    groups, labels = [], []
+    for g in graphs_order:
+        if g not in df_long["graph"].unique():
+            continue
+        x = df_long.loc[df_long["graph"] == g, value_col].to_numpy(float)
+        x = x[np.isfinite(x)]
+        groups.append(x)
+        labels.append(g)
+
+    plt.figure(figsize=(7, 5))
+    plt.boxplot(groups, labels=labels, showfliers=False)
+    plt.title(title)
+    plt.ylabel(ylabel)
+    plt.grid(alpha=0.25, axis="y")
+    plt.tight_layout()
+    plt.show()
+
+# =========================================================================
+# COMBINED PLOTS
+# =========================================================================
+
+
+def diameter_length_overlay_by_type(dl, bins=40, graphs_order=("HPC_1", "HPC_2", "HPC_3"), box_label=""):
+    for t in sorted(dl["type"].unique()):
+        sub = dl[dl["type"] == t].copy()
+        fig, axes = plt.subplots(1, 2, figsize=(12, 4))
+        fig.suptitle(f"{t} | Diameter & Length distributions | {box_label}", fontsize=12, fontweight="bold")
+
+        ax = axes[0]
+        for g in graphs_order:
+            x = sub.loc[sub["graph"] == g, "diameter_vox"].to_numpy(float)
+            x = x[np.isfinite(x)]
+            if x.size:
+                ax.hist(x, bins=bins, density=True, alpha=0.45, label=g)
+        ax.set_title("Diameter")
+        ax.set_xlabel("Diameter (vox)")
+        ax.set_ylabel("Density")
+        ax.grid(alpha=0.25)
+        ax.legend()
+
+        ax = axes[1]
+        for g in graphs_order:
+            x = sub.loc[sub["graph"] == g, "length_um"].to_numpy(float)
+            x = x[np.isfinite(x)]
+            if x.size:
+                ax.hist(x, bins=bins, density=True, alpha=0.45, label=g)
+        ax.set_title("Length")
+        ax.set_xlabel("Length (µm)")
+        ax.set_ylabel("Density")
+        ax.grid(alpha=0.25)
+        ax.legend()
+
+        plt.tight_layout()
+        plt.show()
+
+
+# ---- PLot boxplots per box of ROI
+def plot_grouped_boxplot_types_per_graph(
+    df_long,
+    value_col="diameter_vox",
+    type_col="type",
+    graphs_order=("HPC_1", "HPC_2", "HPC_3"),
+    types_order=("arteriole", "venule", "capillary"),
+    type_colors=None,
+    title="Diameter by vessel type within each box",
+    ylabel="Diameter (vox)"
+):
+    """
+    One figure:
+      x-axis = graphs (HPC_1, HPC_2, HPC_3)
+      For each graph, 3 boxplots (arteriole/venule/capillary) side-by-side.
+    """
+    if df_long is None or df_long.empty:
+        print("[grouped boxplot] df_long is empty -> nothing to plot.")
+        return
+
+    if type_colors is None:
+        type_colors = {"arteriole": "red", "venule": "blue", "capillary": "gray"}
+
+    df = df_long.copy()
+    df[type_col] = df[type_col].astype(str).str.lower().str.strip()
+    df[type_col] = df[type_col].replace({
+        "artery": "arteriole",
+        "arterial": "arteriole",
+        "vein": "venule",
+        "venous": "venule",
+        "cap": "capillary",
+    })
+
+    fig, ax = plt.subplots(figsize=(9, 5))
+    base = np.arange(len(graphs_order), dtype=float)
+
+    offsets = {types_order[0]: -0.28, types_order[1]: 0.00, types_order[2]: 0.28}
+    width = 0.22
+
+    for t in types_order:
+        data, pos = [], []
+        for i, g in enumerate(graphs_order):
+            x = df.loc[(df["graph"] == g) & (df[type_col] == t), value_col].to_numpy(float)
+            x = x[np.isfinite(x)]
+            if x.size == 0:
+                continue
+            data.append(x)
+            pos.append(base[i] + offsets[t])
+
+        if not data:
+            continue
+
+        bp = ax.boxplot(
+            data,
+            positions=pos,
+            widths=width,
+            patch_artist=True,
+            showfliers=False
+        )
+        for patch in bp["boxes"]:
+            patch.set_facecolor(type_colors.get(t, "lightgray"))
+            patch.set_alpha(0.70)
+        for k in ["whiskers", "caps", "medians"]:
+            for line in bp[k]:
+                line.set_color("black")
+
+    ax.set_xticks(base)
+    ax.set_xticklabels(list(graphs_order))
+    ax.set_title(title)
+    ax.set_ylabel(ylabel)
+    ax.grid(alpha=0.25, axis="y")
+
+    handles = [Patch(facecolor=type_colors.get(t, "lightgray"), edgecolor="black", label=t) for t in types_order]
+    ax.legend(handles=handles, title="Vessel type", frameon=False)
+
+    plt.tight_layout()
+    plt.show()
+
+
+# =========================================================================
+# SUMARY TABLES
+# =========================================================================
+
+def make_bc_face_table_from_bc_all(bc_all, face_col="Face", graph_col="graph", value_col="BC nodes",
+                                   face_order=("x_min","x_max","y_min","y_max","z_min","z_max"),
+                                   graph_order=None):
+    """
+    bc_all: concatenate of all tables
+    Returns df_total with index=faces y columns=graphs, valores=BC nodes (int).
+    """
+    df = bc_all.copy()
+
+    if face_col not in df.columns:
+        raise ValueError(f"'{face_col}' not in bc_all.columns. Available: {df.columns.tolist()}")
+    if graph_col not in df.columns:
+        raise ValueError(f"'{graph_col}' not in bc_all.columns. Available: {df.columns.tolist()}")
+    if value_col not in df.columns:
+        raise ValueError(f"'{value_col}' not in bc_all.columns. Available: {df.columns.tolist()}")
+
+    df[value_col] = pd.to_numeric(df[value_col], errors="coerce").fillna(0.0)
+
+    # Suma por (Face, graph)
+    tab = df.groupby([face_col, graph_col], as_index=False)[value_col].sum()
+
+    # Pivot a faces x graphs
+    pivot = tab.pivot(index=face_col, columns=graph_col, values=value_col).fillna(0.0)
+
+    # Orden
+    if graph_order is not None:
+        cols = [g for g in graph_order if g in pivot.columns]
+        pivot = pivot.reindex(columns=cols)
+    if face_order is not None:
+        rows = [f for f in face_order if f in pivot.index]
+        pivot = pivot.reindex(index=rows)
+
+    return pivot.round(0).astype(int)
