@@ -52,9 +52,10 @@ import igraph as ig
 import pickle
 import random
 
+
 from collections import Counter
 from matplotlib.lines import Line2D
-from matplotlib.patches import Rectangle
+from matplotlib.patches import Rectangle, Patch
 from mpl_toolkits.mplot3d.art3d import Poly3DCollection
 
 
@@ -552,7 +553,337 @@ def diameter_stats_nkind(
     return stats_dict
 
 
+# -------------------
+# Major trees (artery/vein) and export 
+# -------------------
 
+def major_components_from_edge_code(graph, target_code, abs_thresh=10, rel_thresh=0.20):
+    """
+    threshold is 10 as 2 big arteriole paths have 11 edges and was assume they are big.
+
+    returns:
+      comp_df: row per connected component
+      edge_df: row per original edge with labels for paraview
+    """
+    g = graph.copy()
+
+    if "orig_eid" not in g.es.attributes():
+        g.es["orig_eid"] = list(range(g.ecount()))
+
+    nk = np.asarray(g.es["nkind"], int)
+    keep_eids = np.where(nk == int(target_code))[0].tolist()
+
+    if len(keep_eids) == 0:
+        comp_df = pd.DataFrame(columns=[
+            "component_id", "n_nodes", "n_edges",
+            "n_branch_nodes", "edge_threshold", "is_major", "major_tree_id"
+        ])
+        edge_df = pd.DataFrame(columns=[
+            "orig_eid", "component_id", "is_major", "major_tree_id", "target_code"
+        ])
+        return comp_df, edge_df
+
+    sg = g.subgraph_edges(keep_eids, delete_vertices=True)
+    comps = sg.components(mode="weak") if sg.is_directed() else sg.components()
+
+    rows = []
+    subgraphs = []
+
+    for cid, vids in enumerate(comps, start=1):
+        sub = sg.induced_subgraph(vids)
+
+        n_edges = int(sub.ecount())
+        deg = sub.degree()
+        n_branch_nodes = int(sum(d >= 3 for d in deg))
+
+        rows.append({
+            "component_id": cid,
+            "n_nodes": int(sub.vcount()),
+            "n_edges": n_edges,
+            "n_branch_nodes": n_branch_nodes,
+        })
+        subgraphs.append(sub)
+
+    comp_df = pd.DataFrame(rows)
+
+    if comp_df.empty:
+        edge_df = pd.DataFrame(columns=[
+            "orig_eid", "component_id", "is_major", "major_tree_id", "target_code"
+        ])
+        return comp_df, edge_df
+
+    max_edges = int(comp_df["n_edges"].max())
+    th = max(abs_thresh, rel_thresh * max_edges)
+
+    comp_df["edge_threshold"] = th
+    comp_df["is_major"] = (
+        (comp_df["n_edges"] >= th) &
+        (comp_df["n_branch_nodes"] >= 1)
+    )
+
+    comp_df = comp_df.sort_values("n_edges", ascending=False).reset_index(drop=True)
+
+    # assign major_tree_id = 1,2,3... only to major trees
+    major_tree_ids = {}
+    next_id = 1
+    for _, row in comp_df.iterrows():
+        cid = int(row["component_id"])
+        if bool(row["is_major"]):
+            major_tree_ids[cid] = next_id
+            next_id += 1
+        else:
+            major_tree_ids[cid] = 0
+
+    comp_df["major_tree_id"] = comp_df["component_id"].map(major_tree_ids)
+
+    edge_rows = []
+    for sub in subgraphs:
+        cid = int(sub["component_id"]) if "component_id" in sub.attributes() else None
+
+    # iterate in comp_df original
+    for _, row in comp_df.iterrows():
+        cid = int(row["component_id"])
+        is_major = int(bool(row["is_major"]))
+        mtid = int(row["major_tree_id"])
+
+        # rescue subgraph
+        vids = comps[cid - 1]
+        sub = sg.induced_subgraph(vids)
+
+        for oeid in sub.es["orig_eid"]:
+            edge_rows.append({
+                "orig_eid": int(oeid),
+                "component_id": cid,
+                "is_major": is_major,
+                "major_tree_id": mtid,
+                "target_code": int(target_code),
+            })
+
+    edge_df = pd.DataFrame(edge_rows).sort_values("orig_eid").reset_index(drop=True)
+    return comp_df, edge_df
+
+
+
+def export_labeled_edges_vtp(
+    graph,
+    edge_labels_df,
+    out_path,
+    coords_attr="coords",
+    include_only_major=False
+):
+    """
+    exports edges of original graph to vtp as lines with celldata
+      - orig_eid
+      - component_id
+      - is_major
+      - major_tree_id
+      - nkind
+      - length
+      - diameter
+    """
+
+    if edge_labels_df is None or edge_labels_df.empty:
+        print(f"[export_labeled_edges_vtp] Nothing to export: {out_path}")
+        return
+
+    df = edge_labels_df.copy()
+
+    if include_only_major:
+        df = df[df["is_major"] == 1].copy()
+
+    if df.empty:
+        print(f"[export_labeled_edges_vtp] No major edges to export: {out_path}")
+        return
+
+    coords = np.asarray(graph.vs[coords_attr], float)
+
+    points = []
+    connectivity = []
+    offsets = []
+
+    cell_orig_eid = []
+    cell_component_id = []
+    cell_is_major = []
+    cell_major_tree_id = []
+    cell_nkind = []
+    cell_length = []
+    cell_diameter = []
+
+    pidx = 0
+
+    for _, row in df.iterrows():
+        eid = int(row["orig_eid"])
+        e = graph.es[eid]
+        s, t = e.tuple
+
+        ps = coords[int(s)]
+        pt = coords[int(t)]
+
+        points.append([float(ps[0]), float(ps[1]), float(ps[2])])
+        points.append([float(pt[0]), float(pt[1]), float(pt[2])])
+
+        connectivity.extend([pidx, pidx + 1])
+        pidx += 2
+        offsets.append(pidx)
+
+        cell_orig_eid.append(eid)
+        cell_component_id.append(int(row["component_id"]))
+        cell_is_major.append(int(row["is_major"]))
+        cell_major_tree_id.append(int(row["major_tree_id"]))
+        cell_nkind.append(int(e["nkind"]) if "nkind" in graph.es.attributes() else -1)
+        cell_length.append(float(e["length"]) if "length" in graph.es.attributes() else np.nan)
+        cell_diameter.append(float(e["diameter"]) if "diameter" in graph.es.attributes() else np.nan)
+
+    points_arr = np.asarray(points, float).reshape(-1, 3)
+    connectivity_arr = np.asarray(connectivity, int)
+    offsets_arr = np.asarray(offsets, int)
+
+    def arr_to_ascii(a):
+        return " ".join(map(str, np.ravel(a)))
+
+    xml = f'''<?xml version="1.0"?>
+<VTKFile type="PolyData" version="0.1" byte_order="LittleEndian">
+  <PolyData>
+    <Piece NumberOfPoints="{len(points_arr)}" NumberOfLines="{len(cell_orig_eid)}">
+      <Points>
+        <DataArray type="Float32" NumberOfComponents="3" format="ascii">
+          {arr_to_ascii(points_arr.astype(np.float32))}
+        </DataArray>
+      </Points>
+
+      <Lines>
+        <DataArray type="Int32" Name="connectivity" format="ascii">
+          {arr_to_ascii(connectivity_arr.astype(np.int32))}
+        </DataArray>
+        <DataArray type="Int32" Name="offsets" format="ascii">
+          {arr_to_ascii(offsets_arr.astype(np.int32))}
+        </DataArray>
+      </Lines>
+
+      <CellData>
+        <DataArray type="Int32" Name="orig_eid" format="ascii">
+          {arr_to_ascii(np.asarray(cell_orig_eid, dtype=np.int32))}
+        </DataArray>
+        <DataArray type="Int32" Name="component_id" format="ascii">
+          {arr_to_ascii(np.asarray(cell_component_id, dtype=np.int32))}
+        </DataArray>
+        <DataArray type="Int32" Name="is_major" format="ascii">
+          {arr_to_ascii(np.asarray(cell_is_major, dtype=np.int32))}
+        </DataArray>
+        <DataArray type="Int32" Name="major_tree_id" format="ascii">
+          {arr_to_ascii(np.asarray(cell_major_tree_id, dtype=np.int32))}
+        </DataArray>
+        <DataArray type="Int32" Name="nkind" format="ascii">
+          {arr_to_ascii(np.asarray(cell_nkind, dtype=np.int32))}
+        </DataArray>
+        <DataArray type="Float32" Name="length" format="ascii">
+          {arr_to_ascii(np.asarray(cell_length, dtype=np.float32))}
+        </DataArray>
+        <DataArray type="Float32" Name="diameter" format="ascii">
+          {arr_to_ascii(np.asarray(cell_diameter, dtype=np.float32))}
+        </DataArray>
+      </CellData>
+    </Piece>
+  </PolyData>
+</VTKFile>
+'''
+
+    with open(out_path, "w", encoding="utf-8") as f:
+        f.write(xml)
+
+    print(f"[export_labeled_edges_vtp] Saved: {out_path}")
+
+
+
+import os
+import pandas as pd
+import matplotlib.pyplot as plt
+
+def save_major_trees_table_png(summary_df, out_path, graph_order=None):
+    df = summary_df.copy()
+
+    if graph_order is not None:
+        df["graph"] = pd.Categorical(df["graph"], categories=graph_order, ordered=True)
+        df = df.sort_values("graph")
+
+    table_df = df[[
+        "graph",
+        "n_major_arteriole_trees",
+        "n_arteriole_components",
+        "n_major_venule_trees",
+        "n_venule_components"
+    ]].copy()
+
+    table_df = table_df.rename(columns={
+        "graph": "Box",
+        "n_major_arteriole_trees": "Major arterioles",
+        "n_arteriole_components": "Total arteriole components",
+        "n_major_venule_trees": "Major venules",
+        "n_venule_components": "Total venule components",
+    })
+
+    table_df["Arterioles (major/total)"] = (
+        table_df["Major arterioles"].astype(int).astype(str)
+        + "/"
+        + table_df["Total arteriole components"].astype(int).astype(str)
+    )
+
+    table_df["Venules (major/total)"] = (
+        table_df["Major venules"].astype(int).astype(str)
+        + "/"
+        + table_df["Total venule components"].astype(int).astype(str)
+    )
+
+    table_df = table_df[[
+        "Box",
+        "Major arterioles",
+        "Total arteriole components",
+        "Arterioles (major/total)",
+        "Major venules",
+        "Total venule components",
+        "Venules (major/total)",
+    ]]
+
+    nrows, ncols = table_df.shape
+
+    fig_w = max(10, ncols * 2.2)
+    fig_h = max(1.8, 0.65 * (nrows + 1))
+
+    fig, ax = plt.subplots(figsize=(fig_w, fig_h))
+    ax.axis("off")
+
+    tbl = ax.table(
+        cellText=table_df.values,
+        colLabels=table_df.columns,
+        cellLoc="center",
+        loc="center"
+    )
+
+    tbl.auto_set_font_size(False)
+    tbl.set_fontsize(11)
+    tbl.scale(1.2, 1.6)
+
+    # Header style
+    for c in range(ncols):
+        cell = tbl[(0, c)]
+        cell.set_text_props(weight="bold")
+        cell.set_facecolor("#d9eaf7")
+
+    # Alternate row colors
+    for r in range(1, nrows + 1):
+        for c in range(ncols):
+            cell = tbl[(r, c)]
+            if r % 2 == 0:
+                cell.set_facecolor("#f7f7f7")
+            else:
+                cell.set_facecolor("white")
+
+    plt.tight_layout()
+    plt.savefig(out_path, dpi=300, bbox_inches="tight")
+    plt.show()
+    plt.close()
+
+    print("Saved table image:", out_path)
 
 
 # ============================================================================
@@ -776,16 +1107,84 @@ def bc_nodes_on_face_plane(graph: ig.Graph, axis: int, value: float, box: dict, 
     )
     return np.where(on_plane & inside)[0].astype(int)
 
+
+def boundary_node_diameter(graph: ig.Graph, vid: int, diam_attr="diameter"):
+    """
+    Diameter for a BC node:
+    - if degree=1 -> diameter of its only incident edge
+    - otherwise -> mean diameter of incident edges
+    """
+    if diam_attr not in graph.es.attributes():
+        return np.nan
+
+    eids = graph.incident(int(vid))
+    vals = []
+
+    for eid in eids:
+        d = graph.es[eid][diam_attr]
+        if d is None:
+            continue
+        try:
+            if np.isnan(d):
+                continue
+        except TypeError:
+            pass
+        vals.append(float(d))
+
+    if len(vals) == 0:
+        return np.nan
+    if len(vals) == 1:
+        return vals[0]
+    return float(np.mean(vals))
+
+
+from collections import Counter, defaultdict
+import numpy as np
+import pandas as pd
+import igraph as ig
+
+
+def boundary_node_diameter(graph: ig.Graph, vid: int, diam_attr="diameter"):
+    """
+    Diameter for a BC node:
+    - if degree=1 -> diameter of its only incident edge
+    - otherwise -> mean diameter of incident edges
+    """
+    if diam_attr not in graph.es.attributes():
+        return np.nan
+
+    eids = graph.incident(int(vid))
+    vals = []
+
+    for eid in eids:
+        d = graph.es[eid][diam_attr]
+        if d is None:
+            continue
+        try:
+            if np.isnan(d):
+                continue
+        except TypeError:
+            pass
+        vals.append(float(d))
+
+    if len(vals) == 0:
+        return np.nan
+    if len(vals) == 1:
+        return vals[0]
+    return float(np.mean(vals))
+
+
 def analyze_bc_faces(
     graph: ig.Graph,
     box: dict,
     coords_attr="coords",
     space="um",
-    eps_vox=2.0,          # ALWAYS specified in vox, converted if space="um"
+    eps_vox=2.0,
     degree_thr=4,
-    mode="auto",          # "border" | "plane" | "auto" -> border after cutting 
-                          # (is_border/border_face present), plane checks if node is close in eps to the face (when "border" attr not present)
+    mode="auto",
     return_node_ids=False,
+    diam_attr="diameter",          # NEW
+    return_diameter_values=False,  # NEW
 ):
     validate_box_faces(box)
     deg = np.asarray(graph.degree(), dtype=int)
@@ -804,7 +1203,10 @@ def analyze_bc_faces(
             nodes = np.where(isb & (bf == face))[0].astype(int)
         else:
             eps = resolve_eps(eps_vox, space=space, axis=axis)
-            nodes = bc_nodes_on_face_plane(graph, axis, float(box[key]), box, coords_attr=coords_attr, eps=eps)
+            nodes = bc_nodes_on_face_plane(
+                graph, axis, float(box[key]), box,
+                coords_attr=coords_attr, eps=eps
+            )
 
         n = int(nodes.size)
         deg_counts = Counter(deg[nodes]) if n else Counter()
@@ -819,14 +1221,46 @@ def analyze_bc_faces(
             "high_degree_percent": float(100.0 * high_n / n) if n else 0.0,
         }
 
+        # ---------------------------------------------------------
+        # type composition + diameter stats by type
+        # ---------------------------------------------------------
         if "nkind" in graph.es.attributes() and n:
             labels = [infer_node_type_from_incident_edges(graph, int(v)) for v in nodes]
             tc = Counter(labels)
+
             face_res["type_counts"] = dict(tc)
             face_res["type_percent"] = {k: 100.0 * v / n for k, v in tc.items()}
+
+            # diameter values grouped by vessel type
+            diam_by_type = defaultdict(list)
+
+            for v, lab in zip(nodes, labels):
+                d = boundary_node_diameter(graph, int(v), diam_attr=diam_attr)
+                if not np.isnan(d):
+                    diam_by_type[lab].append(float(d))
+
+            type_diam_stats = {}
+            for lab, vals in diam_by_type.items():
+                arr = np.asarray(vals, dtype=float)
+                type_diam_stats[lab] = {
+                    "n": int(arr.size),
+                    "mean": float(np.mean(arr)) if arr.size else np.nan,
+                    "median": float(np.median(arr)) if arr.size else np.nan,
+                    "std": float(np.std(arr, ddof=1)) if arr.size > 1 else np.nan,
+                }
+
+            face_res["type_diameter_stats"] = type_diam_stats
+
+            if return_diameter_values:
+                face_res["type_diameter_values"] = {
+                    k: list(map(float, v)) for k, v in diam_by_type.items()
+                }
         else:
             face_res["type_counts"] = {}
             face_res["type_percent"] = {}
+            face_res["type_diameter_stats"] = {}
+            if return_diameter_values:
+                face_res["type_diameter_values"] = {}
 
         # optional depth stats
         if ("distance_to_surface_R" in graph.vs.attributes()) or ("distance_to_surface" in graph.vs.attributes()):
@@ -842,21 +1276,55 @@ def analyze_bc_faces(
 
     return out
 
+
+def bc_diameter_longtable(res: dict, box_name="Box") -> pd.DataFrame:
+    rows = []
+
+    for face, face_data in res.items():
+        vals_dict = face_data.get("type_diameter_values", {}) or {}
+
+        for vessel_type, vals in vals_dict.items():
+            for d in vals:
+                if pd.notna(d):
+                    rows.append({
+                        "Box": box_name,
+                        "Face": face,
+                        "vessel_type": vessel_type,
+                        "diameter": float(d),
+                    })
+
+    return pd.DataFrame(rows)
+
+
 def bc_faces_table(res: dict, box_name="Box") -> pd.DataFrame:
     rows = []
+
+    vessel_types = ["arteriole", "venule", "capillary", "unknown"]
+
     for face, face_data in res.items():
         total = int(face_data.get("count", 0))
+        tc = face_data.get("type_counts", {}) or {}
         tp = face_data.get("type_percent", {}) or {}
-        rows.append({
+        tds = face_data.get("type_diameter_stats", {}) or {}
+
+        row = {
             "Box": box_name,
             "Face": face,
             "BC nodes": total,
-            "% Arteriole": float(tp.get("arteriole", 0.0)),
-            "% Venule": float(tp.get("venule", 0.0)),
-            "% Capillary": float(tp.get("capillary", 0.0)),
-            "% Unknown": float(tp.get("unknown", 0.0)),
             "High degree %": float(face_data.get("high_degree_percent", 0.0)),
-        })
+        }
+
+        for vt in vessel_types:
+            row[f"n_{vt}"] = int(tc.get(vt, 0))
+            row[f"% {vt.capitalize()}"] = float(tp.get(vt, 0.0))
+
+            stats = tds.get(vt, {})
+            row[f"{vt}_diam_mean"] = float(stats.get("mean", np.nan))
+            row[f"{vt}_diam_median"] = float(stats.get("median", np.nan))
+            row[f"{vt}_diam_std"] = float(stats.get("std", np.nan))
+
+        rows.append(row)
+
     return pd.DataFrame(rows)
 
 
@@ -1274,6 +1742,8 @@ def export_paths_vtp(graph, paths, filename, coords_attr="coords"):
     writer.Write()
 
 
+
+
 def induced_subgraph_box(graph: ig.Graph, box: dict, coords_attr="coords", node_eps=0.0):
     validate_box_faces(box)
     P = get_coords(graph, coords_attr)
@@ -1353,6 +1823,8 @@ def plot_av_paths_in_box(
     plt.show()
 
 # <<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<
+
+
 def max_edge_disjoint_av(graph: ig.Graph):
     A, V = _av_sets(graph)
     if A.size == 0 or V.size == 0:
@@ -1366,59 +1838,67 @@ def max_edge_disjoint_av(graph: ig.Graph):
     t = D.vcount() + 1
     D.add_vertices(2)
 
-    # connect source→A and V→sink
+    # connect source->A and V->sink
     extra_edges = [(s, int(a)) for a in A] + [(int(v), t) for v in V]
     D.add_edges(extra_edges)
 
     BIG = float(max(1, D.ecount()))
     extra_caps = [BIG] * len(extra_edges)
-
     D.es["cap"] = [1.0] * (D.ecount() - len(extra_caps)) + extra_caps
 
     mf = D.maxflow(s, t, capacity="cap")
+    n_disjoint = int(round(mf.value))
 
-    # -------- reconstruct paths ----------
-    flow_edges = [e.tuple for e, f in zip(D.es, mf.flow) if f > 0]
-
-    # remove source/sink edges
-    flow_edges = [(u, v) for (u, v) in flow_edges if u != s and v != t]
-
-    # adjacency
+    # ------------------------------------------------------------
+    # Build flow adjacency with remaining flow on each edge
+    # ------------------------------------------------------------
+    flow_left = {}
     adj = {}
-    for u, v in flow_edges:
-        adj.setdefault(u, []).append(v)
 
+    for e, f in zip(D.es, mf.flow):
+        f = int(round(f))
+        if f > 0:
+            u, v = e.tuple
+            flow_left[(u, v)] = f
+            adj.setdefault(u, []).append(v)
+
+    # ------------------------------------------------------------
+    # Reconstruct exactly n_disjoint paths by CONSUMING flow
+    # ------------------------------------------------------------
     paths = []
 
-    Vset = set(V)
-
-    # start from arterioles that have outgoing flow
-    for a in A:
-        if a not in adj:
-            continue
-
-        stack = [(a, [a])]
+    for _ in range(n_disjoint):
+        stack = [(s, [s])]
+        found_path = None
 
         while stack:
             node, path = stack.pop()
 
-            if node in Vset:
-                paths.append(path)
+            if node == t:
+                found_path = path
                 break
 
             for nxt in adj.get(node, []):
-                if nxt not in path:
+                if flow_left.get((node, nxt), 0) > 0 and nxt not in path:
                     stack.append((nxt, path + [nxt]))
 
+        if found_path is None:
+            print(f"[WARNING] maxflow={n_disjoint} but could only reconstruct {len(paths)} paths")
+            break
+
+        # consume 1 unit of flow along the path
+        for u, v in zip(found_path[:-1], found_path[1:]):
+            flow_left[(u, v)] -= 1
+
+        # remove super source / sink
+        paths.append(found_path[1:-1])
+
     return {
-        "n_edge_disjoint_av": int(round(mf.value)),
+        "n_edge_disjoint_av": n_disjoint,
         "nA": int(A.size),
         "nV": int(V.size),
         "paths": paths
     }
-
-
-
 
 
 # ======================================================================
@@ -1568,6 +2048,11 @@ def plot_violin_box_by_category(values, category, label_dict=None,
     plt.show()
 
 
+# =========================================================================
+# COMBINED PLOTS
+# =========================================================================
+
+
 # gives back a set of boxplots for the data stored in the df, for each column
 def plot_boxplot_by_graph(df_long, value_col, title, ylabel, graphs_order=("HPC_1", "HPC_2", "HPC_3")):
     groups, labels = [], []
@@ -1587,9 +2072,6 @@ def plot_boxplot_by_graph(df_long, value_col, title, ylabel, graphs_order=("HPC_
     plt.tight_layout()
     plt.show()
 
-# =========================================================================
-# COMBINED PLOTS
-# =========================================================================
 
 
 def diameter_length_overlay_by_type(dl, bins=40, graphs_order=("HPC_1", "HPC_2", "HPC_3"), box_label=""):
