@@ -980,7 +980,7 @@ def vessel_volume_density(ms, box): # mm³/mm³
     L = ms["lengths"]
     r0 = ms["r0"]
     r1 = ms["r1"]
-
+    
     inside = (
         (mids[:,0]>=box["xmin"]) & (mids[:,0]<=box["xmax"]) &
         (mids[:,1]>=box["ymin"]) & (mids[:,1]<=box["ymax"]) &
@@ -1060,6 +1060,71 @@ def graph_density_metrics(G, graph_name):
         "graph_density": float(graph_density),
     }
 
+
+
+def vessel_volume_density_nkind(ms, box, nkind_filter=None):  # mm³/mm³
+    mids = ms["midpoints"]
+    L = ms["lengths"]
+    r0 = ms["r0"]
+    r1 = ms["r1"]
+    nk = ms["nkind"]
+
+    inside = (
+        (mids[:,0] >= box["xmin"]) & (mids[:,0] <= box["xmax"]) &
+        (mids[:,1] >= box["ymin"]) & (mids[:,1] <= box["ymax"]) &
+        (mids[:,2] >= box["zmin"]) & (mids[:,2] <= box["zmax"])
+    )
+
+    if nkind_filter is not None:
+        inside &= (nk == int(nkind_filter))
+
+    L = L[inside]
+    r0 = r0[inside]
+    r1 = r1[inside]
+
+    rmean = 0.5 * (r0 + r1)
+    vessel_vol_um3 = np.sum(np.pi * rmean**2 * L)
+
+    tissue_vol_um3 = (
+        (box["xmax"] - box["xmin"]) *
+        (box["ymax"] - box["ymin"]) *
+        (box["zmax"] - box["zmin"])
+    )
+
+    vessel_vol_mm3 = vessel_vol_um3 * 1e-9
+    tissue_vol_mm3 = tissue_vol_um3 * 1e-9
+
+    return vessel_vol_mm3 / tissue_vol_mm3
+
+
+def vessel_length_density_nkind(ms, box, nkind_filter=None):
+    mids = ms["midpoints"]
+    L = ms["lengths"]
+    nk = ms["nkind"]
+
+    inside = (
+        (mids[:,0] >= box["xmin"]) & (mids[:,0] <= box["xmax"]) &
+        (mids[:,1] >= box["ymin"]) & (mids[:,1] <= box["ymax"]) &
+        (mids[:,2] >= box["zmin"]) & (mids[:,2] <= box["zmax"])
+    )
+
+    if nkind_filter is not None:
+        inside &= (nk == int(nkind_filter))
+
+    L = L[inside]
+
+    length_um = np.sum(L)
+
+    tissue_vol_um3 = (
+        (box["xmax"] - box["xmin"]) *
+        (box["ymax"] - box["ymin"]) *
+        (box["zmax"] - box["zmin"])
+    )
+
+    length_mm = length_um * 1e-3
+    tissue_vol_mm3 = tissue_vol_um3 * 1e-9
+
+    return length_mm / tissue_vol_mm3
 
 # ======================================================================
 #  SIMULATION (BC NODES)
@@ -1705,6 +1770,8 @@ def sample_paths(paths, n):
 import pandas as pd
 import vtk
 
+
+
 def export_paths_vtp(graph, paths, filename, coords_attr="coords"):
     P = graph.vs[coords_attr]
 
@@ -2224,3 +2291,284 @@ def make_bc_face_table_from_bc_all(bc_all, face_col="Face", graph_col="graph", v
         pivot = pivot.reindex(index=rows)
 
     return pivot.round(0).astype(int)
+
+
+
+import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
+from itertools import combinations
+from scipy.stats import ttest_ind
+
+def _finite(x):
+    x = np.asarray(x, float)
+    return x[np.isfinite(x)]
+
+def _normalize_types(df):
+    d = df.copy()
+    d["type"] = d["type"].astype(str).str.lower().str.strip()
+    d["type"] = d["type"].replace({
+        "artery": "arteriole", "arterial": "arteriole",
+        "vein": "venule", "venous": "venule",
+        "cap": "capillary",
+    })
+    return d
+
+def robust_spread_pct(x):
+    x = _finite(x)
+    if x.size < 3:
+        return np.nan
+    q25, q50, q75 = np.percentile(x, [25, 50, 75])
+    return np.nan if abs(q50) < 1e-12 else 100.0 * (q75 - q25) / q50
+
+def between_median_range_pct(meds):
+    meds = _finite(meds)
+    if meds.size < 2:
+        return np.nan
+    m = float(np.median(meds))
+    return np.nan if abs(m) < 1e-12 else 100.0 * (float(np.max(meds)) - float(np.min(meds))) / m
+
+def delta_median_pct(medians):
+    medians = _finite(medians)
+    if medians.size < 2:
+        return np.nan
+    m = float(np.median(medians))
+    return np.nan if abs(m) < 1e-12 else 100.0 * (float(np.max(medians)) - float(np.min(medians))) / m
+
+def pairwise_ttests_table(df, value_col, graphs_order, group_col="graph"):
+    rows = []
+    present = [g for g in graphs_order if g in set(df[group_col].astype(str))]
+    for g1, g2 in combinations(present, 2):
+        x1 = _finite(df.loc[df[group_col] == g1, value_col].to_numpy(float))
+        x2 = _finite(df.loc[df[group_col] == g2, value_col].to_numpy(float))
+
+        if x1.size < 2 or x2.size < 2:
+            t_stat, p_val = np.nan, np.nan
+        else:
+            t_stat, p_val = ttest_ind(x1, x2, equal_var=False, nan_policy="omit")
+
+        rows.append({
+            "metric": value_col,
+            "group1": g1,
+            "group2": g2,
+            "n1": int(x1.size),
+            "n2": int(x2.size),
+            "mean1": float(np.mean(x1)) if x1.size else np.nan,
+            "mean2": float(np.mean(x2)) if x2.size else np.nan,
+            "median1": float(np.median(x1)) if x1.size else np.nan,
+            "median2": float(np.median(x2)) if x2.size else np.nan,
+            "t_stat": float(t_stat) if np.isfinite(t_stat) else np.nan,
+            "p_value": float(p_val) if np.isfinite(p_val) else np.nan,
+        })
+    return pd.DataFrame(rows)
+
+def _p_to_text(p):
+    if not np.isfinite(p):
+        return "p=NA"
+    if p < 1e-4:
+        return "p<1e-4"
+    return f"p={p:.3g}"
+
+def _p_to_stars(p):
+    if not np.isfinite(p):
+        return "NA"
+    if p < 0.001:
+        return "***"
+    if p < 0.01:
+        return "**"
+    if p < 0.05:
+        return "*"
+    return "ns"
+
+def add_pairwise_pvalues(ax, stats_df, positions, data_by_group):
+    if stats_df is None or stats_df.empty:
+        return
+
+    valid_arrays = [np.asarray(v, float) for v in data_by_group.values() if len(v) > 0]
+    if not valid_arrays:
+        return
+
+    ymin, ymax = ax.get_ylim()
+    yr = ymax - ymin
+    if yr <= 0:
+        yr = 1.0
+
+    max_y = max(np.nanmax(v) for v in valid_arrays)
+    n_pairs = len(stats_df)
+
+    base = max_y + 0.05 * yr
+    step = 0.10 * yr
+    needed_top = base + (n_pairs + 1) * step
+
+    if needed_top > ymax:
+        ax.set_ylim(ymin, needed_top)
+        ymin, ymax = ax.get_ylim()
+        yr = ymax - ymin
+        base = max_y + 0.05 * yr
+        step = 0.08 * yr
+
+    for i, row in enumerate(stats_df.itertuples(index=False)):
+        g1, g2 = row.group1, row.group2
+        if g1 not in positions or g2 not in positions:
+            continue
+
+        x1, x2 = positions[g1], positions[g2]
+        if x1 > x2:
+            x1, x2 = x2, x1
+
+        y = base + i * step
+        h = 0.025 * yr
+
+        ax.plot([x1, x1, x2, x2], [y, y + h, y + h, y], lw=1.2, c="black")
+        ax.text(
+            (x1 + x2) / 2.0,
+            y + h + 0.01 * yr,
+            f"{_p_to_stars(row.p_value)} ({_p_to_text(row.p_value)})",
+            ha="center",
+            va="bottom",
+            fontsize=9,
+            color="black"
+        )
+
+def pairwise_stats_text(df, value_col, graphs_order):
+    st = pairwise_ttests_table(df, value_col, graphs_order)
+    if st.empty:
+        return ""
+    parts = []
+    for r in st.itertuples(index=False):
+        parts.append(f"{r.group1} vs {r.group2}: {_p_to_text(r.p_value)}")
+    return " | ".join(parts)
+
+
+
+
+import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
+
+def add_jitter_scatter(ax, xpos, y, color="black", jitter=0.08, alpha=0.22, s=10, max_points=2000):
+    y = _finite(y)
+    if y.size == 0:
+        return
+
+    # para no saturar el plot si hay demasiados edges
+    if y.size > max_points:
+        rng = np.random.default_rng(0)
+        y = rng.choice(y, size=max_points, replace=False)
+
+    rng = np.random.default_rng(0)
+    xj = xpos + rng.uniform(-jitter, jitter, size=y.size)
+
+    ax.scatter(
+        xj, y,
+        s=s,
+        alpha=alpha,
+        color=color,
+        edgecolors="none",
+        zorder=2
+    )
+
+def plot_simple_type_boxplots_with_stats(
+    dl,
+    value_col,
+    ylabel,
+    graphs_order,
+    types_order,
+    box_colors=None,
+    show_scatter=True,
+    scatter_jitter=0.08,
+    scatter_alpha=0.20,
+    scatter_size=10,
+    max_scatter_points=2000,
+    title = None
+):
+    dl = _normalize_types(dl)
+
+    if box_colors is None:
+        box_colors = {
+            "HPC_1": "tab:blue",
+            "HPC_2": "tab:orange",
+            "HPC_3": "tab:green",
+        }
+
+    types_use = [t for t in types_order if t in set(dl["type"].unique())]
+
+    fig, axes = plt.subplots(1, len(types_use), figsize=(4.8 * len(types_use), 5.4), sharey=True)
+    if len(types_use) == 1:
+        axes = [axes]
+
+    stats_out = []
+
+    for ax, t in zip(axes, types_use):
+        data = []
+        meds = []
+        labels = []
+        data_by_group = {}
+
+        sub = dl[dl["type"] == t].copy()
+
+        for g in graphs_order:
+            x = sub.loc[sub["graph"] == g, value_col].to_numpy(float)
+            x = _finite(x)
+            if x.size == 0:
+                continue
+
+            data.append(x)
+            meds.append(np.median(x))
+            labels.append(g)
+            data_by_group[g] = x
+
+        if not data:
+            ax.set_axis_off()
+            continue
+
+        dm = delta_median_pct(np.asarray(meds, float))
+
+        bp = ax.boxplot(
+            data,
+            labels=labels,
+            showfliers=False,
+            patch_artist=True
+        )
+
+        # colorear cajas
+        for patch, lab in zip(bp["boxes"], labels):
+            patch.set_facecolor(box_colors.get(lab, "lightgray"))
+            patch.set_alpha(0.30)
+
+        # scatter encima de cada box
+        if show_scatter:
+            for i, g in enumerate(labels, start=1):
+                add_jitter_scatter(
+                    ax=ax,
+                    xpos=i,
+                    y=data_by_group[g],
+                    color=box_colors.get(g, "black"),
+                    jitter=scatter_jitter,
+                    alpha=scatter_alpha,
+                    s=scatter_size,
+                    max_points=max_scatter_points,
+                )
+
+        ax.set_title(f"{t}\nΔmedian={dm:.1f}%")
+        ax.grid(alpha=0.25, axis="y")
+        ax.set_ylabel(ylabel)
+
+        st = pairwise_ttests_table(sub, value_col, labels)
+        if not st.empty:
+            st["type"] = t
+            stats_out.append(st)
+
+        positions = {g: i + 1 for i, g in enumerate(labels)}
+        add_pairwise_pvalues(ax, st, positions, data_by_group)
+
+        if title is not None:
+            fig.suptitle(title, fontsize=14)
+            plt.tight_layout(rect=[0, 0, 1, 0.95])
+        else:
+            plt.tight_layout()
+    plt.show()
+
+    if stats_out:
+        return pd.concat(stats_out, ignore_index=True)
+    return pd.DataFrame()
