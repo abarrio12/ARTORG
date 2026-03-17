@@ -169,24 +169,76 @@ def resolve_eps(eps_vox=2.0, space="um", axis=0, res_um_per_vox=res_um_per_vox) 
 
 
 
-def infer_node_type_from_incident_edges(graph: ig.Graph, node_id: int, vessel_type_map=EDGE_NKIND_TO_LABEL) -> str:
+def infer_node_type_from_incident_edges(graph, node_id):
     if "nkind" not in graph.es.attributes():
         return "unknown"
+
     inc = graph.incident(int(node_id))
-    nk = []
+    if len(inc) == 0:
+        return "unknown"
+
+    nk = set()
     for eid in inc:
         v = graph.es[eid]["nkind"]
         if v is None:
             continue
         try:
-            nk.append(int(v))
+            nk.add(int(v))
         except Exception:
             pass
-    if not nk:
-        return "unknown"
-    n_type = Counter(nk).most_common(1)[0][0]
-    return vessel_type_map.get(n_type, f"nkind_{n_type}")
 
+    if 2 in nk:
+        return "arteriole"
+    elif 3 in nk:
+        return "venule"
+    elif 4 in nk:
+        return "capillary"
+    else:
+        return "unknown"
+
+
+def dataframe_to_table_figure(df, title=None, figsize=(8, 2.5), round_decimals=3):
+    df_show = df.copy()
+
+    for c in df_show.columns:
+        if pd.api.types.is_numeric_dtype(df_show[c]):
+            df_show[c] = df_show[c].round(round_decimals)
+
+    fig, ax = plt.subplots(figsize=figsize)
+    ax.axis("off")
+
+    table = ax.table(
+        cellText=df_show.values,
+        colLabels=df_show.columns,
+        loc="center",
+        cellLoc="center"
+    )
+
+    table.auto_set_font_size(False)
+    table.set_fontsize(10)
+    table.scale(1, 1.4)
+
+    if title is not None:
+        ax.set_title(title, pad=12)
+
+    plt.tight_layout()
+    plt.show()
+    return fig, ax
+
+
+def removed_by_type(graph, path):
+    eids = path_to_edge_ids(graph, path)
+    if len(eids) == 0:
+        return {"art_um": np.nan, "ven_um": np.nan, "cap_um": np.nan}
+
+    nk = np.asarray(graph.es[eids]["nkind"], dtype=int)
+    L = np.asarray(graph.es[eids]["length"], dtype=float)
+
+    return {
+        "art_um": float(np.sum(L[nk == 2])),
+        "ven_um": float(np.sum(L[nk == 3])),
+        "cap_um": float(np.sum(L[nk == 4])),
+    }
 
 
 
@@ -421,7 +473,7 @@ def analyze_hdn_pattern_in_box(
         "concentration_ratio_hdn_over_all": float(d_hdn.mean() / d_all.mean()) if d_all.mean() else None,
     }
 
-    labels = np.array([infer_node_type_from_incident_edges(graph, int(v), vessel_type_map) for v in hdn], dtype=object)
+    labels = np.array([infer_node_type_from_incident_edges(graph, int(v)) for v in hdn], dtype=object)
     uniq, cnt = np.unique(labels, return_counts=True)
     out["hdn_type_composition"] = {str(u): {"count": int(c), "proportion": float(c / labels.size)} for u, c in zip(uniq, cnt)}
 
@@ -1721,24 +1773,144 @@ def nodes_by_label(graph):
 
     return {k: np.array(v, dtype=int) for k, v in out.items()}
 
-def _av_sets(graph):
-    nodes = nodes_by_label(graph)
-    return nodes["arteriole"], nodes["venule"]
+def av_sets(graph):
+    A, V = [], []
+
+    for v in graph.vs:
+        lab = infer_node_type_from_incident_edges(graph, v.index)
+
+        if lab == "arteriole":
+            A.append(v.index)
+        elif lab == "venule":
+            V.append(v.index)
+
+    return np.array(A, int), np.array(V, int)
+
+
 
 def shortest_av_paths(graph):
-    A, V = _av_sets(graph)
+    A, V = av_sets(graph)
+
     paths = []
-    # search paths in all AxV combination
+    distances = []
+
     for a in A:
-        for v in V:
-            p = graph.get_shortest_paths(a, to=v)[0]
-            if len(p) > 1:
-                paths.append(p)
-    return paths
+
+        # distancias desde a a todas las venas
+        dvec = np.asarray(graph.distances(source=a, target=V, weights="length")[0], float)
+
+        finite = np.isfinite(dvec)
+        if not np.any(finite):
+            continue
+
+        j = np.where(finite)[0][np.argmin(dvec[finite])]
+        v = V[j]
+
+        # shortest path real
+        p = graph.get_shortest_paths(a, to=v, weights="length", output="vpath")[0]
+
+        paths.append(p)
+        distances.append(dvec[j])
+
+    return paths, np.array(distances)
+
+
+
+import numpy as np
+
+def get_ac_frontier_nodes(graph):
+    A = []
+
+    for v in graph.vs:
+        inc = graph.incident(v.index)
+        if len(inc) == 0:
+            continue
+
+        nk = set()
+        for eid in inc:
+            try:
+                nk.add(int(graph.es[eid]["nkind"]))
+            except Exception:
+                pass
+
+        if 2 in nk and 4 in nk:
+            A.append(v.index)
+
+    return np.array(sorted(set(A)), dtype=int)
+
+
+def get_venous_nodes(graph):
+    V = []
+
+    for v in graph.vs:
+        inc = graph.incident(v.index)
+        if len(inc) == 0:
+            continue
+
+        nk = set()
+        for eid in inc:
+            try:
+                nk.add(int(graph.es[eid]["nkind"]))
+            except Exception:
+                pass
+
+        if 3 in nk:
+            V.append(v.index)
+
+    return np.array(sorted(set(V)), dtype=int)
+
+
+def shortest_av_paths_from_ac_frontier(graph):
+    A = get_ac_frontier_nodes(graph)
+    V = get_venous_nodes(graph)
+
+    paths = []
+    distances = []
+
+    for a in A:
+        dvec = np.asarray(
+            graph.distances(source=a, target=V, weights="length")[0],
+            dtype=float
+        )
+
+        finite = np.isfinite(dvec)
+        if not np.any(finite):
+            continue
+
+        j = np.where(finite)[0][np.argmin(dvec[finite])]
+        v = V[j]
+
+        p = graph.get_shortest_paths(a, to=v, weights="length", output="vpath")[0]
+
+        paths.append(p)
+        distances.append(float(dvec[j]))
+
+    return paths, np.array(distances, dtype=float), A, V
+
+
+def path_to_edge_ids(graph, path):
+    eids = []
+    for u, v in zip(path[:-1], path[1:]):
+        eid = graph.get_eid(u, v, directed=False, error=False)
+        if eid == -1:
+            return []
+        eids.append(eid)
+    return eids
+
+
+def trimmed_capillary_length(graph, path):
+    eids = path_to_edge_ids(graph, path)
+    if len(eids) == 0:
+        return np.nan
+
+    nk = np.asarray(graph.es[eids]["nkind"], dtype=int)
+    L = np.asarray(graph.es[eids]["length"], dtype=float)
+
+    return float(np.sum(L[nk == 4]))
 
 
 def av_path_stats(graph, graph_name, paths):
-    A, V = _av_sets(graph)
+    A, V = av_sets(graph)
 
     pairs_searched = len(A) * len(V)
     pairs_with_path = len(paths)
@@ -1753,6 +1925,8 @@ def av_path_stats(graph, graph_name, paths):
         "all_connected": all_connected
     }
 
+
+
 '''
 # export a few paths for paraview visualization
 def sample_paths(paths, n=20):
@@ -1761,6 +1935,7 @@ def sample_paths(paths, n=20):
 '''
 # takes the first n paths generated. Normally they come from the same
 # artery, so the path will be very similar. 
+
 
 def sample_paths(paths, n): 
     if len(paths) <= n: 
@@ -1809,6 +1984,55 @@ def export_paths_vtp(graph, paths, filename, coords_attr="coords"):
     writer.Write()
 
 
+import numpy as np
+import pandas as pd
+
+
+def path_to_edge_ids(G, path):
+    eids = []
+    for u, v in zip(path[:-1], path[1:]):
+        eid = G.get_eid(u, v, directed=False, error=False)
+        if eid == -1:
+            return None
+        eids.append(eid)
+    return eids
+
+
+def trimmed_capillary_length_2(G, path, cap_code=4):
+    """
+    Devuelve:
+      - trimmed_len_um: suma de longitudes de aristas capilares del path
+      - trimmed_eids: aristas capilares
+      - trimmed_path_nodes: nodos del tramo capilar (aprox)
+    """
+    eids = path_to_edge_ids(G, path)
+    if eids is None or len(eids) == 0:
+        return np.nan, [], []
+
+    nk = np.asarray(G.es[eids]["nkind"], dtype=int)
+    L = np.asarray(G.es[eids]["length"], dtype=float)
+
+    keep = (nk == cap_code)
+
+    trimmed_eids = [eid for eid, m in zip(eids, keep) if m]
+    trimmed_len_um = float(np.sum(L[keep])) if np.any(keep) else 0.0
+
+    # nodos del tramo capilar, aproximado a partir de las aristas conservadas
+    trimmed_nodes = []
+    for i, m in enumerate(keep):
+        if m:
+            u = path[i]
+            v = path[i + 1]
+            if len(trimmed_nodes) == 0:
+                trimmed_nodes.extend([u, v])
+            else:
+                if trimmed_nodes[-1] == u:
+                    trimmed_nodes.append(v)
+                else:
+                    trimmed_nodes.extend([u, v])
+
+    return trimmed_len_um, trimmed_eids, trimmed_nodes
+
 
 
 def induced_subgraph_box(graph: ig.Graph, box: dict, coords_attr="coords", node_eps=0.0):
@@ -1836,12 +2060,14 @@ def induced_subgraph_box(graph: ig.Graph, box: dict, coords_attr="coords", node_
 
 # <<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<
 # TODO: THIS COULD BE DELETED IF I AM DOING VISUALIZATION IN PARAVIEW
+
+
 def av_paths_in_box(graph: ig.Graph, box: dict, coords_attr="coords", node_eps=0.0):
     sub, sub_to_orig, _ = induced_subgraph_box(graph, box, coords_attr=coords_attr, node_eps=node_eps)
     if sub is None or sub.ecount() == 0:
         return []
 
-    A_sub, V_sub = _av_sets(sub)
+    A_sub, V_sub = av_sets(sub)
     if A_sub.size == 0 or V_sub.size == 0:
         return []
 
@@ -1893,7 +2119,7 @@ def plot_av_paths_in_box(
 
 
 def max_edge_disjoint_av(graph: ig.Graph):
-    A, V = _av_sets(graph)
+    A, V = av_sets(graph)
     if A.size == 0 or V.size == 0:
         return {"n_edge_disjoint_av": 0, "nA": int(A.size), "nV": int(V.size), "paths": []}
 
