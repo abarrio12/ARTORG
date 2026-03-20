@@ -4176,8 +4176,6 @@ def saturation_interface_proxies(graph, edge_type_attr="nkind"):
         "quick_upper_bound_interface": quick_upper_bound,
     }
     return out
-
-
 # ---------------------------------------------------------------------
 # Min-cut as main connectivity metric
 # ---------------------------------------------------------------------
