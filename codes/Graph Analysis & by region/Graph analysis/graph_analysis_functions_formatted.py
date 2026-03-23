@@ -1248,6 +1248,11 @@ def shortest_av_paths_from_ac_frontier(
     A = get_ac_frontier_nodes(graph, edge_type_attr=edge_type_attr)
     V = get_venous_nodes(graph, edge_type_attr=edge_type_attr)
 
+    if len(V) == 0:
+        print("[WARNING: No venous nodes found. Skipping path analysis.")
+
+    # puedes hacer continue o simplemente dejar que las guardas manejen el caso vacío
+
     subg, old_to_new, new_to_old, _ = build_allowed_subgraph(
         graph,
         artery_continuity=artery_continuity,
@@ -2811,7 +2816,6 @@ def plot_grouped_boxplot_types_per_graph(
     plt.tight_layout()
     plt.show()
 
-
 def plot_simple_type_boxplots_with_stats(
     dl,
     value_col,
@@ -2825,6 +2829,7 @@ def plot_simple_type_boxplots_with_stats(
     scatter_size=10,
     max_scatter_points=2000,
     title=None,
+    show_mean_std=False,
 ):
     """One panel per vessel type with boxplots and p-values."""
     dl = _normalize_types(dl)
@@ -2837,6 +2842,7 @@ def plot_simple_type_boxplots_with_stats(
         }
 
     types_use = [t for t in types_order if t in set(dl["type"].unique())]
+
     fig, axes = plt.subplots(1, len(types_use), figsize=(4.8 * len(types_use), 5.4), sharey=True)
     if len(types_use) == 1:
         axes = [axes]
@@ -2854,7 +2860,6 @@ def plot_simple_type_boxplots_with_stats(
             x = _finite(x)
             if x.size == 0:
                 continue
-
             data.append(x)
             meds.append(np.median(x))
             labels.append(g)
@@ -2884,6 +2889,18 @@ def plot_simple_type_boxplots_with_stats(
                     max_points=max_scatter_points,
                 )
 
+        if show_mean_std:
+            for i, g in enumerate(labels, start=1):
+                arr = data_by_group[g]
+                if arr.size == 0:
+                    continue
+                mu = float(np.mean(arr))
+                sd = float(np.std(arr, ddof=1)) if arr.size > 1 else np.nan
+                ax.scatter(i, mu, marker="D", s=36, color="black", zorder=4)
+                if np.isfinite(sd):
+                    ax.errorbar(i, mu, yerr=sd, fmt="none",
+                                ecolor="black", elinewidth=1.2, capsize=4, zorder=3)
+
         ax.set_title(f"{t}\nΔmedian={dm:.1f}%")
         ax.grid(alpha=0.25, axis="y")
         ax.set_ylabel(ylabel)
@@ -2896,6 +2913,12 @@ def plot_simple_type_boxplots_with_stats(
         positions = {g: i + 1 for i, g in enumerate(labels)}
         add_pairwise_pvalues(ax, st, positions, data_by_group)
 
+    if show_mean_std:
+        mean_handle = plt.Line2D([0], [0], marker="D", color="black",
+                                 linestyle="None", markersize=6, label="Mean")
+        std_handle  = plt.Line2D([0], [0], color="black", linestyle="-", label="±1 SD")
+        axes[-1].legend(handles=[mean_handle, std_handle], frameon=False, loc="upper right")
+
     if title is not None:
         fig.suptitle(title, fontsize=14)
         plt.tight_layout(rect=[0, 0, 1, 0.95])
@@ -2907,6 +2930,7 @@ def plot_simple_type_boxplots_with_stats(
     if stats_out:
         return pd.concat(stats_out, ignore_index=True)
     return pd.DataFrame()
+
 
 
 def plot_paired_with_without_continuity_boxplots_from_comparison(
@@ -3257,54 +3281,53 @@ def make_bc_face_table_from_bc_all(
     return pivot.round(0).astype(int)
 
 
-def save_major_trees_table_png(summary_df, out_path, graph_order=None):
-    """Save a clean PNG table summarizing major artery and vein trees."""
-    df = summary_df.copy()
 
+def save_major_trees_table_png(summary_df, out_path, graph_order=None):
+    """Save a clean PNG table summarizing graph composition and major trees."""
+    df = summary_df.copy()
     if graph_order is not None:
         df["graph"] = pd.Categorical(df["graph"], categories=graph_order, ordered=True)
         df = df.sort_values("graph")
 
+    # --- build display table ---
     table_df = df[[
         "graph",
-        "n_major_arteriole_trees",
-        "n_arteriole_components",
-        "n_major_venule_trees",
-        "n_venule_components",
+        "V", "E",
+        "E_arteriole", "E_venule", "E_capillary",
+        "n_major_arteriole_trees", "n_arteriole_components",
+        "n_major_venule_trees",    "n_venule_components",
     ]].copy()
 
     table_df = table_df.rename(columns={
-        "graph": "Box",
-        "n_major_arteriole_trees": "Major arterioles",
-        "n_arteriole_components": "Total arteriole components",
-        "n_major_venule_trees": "Major venules",
-        "n_venule_components": "Total venule components",
+        "graph":                   "Box",
+        "V":                       "Nodes",
+        "E":                       "Edges",
+        "E_arteriole":             "Art. edges",
+        "E_venule":                "Ven. edges",
+        "E_capillary":             "Cap. edges",
+        "n_major_arteriole_trees": "Major art.",
+        "n_arteriole_components":  "Art. comp.",
+        "n_major_venule_trees":    "Major ven.",
+        "n_venule_components":     "Ven. comp.",
     })
 
-    table_df["Arterioles (major/total)"] = (
-        table_df["Major arterioles"].astype(int).astype(str)
-        + "/"
-        + table_df["Total arteriole components"].astype(int).astype(str)
+    table_df["Art. (major/total)"] = (
+        table_df["Major art."].astype(int).astype(str) + "/" +
+        table_df["Art. comp."].astype(int).astype(str)
     )
-
-    table_df["Venules (major/total)"] = (
-        table_df["Major venules"].astype(int).astype(str)
-        + "/"
-        + table_df["Total venule components"].astype(int).astype(str)
+    table_df["Ven. (major/total)"] = (
+        table_df["Major ven."].astype(int).astype(str) + "/" +
+        table_df["Ven. comp."].astype(int).astype(str)
     )
 
     table_df = table_df[[
-        "Box",
-        "Major arterioles",
-        "Total arteriole components",
-        "Arterioles (major/total)",
-        "Major venules",
-        "Total venule components",
-        "Venules (major/total)",
+        "Box", "Nodes", "Edges",
+        "Art. edges", "Ven. edges", "Cap. edges",
+        "Art. (major/total)", "Ven. (major/total)",
     ]]
 
     nrows, ncols = table_df.shape
-    fig_w = max(10, ncols * 2.2)
+    fig_w = max(12, ncols * 1.8)
     fig_h = max(1.8, 0.65 * (nrows + 1))
 
     fig, ax = plt.subplots(figsize=(fig_w, fig_h))
@@ -3313,33 +3336,28 @@ def save_major_trees_table_png(summary_df, out_path, graph_order=None):
     tbl = ax.table(
         cellText=table_df.values,
         colLabels=table_df.columns,
-        cellLoc="center",
-        loc="center",
+        cellLoc="center", loc="center",
     )
-
     tbl.auto_set_font_size(False)
     tbl.set_fontsize(11)
     tbl.scale(1.2, 1.6)
 
     for c in range(ncols):
-        cell = tbl[(0, c)]
-        cell.set_text_props(weight="bold")
-        cell.set_facecolor("#d9eaf7")
+        tbl[(0, c)].set_text_props(weight="bold")
+        tbl[(0, c)].set_facecolor("#d9eaf7")
 
     for r in range(1, nrows + 1):
         for c in range(ncols):
-            cell = tbl[(r, c)]
-            cell.set_facecolor("#f7f7f7" if r % 2 == 0 else "white")
+            tbl[(r, c)].set_facecolor("#f7f7f7" if r % 2 == 0 else "white")
 
     plt.tight_layout()
     plt.savefig(out_path, dpi=300, bbox_inches="tight")
     plt.show()
     plt.close()
-
     print("Saved table image:", out_path)
 
 
-    # ======================================================================
+# ======================================================================
 # EXTRA HELPERS FOR FRONTIER COMPARISON, MIN-CUT AND PAIRED PLOTS
 # ======================================================================
 
@@ -4115,7 +4133,7 @@ def export_edge_ids_vtp(graph, edge_ids, out_path, coords_attr="coords"):
 # ---------------------------------------------------------------------
 
 
-def _nodes_of_edge_type(graph, edge_type_attr="nkind", labels=(2,)):
+def nodes_of_edge_type(graph, edge_type_attr="nkind", labels=(2,)):
     labels = {int(x) for x in labels}
     nodes = set()
     for e in graph.es:
@@ -4125,36 +4143,46 @@ def _nodes_of_edge_type(graph, edge_type_attr="nkind", labels=(2,)):
             nodes.add(int(v))
     return nodes
 
+def saturation_interface_proxies(graph, edge_type_attr="nkind",
+                                  source_frontiers=None, target_venous=None,
+                                  n_disjoint=None):
+    from collections import defaultdict
 
-def saturation_interface_proxies(graph, edge_type_attr="nkind"):
-    arterial_nodes = _nodes_of_edge_type(graph, edge_type_attr=edge_type_attr, labels=(ARTERY,))
-    venous_nodes = _nodes_of_edge_type(graph, edge_type_attr=edge_type_attr, labels=(VEIN,))
+    arterial_nodes = nodes_of_edge_type(graph, edge_type_attr=edge_type_attr, labels=(ARTERY,))
+    venous_nodes   = nodes_of_edge_type(graph, edge_type_attr=edge_type_attr, labels=(VEIN,))
 
     art_cap_eids = []
     ven_cap_eids = []
-
     art_cap_neighbors = set()
     ven_cap_neighbors = set()
+    art_cap_edges_per_node = defaultdict(int)
+    ven_cap_edges_per_node = defaultdict(int)
 
     for e in graph.es:
         if int(e[edge_type_attr]) != CAPILLARY:
             continue
-
         u, v = map(int, e.tuple)
 
         if u in arterial_nodes or v in arterial_nodes:
             art_cap_eids.append(int(e.index))
             if u in arterial_nodes and v not in arterial_nodes:
                 art_cap_neighbors.add(v)
+                art_cap_edges_per_node[v] += 1
             elif v in arterial_nodes and u not in arterial_nodes:
                 art_cap_neighbors.add(u)
+                art_cap_edges_per_node[u] += 1
 
         if u in venous_nodes or v in venous_nodes:
             ven_cap_eids.append(int(e.index))
             if u in venous_nodes and v not in venous_nodes:
                 ven_cap_neighbors.add(v)
+                ven_cap_edges_per_node[v] += 1
             elif v in venous_nodes and u not in venous_nodes:
                 ven_cap_neighbors.add(u)
+                ven_cap_edges_per_node[u] += 1
+
+    n_ac_cap_edges_total = int(sum(art_cap_edges_per_node.values()))
+    n_vc_cap_edges_total = int(sum(ven_cap_edges_per_node.values()))
 
     try:
         ac_frontier_nodes = get_ac_frontier_nodes(graph, edge_type_attr=edge_type_attr)
@@ -4163,19 +4191,35 @@ def saturation_interface_proxies(graph, edge_type_attr="nkind"):
         ac_frontier_nodes = sorted(list(art_cap_neighbors))
         n_ac_frontier = int(len(ac_frontier_nodes))
 
-    quick_upper_bound = int(min(len(art_cap_neighbors), len(ven_cap_neighbors)))
+    ac_nodes_used = set(int(x) for x in source_frontiers) if source_frontiers is not None and len(source_frontiers) > 0 else set()
+    vc_nodes_used = set(int(x) for x in target_venous)    if target_venous    is not None and len(target_venous)    > 0 else set()
 
-    out = {
-        "arterial_nodes": int(len(arterial_nodes)),
-        "venous_nodes": int(len(venous_nodes)),
-        "capillary_edges_attached_to_artery": int(len(art_cap_eids)),
-        "capillary_edges_attached_to_vein": int(len(ven_cap_eids)),
+    connectivity = int(n_disjoint) if n_disjoint is not None else len(ac_nodes_used)
+
+    sat_ac = float(connectivity / n_ac_cap_edges_total) if n_ac_cap_edges_total > 0 else np.nan
+    sat_vc = float(connectivity / n_vc_cap_edges_total) if n_vc_cap_edges_total > 0 else np.nan
+
+    return {
+        "arterial_nodes":                         int(len(arterial_nodes)),
+        "venous_nodes":                           int(len(venous_nodes)),
+        "capillary_edges_attached_to_artery":     int(len(art_cap_eids)),
+        "capillary_edges_attached_to_vein":       int(len(ven_cap_eids)),
         "unique_capillary_nodes_touching_artery": int(len(art_cap_neighbors)),
-        "unique_capillary_nodes_touching_vein": int(len(ven_cap_neighbors)),
-        "ac_frontier_nodes": int(n_ac_frontier),
-        "quick_upper_bound_interface": quick_upper_bound,
+        "unique_capillary_nodes_touching_vein":   int(len(ven_cap_neighbors)),
+        "n_ac_cap_edges_total":                   n_ac_cap_edges_total,
+        "n_vc_cap_edges_total":                   n_vc_cap_edges_total,
+        "ac_frontier_nodes_total":                n_ac_frontier,
+        "ac_frontier_nodes_used":                 int(len(ac_nodes_used)),
+        "ac_frontier_nodes_unused":               n_ac_frontier - int(len(ac_nodes_used)),
+        "vc_nodes_total":                         int(len(venous_nodes)),
+        "vc_nodes_reached":                       int(len(vc_nodes_used)),
+        "vc_nodes_unreached":                     int(len(venous_nodes)) - int(len(vc_nodes_used)),
+        "n_independent_paths":                    connectivity,
+        "quick_upper_bound_interface":            int(min(len(art_cap_neighbors), len(ven_cap_neighbors))),
+        "saturation_ac_edges":                    sat_ac,
+        "saturation_vc_edges":                    sat_vc,
     }
-    return out
+
 # ---------------------------------------------------------------------
 # Min-cut as main connectivity metric
 # ---------------------------------------------------------------------
@@ -4184,8 +4228,8 @@ def av_min_cut_metrics(
     edge_type_attr="nkind",
     per_edge_capacity=1.0,
 ):
-    arterial_nodes = sorted(_nodes_of_edge_type(graph, edge_type_attr=edge_type_attr, labels=(ARTERY,)))
-    venous_nodes = sorted(_nodes_of_edge_type(graph, edge_type_attr=edge_type_attr, labels=(VEIN,)))
+    arterial_nodes = sorted(nodes_of_edge_type(graph, edge_type_attr=edge_type_attr, labels=(ARTERY,)))
+    venous_nodes = sorted(nodes_of_edge_type(graph, edge_type_attr=edge_type_attr, labels=(VEIN,)))
 
     if len(arterial_nodes) == 0 or len(venous_nodes) == 0:
         return {
@@ -4278,3 +4322,293 @@ def cut_type_counts(cut_edge_types):
         "min_cut_n_unknown_edges": int(np.sum(~np.isin(arr, [ARTERY, VEIN, CAPILLARY]))),
     }
 
+
+
+def plot_pies_with_bars_edge_types(comp_df, box_order=None, type_colors=VESSEL_COLORS):
+    """
+    For each box (graph), draw:
+      - left: bar chart with V, E, and edge counts per type
+      - right: pie of edge type composition
+    Requires in comp_df:
+      graph, V, E, E_arteriole, E_venule, E_capillary (optional: E_unknown)
+    """
+    if box_order is None:
+        box_order = list(comp_df["graph"].astype(str))
+
+    if type_colors is None:
+        type_colors = {
+            "arteriole": "#d62728",
+            "venule": "#1f77b4",
+            "capillary": "#7f7f7f",
+
+        }
+
+    n = len(box_order)
+    fig, axes = plt.subplots(
+        n, 2, figsize=(10.5, 3.8 * n),
+        gridspec_kw={"width_ratios": [1.4, 1.1]}
+    )
+    if n == 1:
+        axes = np.array([axes])
+
+    for i, g in enumerate(box_order):
+        if g not in comp_df["graph"].values:
+            axes[i, 0].axis("off")
+            axes[i, 1].axis("off")
+            continue
+
+        row = comp_df.loc[comp_df["graph"] == g].iloc[0]
+
+        # ---- LEFT: bars
+        ax_bar = axes[i, 0]
+        bar_labels = ["V", "E", "E_art", "E_ven", "E_cap", "E_unk"]
+        bar_values = [
+            float(row["V"]),
+            float(row["E"]),
+            float(row.get("E_arteriole", 0)),
+            float(row.get("E_venule", 0)),
+            float(row.get("E_capillary", 0)),
+            float(row.get("E_unknown", 0)),
+        ]
+
+        bar_colors = [
+            "white", "white",  # V, E will be hatched
+            type_colors["arteriole"],
+            type_colors["venule"],
+            type_colors["capillary"],
+
+        ]
+
+        bars = ax_bar.bar(bar_labels, bar_values, color=bar_colors, edgecolor="black", linewidth=0.9)
+
+        # hatch: V and E only (different directions)
+        bars[0].set_hatch("///")   # V: right-leaning
+        bars[1].set_hatch("\\\\\\") # E: left-leaning
+
+        ax_bar.set_title(f"{g} | counts", fontsize=13, fontweight="bold")
+        ax_bar.set_ylabel("#")
+        ax_bar.grid(alpha=0.25, axis="y")
+
+        ymax = max(bar_values) if bar_values else 1.0
+        for x, v in enumerate(bar_values):
+            ax_bar.text(x, v + 0.01 * ymax, f"{int(v)}", ha="center", va="bottom", fontsize=9)
+
+        # ---- RIGHT: pie
+        ax_pie = axes[i, 1]
+        labels, vals, cols = [], [], []
+        for lab, col in [
+            ("arteriole","E_arteriole"),
+            ("venule","E_venule"),
+            ("capillary","E_capillary"),
+            ("unknown","E_unknown")
+        ]:
+            v = float(row.get(col, 0))
+            if v > 0:
+                labels.append(lab)
+                vals.append(v)
+                cols.append(type_colors.get(lab, "lightgrey"))
+
+        if sum(vals) == 0:
+            ax_pie.text(0.5, 0.5, "no data", ha="center", va="center")
+        else:
+            ax_pie.pie(vals, labels=labels, colors=cols, autopct="%1.1f%%", startangle=90)
+
+        ax_pie.set_title(f"{g} | edge types", fontsize=13, fontweight="bold")
+
+    plt.tight_layout()
+    plt.show()
+
+
+
+def major_components_from_edge_code(graph, target_code, abs_thresh=10, rel_thresh=0.20):
+    """
+    Find connected components for a given vessel code and mark 'major' trees.
+    """
+    g = graph.copy()
+
+    if "orig_eid" not in g.es.attributes():
+        g.es["orig_eid"] = list(range(g.ecount()))
+
+    nk = np.asarray(g.es["nkind"], int)
+    keep_eids = np.where(nk == int(target_code))[0].tolist()
+
+    if len(keep_eids) == 0:
+        comp_df = pd.DataFrame(columns=[
+            "component_id", "n_nodes", "n_edges", "n_branch_nodes",
+            "edge_threshold", "is_major", "major_tree_id",
+            "pct_nodes", "pct_edges",
+        ])
+        edge_df = pd.DataFrame(columns=[
+            "orig_eid", "component_id", "is_major", "major_tree_id", "target_code"
+        ])
+        return comp_df, edge_df
+
+    sg = g.subgraph_edges(keep_eids, delete_vertices=True)
+    comps = sg.components(mode="weak") if sg.is_directed() else sg.components()
+
+    rows = []
+    for cid, vids in enumerate(comps, start=1):
+        sub = sg.induced_subgraph(vids)
+        n_edges = int(sub.ecount())
+        deg = sub.degree()
+        n_branch_nodes = int(sum(d >= 3 for d in deg))
+        rows.append({
+            "component_id":  cid,
+            "n_nodes":       int(sub.vcount()),
+            "n_edges":       n_edges,
+            "n_branch_nodes": n_branch_nodes,
+        })
+
+    comp_df = pd.DataFrame(rows)
+
+    if comp_df.empty:
+        edge_df = pd.DataFrame(columns=[
+            "orig_eid", "component_id", "is_major", "major_tree_id", "target_code"
+        ])
+        return comp_df, edge_df
+
+    # totals for coverage %
+    total_nodes = int(comp_df["n_nodes"].sum())
+    total_edges = int(comp_df["n_edges"].sum())
+
+    max_edges = int(comp_df["n_edges"].max())
+    th = max(abs_thresh, rel_thresh * max_edges)
+
+    comp_df["edge_threshold"] = th
+    comp_df["is_major"] = (
+        (comp_df["n_edges"] >= th) &
+        (comp_df["n_branch_nodes"] >= 1)
+    )
+
+    comp_df = comp_df.sort_values("n_edges", ascending=False).reset_index(drop=True)
+
+    major_tree_ids = {}
+    next_id = 1
+    for _, row in comp_df.iterrows():
+        cid = int(row["component_id"])
+        if bool(row["is_major"]):
+            major_tree_ids[cid] = next_id
+            next_id += 1
+        else:
+            major_tree_ids[cid] = 0
+
+    comp_df["major_tree_id"] = comp_df["component_id"].map(major_tree_ids)
+
+    # coverage percentages
+    comp_df["pct_nodes"] = comp_df["n_nodes"].apply(
+        lambda x: float(100 * x / total_nodes) if total_nodes > 0 else np.nan)
+    comp_df["pct_edges"] = comp_df["n_edges"].apply(
+        lambda x: float(100 * x / total_edges) if total_edges > 0 else np.nan)
+
+    edge_rows = []
+    for _, row in comp_df.iterrows():
+        cid    = int(row["component_id"])
+        is_major = int(bool(row["is_major"]))
+        mtid   = int(row["major_tree_id"])
+        vids   = comps[cid - 1]
+        sub    = sg.induced_subgraph(vids)
+        for oeid in sub.es["orig_eid"]:
+            edge_rows.append({
+                "orig_eid":     int(oeid),
+                "component_id": cid,
+                "is_major":     is_major,
+                "major_tree_id": mtid,
+                "target_code":  int(target_code),
+            })
+
+    edge_df = pd.DataFrame(edge_rows).sort_values("orig_eid").reset_index(drop=True)
+    return comp_df, edge_df
+
+
+def save_major_trees_table_png(summary_df, out_path, graph_order=None):
+    """Save a clean PNG table summarizing graph composition and major trees with coverage."""
+    df = summary_df.copy()
+    if graph_order is not None:
+        df["graph"] = pd.Categorical(df["graph"], categories=graph_order, ordered=True)
+        df = df.sort_values("graph")
+
+    # base columns
+    base_cols = ["graph", "V", "E", "E_arteriole", "E_venule", "E_capillary",
+                 "n_major_arteriole_trees", "n_arteriole_components",
+                 "n_major_venule_trees", "n_venule_components"]
+    table_df = df[base_cols].copy()
+
+    table_df = table_df.rename(columns={
+        "graph":                   "Box",
+        "V":                       "Nodes",
+        "E":                       "Edges",
+        "E_arteriole":             "Art. edges",
+        "E_venule":                "Ven. edges",
+        "E_capillary":             "Cap. edges",
+        "n_major_arteriole_trees": "Major art.",
+        "n_arteriole_components":  "Art. comp.",
+        "n_major_venule_trees":    "Major ven.",
+        "n_venule_components":     "Ven. comp.",
+    })
+
+    table_df["Art. (major/total)"] = (
+        table_df["Major art."].astype(int).astype(str) + "/" +
+        table_df["Art. comp."].astype(int).astype(str)
+    )
+    table_df["Ven. (major/total)"] = (
+        table_df["Major ven."].astype(int).astype(str) + "/" +
+        table_df["Ven. comp."].astype(int).astype(str)
+    )
+
+    # coverage columns — show if present in summary_df
+
+    if "art_major1_pct_edges" in df.columns:
+        table_df["Art. major1 edges"] = df.apply(
+            lambda r: f"{int(r['art_major1_n_edges'])} ({r['art_major1_pct_edges']:.1f}%)"
+                      if pd.notna(r["art_major1_pct_edges"]) else "N/A", axis=1)
+        table_df["Art. major1 nodes"] = df.apply(
+            lambda r: f"{int(r['art_major1_n_nodes'])} ({r['art_major1_pct_nodes']:.1f}%)"
+                      if pd.notna(r["art_major1_pct_nodes"]) else "N/A", axis=1)
+
+    if "ven_major1_pct_edges" in df.columns:
+        table_df["Ven. major1 edges"] = df.apply(
+            lambda r: f"{int(r['ven_major1_n_edges'])} ({r['ven_major1_pct_edges']:.1f}%)"
+                      if pd.notna(r["ven_major1_pct_edges"]) else "N/A", axis=1)
+        table_df["Ven. major1 nodes"] = df.apply(
+            lambda r: f"{int(r['ven_major1_n_nodes'])} ({r['ven_major1_pct_nodes']:.1f}%)"
+                      if pd.notna(r["ven_major1_pct_nodes"]) else "N/A", axis=1)
+
+    # final column order
+    final_cols = ["Box", "Nodes", "Edges", "Art. edges", "Ven. edges", "Cap. edges",
+                  "Art. (major/total)", "Ven. (major/total)"]
+    for col in ["Art. major1 edges", "Art. major1 nodes",
+                "Ven. major1 edges", "Ven. major1 nodes"]:
+        if col in table_df.columns:
+            final_cols.append(col)
+
+    table_df = table_df[final_cols]
+
+    nrows, ncols = table_df.shape
+    fig_w = max(12, ncols * 1.8)
+    fig_h = max(1.8, 0.65 * (nrows + 1))
+
+    fig, ax = plt.subplots(figsize=(fig_w, fig_h))
+    ax.axis("off")
+
+    tbl = ax.table(
+        cellText=table_df.values,
+        colLabels=table_df.columns,
+        cellLoc="center", loc="center",
+    )
+    tbl.auto_set_font_size(False)
+    tbl.set_fontsize(11)
+    tbl.scale(1.2, 1.6)
+
+    for c in range(ncols):
+        tbl[(0, c)].set_text_props(weight="bold")
+        tbl[(0, c)].set_facecolor("#d9eaf7")
+
+    for r in range(1, nrows + 1):
+        for c in range(ncols):
+            tbl[(r, c)].set_facecolor("#f7f7f7" if r % 2 == 0 else "white")
+
+    plt.tight_layout()
+    plt.savefig(out_path, dpi=300, bbox_inches="tight")
+    plt.show()
+    plt.close()
+    print("Saved table image:", out_path)
