@@ -39,6 +39,16 @@ def _pick_first(existing, candidates):
             return k
     return None
 
+def print_dict_contents(name, d, sample_n=3):
+    print(f"\n=== {name} ===")
+    for k, v in d.items():
+        try:
+            print(f"{k}: type={type(v).__name__}, len={len(v)}")
+            if len(v) > 0:
+                print(f"  first {sample_n}: {v[:sample_n]}")
+        except TypeError:
+            print(f"{k}: type={type(v).__name__}, value={v}")
+
 def outgeom_to_gaia_dicts(data, space="auto", diameter_unit="vox", verbose=True):
     """
     Convert outgeom pseudo-json into Gaia-like dictionaries:
@@ -268,23 +278,47 @@ def save_gaia_dicts(data, out_dir, base_name="graph_18_OutGeom_um_formatted", sp
     print(" ", e_path)
     print(" ", g_path)
 
-    return v_path, e_path, g_path
+    return vertices_dict, edges_dict, graph_dict, v_path, e_path, g_path
 
 
 # =========================
 # Example
 # =========================
-in_path = "/home/admin/Ana/MicroBrain/output/graph_18_OutGeom_um.pkl"
-out_dir = "/home/admin/Ana/MicroBrain/output"
+import os
+import re
+import pickle
+
+# =========================
+# Example
+# =========================
+name = "graph_18_OutGeom_Hcut2_um.pkl"
+
+base_input_dir = "/home/admin/Ana/MicroBrain/output/um"
+base_output_dir = "/home/admin/Ana/MicroBrain/output/dictOut"
+
+in_path = os.path.join(base_input_dir, name)
+
+# sacar Hcut1 del nombre
+m = re.search(r"(Hcut\d+)", name)
+subfolder = m.group(1) if m else "no_cut"
+
+out_dir = os.path.join(base_output_dir, subfolder)
+
+# nombre base de salida sin .pkl
+base_name = os.path.splitext(name)[0] + "_formatted"
 
 with open(in_path, "rb") as f:
     data = pickle.load(f)
 
-v_path, e_path, g_path = save_gaia_dicts(
+vertices_dict, edges_dict, graph_dict, v_path, e_path, g_path = save_gaia_dicts(
     data,
     out_dir=out_dir,
-    base_name="graph_18_OutGeom_um_formatted",
+    base_name=base_name,
     space="auto",
     diameter_unit="vox",
     verbose=True,
 )
+
+print_dict_contents("VERTICES DICT", vertices_dict)
+print_dict_contents("EDGES DICT", edges_dict)
+print_dict_contents("GRAPH DICT", graph_dict)
