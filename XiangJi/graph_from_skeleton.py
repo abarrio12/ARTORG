@@ -12,13 +12,14 @@
 # mask_size lo guardo implicitamente , en python está en skel.shape, no hace falta guardarlo en SkeletonData
 
 import numpy as np
-import networkx as nx
 
 from dataclasses import dataclass, field
 from collections import deque
-from typing import Dict, List, Tuple, Optional, Set
-from collections import deque
-from typing import List, Set
+from typing import Dict, List, Tuple, Set
+
+
+
+
 
 
 
@@ -51,18 +52,34 @@ class ComponentStruct:
     """
     MATLAB-like component container. "given a voxel, to what component does it belong to?"
 
-    A voxel can be: node voxel, link voxel, endopoint voxel or isopoint voxel.
+    A voxel can be: node voxel, link voxel, endopoint voxel or isopoint voxel.  
     
-    cc_ind:
-        list of connected components, each stored as a 1D array of voxel IDs
-        (voxel IDs refer to rows in data.coords)
+    Fields
+    ------
+    num_cc :
+        Number of connected components.
 
-    pos_ind:
-        concatenation of all component voxel IDs
+    cc_ind :
+        List of connected components. Each entry is a 1D array of voxel IDs.
 
-    label:
-        for each entry in pos_ind, the component label it belongs to
+    pos_ind :
+        Concatenation of all voxel IDs from all connected components.
+
+    num_voxel_all_components :
+        Total number of voxels stored in this structure.
+
+    num_voxel_per_cc :
+        Number of voxels in each connected component.
+
+    label :
+        For each voxel in pos_ind, which CC label it belongs to.
+
+    map_voxel_to_label :
+        Array of length = total number of skeleton voxels.
+        map_voxel_to_label[v] = CC label of voxel v, or -1 if voxel v is not
+        present in this structure.
     """
+
     num_cc: int = 0
     cc_ind: List[np.ndarray] = field(default_factory=list)
     pos_ind: np.ndarray = field(default_factory=lambda: np.array([], dtype=np.int64)) # list of all voxels IDs from the CC
@@ -75,9 +92,16 @@ class ComponentStruct:
 @dataclass
 class EndpointStruct:
     """
-    Endpoint structure, similar in spirit to MATLAB endpoint block.
-    Notice that endpoints are a subset of link points
+    Endpoint structure, similar to the MATLAB endpoint block.
+
+    Endpoints are degree-1 voxels and are stored individually rather than
+    grouped into connected components.
+
+    In the MATLAB-like construction used here, endpoint voxels are also part of
+    the traced link components, so endpoint.link_label can be recovered directly
+    from link.map_voxel_to_label at the endpoint voxel positions.
     """
+
     pos_ind: np.ndarray = field(default_factory=lambda: np.array([], dtype=np.int64))
     num_voxel: int = 0
     label: np.ndarray = field(default_factory=lambda: np.array([], dtype=np.int64))
@@ -89,11 +113,28 @@ class EndpointStruct:
 class IsoPointStruct:
     """
     Isolated single voxels (degree 0).
+    Matlab only stores pos_ind and num_voxel, but the label and map_voxel_to_label 
+    was added for consistency with the other structures.
     """
     pos_ind: np.ndarray = field(default_factory=lambda: np.array([], dtype=np.int64))
     num_voxel: int = 0
     label: np.ndarray = field(default_factory=lambda: np.array([], dtype=np.int64))
     map_voxel_to_label: np.ndarray = field(default_factory=lambda: np.array([], dtype=np.int64))
+
+
+@dataclass
+class IsoLoopStruct:
+    """
+    MATLAB-like isolated-loop structure.
+
+    MATLAB only stores:
+    - cc_ind
+    - num_cc
+    - pos_ind
+    """
+    cc_ind: List[np.ndarray] = field(default_factory=list)
+    num_cc: int = 0
+    pos_ind: np.ndarray = field(default_factory=lambda: np.array([], dtype=np.int64))
 
 
 @dataclass
@@ -106,11 +147,30 @@ class LinkStruct(ComponentStruct):
 
     connected_endpoint_label:
         shape (num_cc, 2), stores endpoint labels at both ends, -1 if absent 
-
-    end_kind:
-        list of tuples like ("node", "endpoint"), ("node", "node"), etc.
     
-    end_kind = ("node", "endpoint")
+    num_node_per_link :
+        Number of node terminals for each link (0, 1, or 2).
+        
+    num_endpoint_per_link :
+        Number of endpoint terminals for each link (0, 1, or 2).
+
+    #terminal_link_kinds:
+    #    list of tuples describing the types of the link ends: ("node", "endpoint"), ("node", "node"), ("loop", "loop") etc.
+    
+    link_length_euclidean :
+        Euclidean chain length computed from ordered voxel coordinates.
+        This is not used in the original MATLAB code, but seems useful to also store geometric length of link.
+
+
+
+    Note
+    -----------
+    A self-loop attached to the same node is represented as:
+        connected_node_label[lid] = [nid, nid]
+        terminal_link_kinds[lid] = ("node", "node")
+        
+    Example:
+    terminal_link_kinds = ("node", "endpoint")
     connected_node_label = [3, -1]
     connected_endpoint_label = [-1, 5]
         --> Links starts in node 3 and finishes in endpoint 5
@@ -119,18 +179,27 @@ class LinkStruct(ComponentStruct):
     connected_endpoint_label: np.ndarray = field(default_factory=lambda: np.empty((0, 2), dtype=np.int64)) # to which link CC is the link connected
     num_node_per_link: np.ndarray = field(default_factory=lambda: np.array([], dtype=np.int64)) # how many nodes does the link touch (0, 1,2)
     num_endpoint_per_link: np.ndarray = field(default_factory=lambda: np.array([], dtype=np.int64))  # how many endpoints does the link touch (0,1,2)
-    terminal_link_kinds: List[Tuple[str, str]] = field(default_factory=list) # stores topological type of link extrems (node, endpoint, isopoint). Nothing to do with nkind (A/V/C)
-    num_voxels_in_link: np.ndarray = field(default_factory=lambda: np.array([], dtype=np.int64)) # # Number of voxels in each link CC
+    #terminal_link_kinds: List[Tuple[str, str]] = field(default_factory=list) # stores topological type of link extrems (node, endpoint, isopoint). Nothing to do with nkind (A/V/C)
+    #num_voxels_in_link: np.ndarray = field(default_factory=lambda: np.array([], dtype=np.int64)) # # Number of voxels in each link CC
     link_length_euclidean: np.ndarray = field(default_factory=lambda: np.array([], dtype=float)) # Euclidean length of each link chain, computed from consecutive voxel coordinates.
-    is_isoloop: np.ndarray = field(default_factory=lambda: np.array([], dtype=bool)) # True if the link is an isolated loop.
-
+  
 
 @dataclass
 class NodeStruct(ComponentStruct):
     """
     Node structure.
 
-    connected_link_label:for each node connected component, list of attached link labels
+    connected_link_label :
+        For each node connected component, list of attached link labels.
+
+    num_links_per_node :
+        Number of attached links per node CC.
+
+    centroid :
+        Mean coordinate of all voxels that form the node CC.
+    
+    
+    Example:
         connected_link_label = [
             np.array([0, 4]),      # node 0
             np.array([1, 2, 5]),   # node 1
@@ -147,7 +216,7 @@ class NodeStruct(ComponentStruct):
 @dataclass
 class SkeletonData:
     """
-    Internal voxel-level representation.
+    Internal voxel-level representation
     """
     skel: np.ndarray 
     coords: np.ndarray # in matlab voxel_list = find(skl), here coords = np.argwhere(skl) 
@@ -178,11 +247,11 @@ OFFS26 = offsets26()
 # ============================================================
 def prepare_skeleton(skel: np.ndarray) -> SkeletonData:
     """
-    If the input is the skeleton (3D logical array) convert it to voxel list
+    If the input is the skeleton (3D logical array) needed to be normalized to the internal representation used in the rest of the code.
     
     Normalize input skeleton to:
     - boolean 3D array
-    - list of active coordinates (similar to voxel_list has list of lineal indices in matlab)
+    - list of active coordinates (similar to voxel_list has list of linear indices in matlab)
     - coordinate -> voxel_id lookup 
     """
     skel = np.asarray(skel, dtype=bool)
@@ -204,16 +273,17 @@ def prepare_skeleton(skel: np.ndarray) -> SkeletonData:
 # ============================================================
 def in_bounds(p: coord, shape: Tuple[int, int, int]) -> bool:
     """
-    Check whether a coordinate is inside the volume.
-    Same idea of padding in matlab.
+    Check whether a 3D coordinate lies inside the volume.
+    Matlab uses padding.
     """
-    x,y,z = p 
-    return 0 <= z < shape[0] and 0 <= y < shape[1] and 0 <= x < shape[2]
+    x, y, z = p
+    return 0 <= x < shape[0] and 0 <= y < shape[1] and 0 <= z < shape[2]
+
 
 
 def neighbors26_of(p: coord, skel: np.ndarray) -> List[coord]:
     """
-    Return all active 26-neighbors of voxel p.
+    Return all active (skeleton = 1) 26-neighbors of voxel p.
     """
     x,y,z = p 
     out = []
@@ -231,20 +301,22 @@ def build_voxel_adjacency(data: SkeletonData) -> List[List[int]]:
     """
     Build undirected voxel-to-voxel adjacency list (voxel_list of matlab)
    
-    For each voxel it stores its neighbors. 
+    For each voxel it stores its adjacent neighbors. 
     
     Input: 
-    -  skel: 3D volume 
+    - skel: 3D volume 
     - coords: np.ndarray -> active voxels
     - coord_to_id: dict (x, y, z) -> id
     """
     n = len(data.coords) # total number of active voxels in the skeleton
-    adj = [[] for v in range(n)] # create an empty list for each voxel
+    adj = [[] for _ in range(n)] # create an empty list for each voxel
 
     for voxel_id, coord_voxel in enumerate(data.coords):
         coord_voxel = tuple(coord_voxel)
+        
         for neigh in neighbors26_of(coord_voxel, data.skel):
             neigh_id = data.coord_to_id[tuple(neigh)] 
+            
             if neigh_id > voxel_id: # in order to not add the same edge twice/check same pair again (0->1 i dont need 1->0)
                 # undirected graph so adding conection in both ways
                 adj[voxel_id].append(neigh_id)
@@ -289,45 +361,11 @@ def build_component_struct(cc_ind: List[np.ndarray], n_total_voxels: int) -> Com
     out.pos_ind = np.concatenate(out.cc_ind) # all voxels of all components in one vector
     out.num_voxel_all_components = len(out.pos_ind) # num of voxels in all components together
     out.label = np.repeat(np.arange(out.num_cc, dtype=np.int64), out.num_voxel_per_cc) # created the label of each component for each voxel in pos_ind ("mapping")
+    
     # if a voxel does not belong to a CC, -1
     out.map_voxel_to_label = np.full(n_total_voxels, -1, dtype=np.int64)
     out.map_voxel_to_label[out.pos_ind] = out.label # adding the belonging to CC voxels label
 
-    return out
-
-# ============================================================
-# Endpoint and isopoint structures
-# ============================================================
-def build_endpoint_struct(endpoint_voxels: np.ndarray, n_total_voxels: int) -> EndpointStruct:
-    """
-    Build endpoint structure.
-    """
-    endpoint_voxels = np.asarray(endpoint_voxels, dtype=np.int64)
-
-    out = EndpointStruct()
-    out.pos_ind = endpoint_voxels.copy()
-    out.num_voxel = len(endpoint_voxels)
-    out.label = np.arange(out.num_voxel, dtype=np.int64)
-    out.map_voxel_to_label = np.full(n_total_voxels, -1, dtype=np.int64)
-    if out.num_voxel > 0:
-        out.map_voxel_to_label[out.pos_ind] = out.label
-    out.link_label = np.full(out.num_voxel, -1, dtype=np.int64)
-    return out
-
-
-def build_isopoint_struct(isopoint_voxels: np.ndarray, n_total_voxels: int) -> IsoPointStruct:
-    """
-    Build isolated-point structure.
-    """
-    isopoint_voxels = np.asarray(isopoint_voxels, dtype=np.int64)
-
-    out = IsoPointStruct()
-    out.pos_ind = isopoint_voxels.copy()
-    out.num_voxel = len(isopoint_voxels)
-    out.label = np.arange(out.num_voxel, dtype=np.int64)
-    out.map_voxel_to_label = np.full(n_total_voxels, -1, dtype=np.int64)
-    if out.num_voxel > 0:
-        out.map_voxel_to_label[out.pos_ind] = out.label
     return out
 
 
@@ -336,9 +374,9 @@ def build_isopoint_struct(isopoint_voxels: np.ndarray, n_total_voxels: int) -> I
 # ============================================================
 def classify_voxels(adj: List[List[int]]) -> Dict[str, np.ndarray]:
     """
-    Classify voxels by degree. Only separates by type
-    Returns a dict with key=topological label, 
-    value = array of all voxel ids with classified with that topology 
+    Classify voxels by topological degree.
+    Returns a dict with key=topological label, value = array of all voxel 
+    ids with classified with that topology 
     """
     deg = voxel_degrees(adj)
     return {
@@ -382,7 +420,7 @@ def connected_components_from_subset(subset_voxels: np.ndarray, adj: List[List[i
     Notes
     -----
     This is the Python equivalent in spirit to MATLAB's fun_cc_in_sparse_matrix(...), but it works directly on the
-    voxel adjacency list instead of sparse linear indexing. Also inside the logic of visited/unvisited voxels
+    voxel adjacency list instead of sparse linear indexing. Also, inside the logic of visited/unvisited voxels
     is implemented.
     """
     subset_voxels = np.asarray(subset_voxels, dtype=np.int64)
@@ -418,15 +456,16 @@ def connected_components_from_subset(subset_voxels: np.ndarray, adj: List[List[i
     return cc_list
 
 
+
 # ============================================================
-# Node connected components
+# Builders for node / endpoint / isopoint / isoloop
 # ============================================================
 
-def build_node_cc(node_voxels: np.ndarray, adj: List[List[int]], coords: np.ndarray) -> NodeStruct:
+def build_node_struct(node_voxels: np.ndarray, adj: List[List[int]], coords: np.ndarray) -> NodeStruct:
     """
     Build the NodeStruct (class) from the subset of node voxels returned in connected_components_from_subset(...)
     Notice that a node can have more than 1 voxel, this is the reason why this function is needed, to 
-    join all of the voxels that belong to the same node. 
+    group all of the voxels that belong to the same node. 
 
     Parameters
     ----------
@@ -470,6 +509,60 @@ def build_node_cc(node_voxels: np.ndarray, adj: List[List[int]], coords: np.ndar
     return out
 
 
+
+def build_endpoint_struct(endpoint_voxels: np.ndarray, n_total_voxels: int, link: LinkStruct) -> EndpointStruct:
+    endpoint_voxels = np.asarray(endpoint_voxels, dtype=np.int64)
+
+    out = EndpointStruct()
+    out.pos_ind = endpoint_voxels.copy()
+    out.num_voxel = len(endpoint_voxels)
+    out.label = np.arange(out.num_voxel, dtype=np.int64)
+
+    out.map_voxel_to_label = np.full(n_total_voxels, -1, dtype=np.int64)
+    if out.num_voxel > 0:
+        out.map_voxel_to_label[out.pos_ind] = out.label
+
+    # MATLAB:
+    # graph_str.endpoint.link_label = full(graph_str.link.map_ind_2_label(graph_str.endpoint.pos_ind));
+    out.link_label = np.full(out.num_voxel, -1, dtype=np.int64)
+    if out.num_voxel > 0 and link.map_voxel_to_label.size > 0:
+        out.link_label = link.map_voxel_to_label[out.pos_ind].copy()
+
+    return out
+
+
+
+def build_isopoint_struct(isopoint_voxels: np.ndarray, n_total_voxels: int) -> IsoPointStruct:
+    isopoint_voxels = np.asarray(isopoint_voxels, dtype=np.int64)
+
+    out = IsoPointStruct()
+    out.pos_ind = isopoint_voxels.copy()
+    out.num_voxel = len(isopoint_voxels)
+    out.label = np.arange(out.num_voxel, dtype=np.int64)
+    out.map_voxel_to_label = np.full(n_total_voxels, -1, dtype=np.int64)
+
+    if out.num_voxel > 0:
+        out.map_voxel_to_label[out.pos_ind] = out.label
+
+    return out
+
+
+def build_isoloop_struct(isoloop_cc: List[np.ndarray]) -> IsoLoopStruct:
+    out = IsoLoopStruct()
+    out.cc_ind = [np.asarray(c, dtype=np.int64) for c in isoloop_cc]
+    out.num_cc = len(out.cc_ind)
+
+    if out.num_cc > 0:
+        out.pos_ind = np.concatenate(out.cc_ind)
+    else:
+        out.pos_ind = np.array([], dtype=np.int64)
+
+    return out
+
+
+
+
+
 # ============================================================
 # Link Connected Components (link tracing)
 # ============================================================
@@ -477,57 +570,91 @@ def build_node_cc(node_voxels: np.ndarray, adj: List[List[int]], coords: np.ndar
 # In matlab code, fun_skeleton_get_link_cc(...) is used, a subfunction of fun_skeleton_to_graph, which
 # finds the link connected components. Except for the beginning voxels, each voxels in the link has exactly two neigbhors, whose indices in the
 # voxel list in the first two row of voxel_neighbor_idx_list. 
+
 # The start tracking points are the union of the link points in the neighbor to the node points or endpoints (in case the links has
 # two endpoints). 
-
 
 def get_link_start_voxels(
     node_voxels: np.ndarray,
     endpoint_voxels: np.ndarray,
     adj: List[List[int]],
-    link_voxel_set: Set[int],
+    node_set: Set[int],
 ) -> np.ndarray:
     """
     Build the start voxel list for link tracing.
-    According to XiangJi's code: "The start tracking points are the union of the link points in the neighbor
-    to the node points, or the end points ( in case that the links have two endpoints)
 
-    Equivalent in spirit to MATLAB's l_link_start_voxel_idx.
+    MATLAB logic:
+        start points = union(neighbors of node voxels that are not nodes,
+                             endpoint voxels)
     """
-    start_voxels = set()
+    start_voxels = set(map(int, endpoint_voxels))  # endpoints themselves
 
-    # 1) Endpoints are valid starts
-    for ep in endpoint_voxels:
-        ep = int(ep)
-        for nb in adj[ep]:
-            if nb in link_voxel_set:
-                start_voxels.add(nb)
-
-    # 2) Link voxels neighboring node voxels are also valid starts
     for nd in node_voxels:
         nd = int(nd)
         for nb in adj[nd]:
-            if nb in link_voxel_set:
+            if nb not in node_set:
                 start_voxels.add(nb)
 
     return np.array(sorted(start_voxels), dtype=np.int64)
 
+
+def initialize_voxel_unvisited(
+    n_total_voxels: int,
+    node_voxels: np.ndarray,
+    isopoint_voxels: np.ndarray,
+) -> np.ndarray:
+    """
+    Initialize the unvisited voxel mask for link tracing.
+    
+    MATLAB logic:
+    voxel_unvisited = true(num.skeleton_voxel,1);
+    voxel_unvisited(l_nd_idx) = false;
+    voxel_unvisited(l_isop_Q) = false;
+    """
+    voxel_unvisited = np.ones(n_total_voxels, dtype=bool)
+    voxel_unvisited[np.asarray(node_voxels, dtype=np.int64)] = False
+    voxel_unvisited[np.asarray(isopoint_voxels, dtype=np.int64)] = False
+    return voxel_unvisited
+
+
 def build_link_cc(
-    adj: list,
-    link_set: set,
-    node_set: set,
-    endpoint_set: set,
-    link_start_ids: list,     # possible seeds (endpoints + node neighbors) where link can start, same as l_link_start_voxel_idx in matlab
+    adj: List[List[int]],
+    link_set: Set[int],
+    node_set: Set[int],
+    endpoint_set: Set[int],
+    link_start_ids: np.ndarray,     # possible seeds (endpoints + node neighbors) where link can start, same as l_link_start_voxel_idx in matlab
     voxel_unvisited: np.ndarray, # important: includes endpoints and link voxels (not nodes/isopoints -> can't be part of the link)
 ) -> tuple:
     """
     Replicates fun_skeleton_get_link_cc.
-    Only traces voxel link chains. Here is not important the starting point topology.
+    Only traces normal voxel link chains.
     
+        Parameters
+    ----------
+    adj : list of lists
+        Full voxel adjacency list.
+    link_set : set
+        Set of link voxel IDs.
+    node_set : set
+        Set of node voxel IDs.
+    endpoint_set : set
+        Set of endpoint voxel IDs.
+    link_start_ids : np.ndarray
+        Start voxels for tracing.
+    voxel_unvisited : np.ndarray
+        Boolean mask. True means this voxel can still be traced
+        (typically endpoints + link voxels).
+        
     Returns:
         chains          : list of lists of voxel IDs (each list = one chain = one link)
         terminals       : for each chain, returns the ending point (can be node or endpoint or None) 
         voxel_unvisited : boolean array updated where visited voxels turn False
+    
+    Notes
+    -----
+    - Node voxels are not added to the traced chain.
+    - Endpoint voxels can appear in the chain if tracing starts from them.
+    - Internal voxels of the chain are degree 2 link voxels.
     """
     chains    = []
     terminals = []  # final voxel of the chain can be a node, ep or none
@@ -564,7 +691,8 @@ def build_link_cc(
                     current  = nb
                     keep_tracking = True
                     break 
-
+                
+                # If I reach a node or an endpoint, I stop and record it as terminal (but I don't add it to the chain, because chain is only link voxels)
                 if nb in node_set or nb in endpoint_set:
                     # final voxel of the chain reached/no more unvisited nodes
                     terminal = nb
@@ -572,356 +700,100 @@ def build_link_cc(
             if not keep_tracking:
                 break
 
-        chains.append(chain)
+        chains.append(np.asarray(chain, dtype=np.int64))
         terminals.append(terminal)
 
     return chains, terminals, voxel_unvisited
 
 
-def build_link_struct(
-    chains: list,            # output of get_link_cc
-    terminals: list,         # output of get_link_cc
-    isoloop_chains: list,    # isolated loops (second call to get_link_cc in MATLAB) -> if i still have unvisited, redo this (line 177 fun_skeleton_to_graph.m)
-    node_map: np.ndarray,    # map_voxel_to_label of nodes
-    endpoint_map: np.ndarray,# map_voxel_to_label of endpoints
-    coords: np.ndarray,
-    node_set: set,
-    endpoint_set: set,
-) -> LinkStruct:
+def trace_isoloop_cc(
+    adj: List[List[int]],
+    voxel_unvisited: np.ndarray,
+    link_set: Set[int],
+) -> Tuple[List[np.ndarray], np.ndarray]:
     """
-    Equivalent to %% Construct graph of fun_skeleton_to_graph.m (line 139)
-    Takes the raw chains and builds the LinkStruct with metadata.
+    Trace isolated loops from the remaining unvisited link voxels.
+
+    This corresponds to the second MATLAB call to fun_skeleton_get_link_cc(...)
+    on the leftover unvisited voxels.
+
+    Parameters
+    ----------
+    adj : list of lists
+        Full voxel adjacency list.
+    voxel_unvisited : np.ndarray
+        Boolean mask after normal link tracing.
+    link_set : set
+        Set of voxel IDs classified as link voxels.
+
+    Returns
+    -------
+    isoloop_chains : list of np.ndarray
+        Each entry is one isolated loop represented as an ordered voxel chain.
+    voxel_unvisited : np.ndarray
+        Updated visitation mask.
     """
+    isoloop_chains = []
 
-    all_chains = chains + isoloop_chains
-    n_total    = len(coords)
+    # Only remaining link voxels can form isolated loops
+    remaining = [int(v) for v in np.where(voxel_unvisited)[0] if int(v) in link_set]
 
-    cc_ind     = [np.array(c, dtype=np.int64) for c in all_chains]
-    num_cc     = len(cc_ind)
+    for start in remaining:
+        if not voxel_unvisited[start]:
+            continue
 
-    # pos_ind = cat(1, link_cc.PixelIdxList{:}) en MATLAB
-    pos_ind    = np.concatenate(cc_ind) if cc_ind else np.array([], dtype=np.int64)
+        chain = [start]
+        voxel_unvisited[start] = False
 
-    # num_voxel_per_cc = cellfun(@length, link_cc.PixelIdxList) en MATLAB
-    num_voxel_per_cc = np.array([len(c) for c in cc_ind], dtype=np.int64)
+        current = start
+        previous = -1
 
-    # label = repelem(1:num_cc, num_voxel_per_cc) en MATLAB (aquí 0-indexed)
-    label = np.repeat(np.arange(num_cc, dtype=np.int64), num_voxel_per_cc)
+        while True:
+            next_candidates = []
 
-    # map_voxel_to_label: para cualquier voxel id -> en qué link está (-1 si no está)
-    # en MATLAB: sparse(pos_ind, ones, label, block_voxel, 1)
-    map_voxel_to_label = np.full(n_total, -1, dtype=np.int64)
-    if len(pos_ind) > 0:
-        map_voxel_to_label[pos_ind] = label
+            for nb in adj[current]:
+                if nb == previous:
+                    continue
+                if nb in link_set and voxel_unvisited[nb]:
+                    next_candidates.append(nb)
 
-    # --- para cada cadena, qué nodo/endpoint hay en cada extremo ---
-    # equivale a graph_str.link.connected_node_label = zeros(num_cc, 2)
-    connected_node_label     = np.full((num_cc, 2), -1, dtype=np.int64)
+            if not next_candidates:
+                break
+
+            nxt = next_candidates[0]
+            chain.append(nxt)
+            voxel_unvisited[nxt] = False
+            previous = current
+            current = nxt
+
+        isoloop_chains.append(np.asarray(chain, dtype=np.int64))
+
+    return isoloop_chains, voxel_unvisited
+
+
+def chain_euclidean_length(chain: np.ndarray, coords: np.ndarray) -> float:
+    if len(chain) <= 1:
+        return 0.0
+    pts = coords[chain].astype(float)
+    diffs = np.diff(pts, axis=0)
+    return float(np.sum(np.linalg.norm(diffs, axis=1)))
+
+
+# ============================================================
+# MATLAB-like graph construction
+# ============================================================
+def build_link_struct(chains: List[np.ndarray], coords: np.ndarray, n_total_voxels: int) -> LinkStruct:
+    """
+    MATLAB-like construction of graph_str.link from traced link CCs.
+    Node-link connectivity is NOT assigned here yet.
+    """
+    base = build_component_struct(chains, n_total_voxels)
+
+    num_cc = base.num_cc
+    num_endpoint_per_link = np.zeros(num_cc, dtype=np.int64)
     connected_endpoint_label = np.full((num_cc, 2), -1, dtype=np.int64)
-    end_kind                 = []
-    is_isoloop               = np.zeros(num_cc, dtype=bool)
-
-    for lid, (chain, terminal) in enumerate(zip(chains, terminals)):
-
-        # el extremo de inicio: el voxel que inició la búsqueda está fuera del chain,
-        # lo guardamos como "de dónde vino" al llamar get_link_cc
-        # aquí terminal es el extremo final
-        kind_end, id_end = _classify_terminal(terminal, node_set, endpoint_set,
-                                              node_map, endpoint_map)
-
-        # el extremo de inicio lo inferimos del primer voxel del chain:
-        # miramos quién lo inició (nodo o endpoint) buscando en sus vecinos
-        # (esto lo resuelves guardando el 'prev' en get_link_cc si quieres ser más explícita)
-        end_kind.append(("unknown", kind_end))  # puedes refinar guardando el prev
-
-        if kind_end == "node":
-            connected_node_label[lid, 1] = id_end
-        elif kind_end == "endpoint":
-            connected_endpoint_label[lid, 1] = id_end
-
-    for lid in range(len(chains), num_cc):
-        # loops aislados
-        end_kind.append(("loop", "loop"))
-        is_isoloop[lid] = True
-
-    num_node_per_link     = np.sum(connected_node_label >= 0,     axis=1)
-    num_endpoint_per_link = np.sum(connected_endpoint_label >= 0, axis=1)
-
-    lengths_euclidean = np.array([
-        _euclidean_length(coords, c) for c in all_chains
-    ], dtype=float)
 
     return LinkStruct(
-        num_cc                   = num_cc,
-        cc_ind                   = cc_ind,
-        pos_ind                  = pos_ind,
-        num_voxel                = len(pos_ind),
-        num_voxel_per_cc         = num_voxel_per_cc,
-        label                    = label,
-        map_voxel_to_label       = map_voxel_to_label,
-        connected_node_label     = connected_node_label,
-        connected_endpoint_label = connected_endpoint_label,
-        num_node_per_link        = num_node_per_link,
-        num_endpoint_per_link    = num_endpoint_per_link,
-        terminal_link_kinds      = end_kind,
-        num_voxels_in_link       = num_voxel_per_cc,
-        link_length_euclidean    = lengths_euclidean,
-        is_isoloop               = is_isoloop,
-    )
-
-
-def _classify_terminal(v, node_set, endpoint_set, node_map, endpoint_map):
-    if v is None:
-        return "none", -1
-    if v in node_set:
-        return "node", int(node_map[v])
-    if v in endpoint_set:
-        return "endpoint", int(endpoint_map[v])
-    return "none", -1
-
-
-def _euclidean_length(coords, chain):
-    if len(chain) < 2:
-        return 0.0
-    arr = coords[np.array(chain, dtype=np.int64)]
-    return float(np.sum(np.linalg.norm(np.diff(arr, axis=0), axis=1)))
-
-
-
-def euclidean_chain_length(coords: np.ndarray, chain: List[int]) -> float:
-    """
-    Euclidean length of an ordered voxel chain.
-    """
-    if len(chain) < 2:
-        return 0.0
-
-    arr = coords[np.asarray(chain, dtype=np.int64)]
-    dif = arr[1:] - arr[:-1]
-    return float(np.sum(np.linalg.norm(dif, axis=1)))
-
-
-def trace_links(
-    adj: List[List[int]],
-    node_voxels: np.ndarray,
-    endpoint_voxels: np.ndarray,
-    link_voxels: np.ndarray,
-    node_map_voxel_to_label: np.ndarray,
-    endpoint_map_voxel_to_label: np.ndarray,
-    coords: np.ndarray,
-) -> Tuple[LinkStruct, ComponentStruct]:
-    """
-    Trace all link connected components following MATLAB-like logic.
-
-    Start from:
-    - endpoint voxels
-    - node-neighboring link voxels
-
-    Unvisited remaining link voxels are treated as isolated loops.
-    """
-    n_total_voxels = len(coords)
-
-    node_set = set(map(int, node_voxels))
-    endpoint_set = set(map(int, endpoint_voxels))
-    link_set = set(map(int, link_voxels))
-
-    visited: Set[int] = set()
-    unvisited: Set[int] = set(link_set)
-
-    link_cc: List[np.ndarray] = []
-    link_end_kind: List[Tuple[str, str]] = []
-    link_node_labels: List[Tuple[int, int]] = []
-    link_endpoint_labels: List[Tuple[int, int]] = []
-    link_lengths_voxel: List[int] = []
-    link_lengths_euclidean: List[float] = []
-    link_is_loop: List[bool] = []
-
-    isoloop_cc: List[np.ndarray] = []
-
-    def classify_terminal(v: Optional[int]) -> Tuple[str, int]:
-        """
-        Convert a terminal voxel ID to a semantic endpoint descriptor.
-        """
-        if v is None:
-            return ("none", -1)
-
-        if v in node_set:
-            return ("node", int(node_map_voxel_to_label[v]))
-
-        if v in endpoint_set:
-            return ("endpoint", int(endpoint_map_voxel_to_label[v]))
-
-        return ("none", -1)
-
-    def walk_from_seed(seed: int, prev: int) -> Tuple[List[int], Optional[int]]:
-        """
-        Walk along a chain of link voxels starting from `seed`.
-
-        Parameters
-        ----------
-        seed : int
-            First link voxel.
-        prev : int
-            Previous voxel already attached to the chain start
-            (endpoint voxel or node voxel).
-
-        Returns
-        -------
-        chain : list of int
-            Ordered link voxel IDs
-        terminal : Optional[int]
-            Final non-link voxel reached at the far end, or None
-        """
-        chain = [seed]
-        visited.add(seed)
-        unvisited.discard(seed)
-
-        current = seed
-        previous = prev
-
-        # replicates while idea from matlab code line 47 - 56 of fun_skeleton_get_link_cc(...)
-        while True:
-            candidates = [v for v in adj[current] if v != previous] # select candidates from the current voxel neighbors 
-
-            next_link = [v for v in candidates if v in link_set and v not in visited] # if the next voxel is not yet been visited, i use it as start point of the new link
-            terminal_candidates = [v for v in candidates if v in node_set or v in endpoint_set] 
-
-            if next_link:
-                nxt = next_link[0]
-                chain.append(nxt)
-                visited.add(nxt)
-                unvisited.discard(nxt)
-                previous = current
-                current = nxt # update starting searching point for next link
-                continue
-
-            if terminal_candidates:
-                return chain, terminal_candidates[0]
-
-            return chain, None
-
-    # --------------------------------------------------------
-    # Start from endpoints
-    # --------------------------------------------------------
-    for ep in endpoint_voxels:
-        ep = int(ep)
-        for nb in adj[ep]:
-            if nb in link_set and nb not in visited:
-                chain, terminal = walk_from_seed(nb, prev=ep)
-
-                start_kind, start_id = ("endpoint", int(endpoint_map_voxel_to_label[ep]))
-                end_kind, end_id = classify_terminal(terminal)
-
-                link_cc.append(np.asarray(chain, dtype=np.int64))
-                link_end_kind.append((start_kind, end_kind))
-
-                node_pair = [-1, -1]
-                endpoint_pair = [-1, -1]
-
-                if start_kind == "node":
-                    node_pair[0] = start_id
-                elif start_kind == "endpoint":
-                    endpoint_pair[0] = start_id
-
-                if end_kind == "node":
-                    node_pair[1] = end_id
-                elif end_kind == "endpoint":
-                    endpoint_pair[1] = end_id
-
-                link_node_labels.append(tuple(node_pair))
-                link_endpoint_labels.append(tuple(endpoint_pair))
-                link_lengths_voxel.append(len(chain))
-                link_lengths_euclidean.append(euclidean_chain_length(coords, chain))
-                link_is_loop.append(False)
-
-    # --------------------------------------------------------
-    # Start from node boundaries
-    # --------------------------------------------------------
-    for nd in node_voxels:
-        nd = int(nd)
-        for nb in adj[nd]:
-            if nb in link_set and nb not in visited:
-                chain, terminal = walk_from_seed(nb, prev=nd)
-
-                start_kind, start_id = ("node", int(node_map_voxel_to_label[nd]))
-                end_kind, end_id = classify_terminal(terminal)
-
-                link_cc.append(np.asarray(chain, dtype=np.int64))
-                link_end_kind.append((start_kind, end_kind))
-
-                node_pair = [-1, -1]
-                endpoint_pair = [-1, -1]
-
-                if start_kind == "node":
-                    node_pair[0] = start_id
-                elif start_kind == "endpoint":
-                    endpoint_pair[0] = start_id
-
-                if end_kind == "node":
-                    node_pair[1] = end_id
-                elif end_kind == "endpoint":
-                    endpoint_pair[1] = end_id
-
-                link_node_labels.append(tuple(node_pair))
-                link_endpoint_labels.append(tuple(endpoint_pair))
-                link_lengths_voxel.append(len(chain))
-                link_lengths_euclidean.append(euclidean_chain_length(coords, chain))
-                link_is_loop.append(False)
-
-    # --------------------------------------------------------
-    # Remaining unvisited link voxels = isolated loops
-    # --------------------------------------------------------
-    def trace_isolated_loop(start: int) -> List[int]:
-        """
-        Trace a closed loop made only of link voxels.
-        """
-        chain = [start]
-        visited.add(start)
-        unvisited.discard(start)
-
-        neighbors = [v for v in adj[start] if v in link_set]
-        if not neighbors:
-            return chain
-
-        previous = start
-        current = neighbors[0]
-
-        while True:
-            if current in visited:
-                break
-
-            chain.append(current)
-            visited.add(current)
-            unvisited.discard(current)
-
-            candidates = [v for v in adj[current] if v in link_set and v != previous]
-            if not candidates:
-                break
-
-            nxt = candidates[0]
-            previous, current = current, nxt
-
-            if current == start:
-                break
-
-        return chain
-
-    for lv in list(unvisited):
-        if lv not in visited:
-            chain = trace_isolated_loop(lv)
-            comp = np.asarray(chain, dtype=np.int64)
-            isoloop_cc.append(comp)
-
-            link_cc.append(comp)
-            link_end_kind.append(("loop", "loop"))
-            link_node_labels.append((-1, -1))
-            link_endpoint_labels.append((-1, -1))
-            link_lengths_voxel.append(len(comp))
-            link_lengths_euclidean.append(euclidean_chain_length(coords, chain))
-            link_is_loop.append(True)
-
-    # Build link structure
-    base = build_component_struct(link_cc, n_total_voxels)
-    link_out = LinkStruct(
         num_cc=base.num_cc,
         cc_ind=base.cc_ind,
         pos_ind=base.pos_ind,
@@ -929,173 +801,120 @@ def trace_links(
         num_voxel_per_cc=base.num_voxel_per_cc,
         label=base.label,
         map_voxel_to_label=base.map_voxel_to_label,
-        connected_node_label=np.asarray(link_node_labels, dtype=np.int64) if link_node_labels else np.empty((0, 2), dtype=np.int64),
-        connected_endpoint_label=np.asarray(link_endpoint_labels, dtype=np.int64) if link_endpoint_labels else np.empty((0, 2), dtype=np.int64),
-        num_node=np.sum(np.asarray(link_node_labels, dtype=np.int64) >= 0, axis=1) if link_node_labels else np.array([], dtype=np.int64),
-        num_endpoint=np.sum(np.asarray(link_endpoint_labels, dtype=np.int64) >= 0, axis=1) if link_endpoint_labels else np.array([], dtype=np.int64),
-        end_kind=link_end_kind,
-        num_voxels_in_link=np.asarray(link_lengths_voxel, dtype=np.int64),
-        link_length_euclidean=np.asarray(link_lengths_euclidean, dtype=float),
-        is_isoloop=np.asarray(link_is_loop, dtype=bool),
+        connected_node_label=np.full((num_cc, 2), -1, dtype=np.int64),
+        connected_endpoint_label=connected_endpoint_label,
+        num_node_per_link=np.zeros(num_cc, dtype=np.int64),
+        num_endpoint_per_link=num_endpoint_per_link,
+        link_length_euclidean=np.array([chain_euclidean_length(c, coords) for c in chains], dtype=float) if num_cc > 0 else np.array([], dtype=float),
     )
 
-    isoloop_base = build_component_struct(isoloop_cc, n_total_voxels)
 
-    return link_out, isoloop_base
 
-def build_isoloop_cc(
-    isoloop_voxels: np.ndarray,
+def connect_nodes_with_links_voxelwise(
+    node: NodeStruct,
+    link: LinkStruct,
     adj: List[List[int]],
-    n_total_voxels: int,
-) -> ComponentStruct:
+) -> Tuple[NodeStruct, LinkStruct]:
     """
-    Build a ComponentStruct for isolated loop voxels.
+    MATLAB-like voxelwise node-link connection.
 
-    Parameters
-    ----------
-    isoloop_voxels : np.ndarray
-        1D array of voxel IDs belonging to isolated loops.
-    adj : list of lists
-        Full voxel adjacency list.
-    n_total_voxels : int
-        Total number of skeleton voxels.
-
-    Returns
-    -------
-    ComponentStruct
-        Connected components of isolated loop voxels.
-    """
-    cc_list = connected_components_from_subset(isoloop_voxels, adj)
-    return build_component_struct(cc_list, n_total_voxels)
-
-# ============================================================
-# Node-link connectivity
-# ============================================================
-def fill_node_link_connectivity(node: NodeStruct, link: LinkStruct) -> NodeStruct:
-    """
-    Fill:
-    - node.connected_link_label
-    - node.num_link
+    Equivalent in spirit to:
+        for each node voxel:
+            inspect neighbors
+            detect link labels
+            add info to node and link
     """
     if node.num_cc == 0 or link.num_cc == 0:
-        return node
+        return node, link
 
-    connected = [[] for _ in range(node.num_cc)]
+    node.connected_link_label = [[] for _ in range(node.num_cc)]
 
-    for lid in range(link.num_cc):
-        a, b = link.connected_node_label[lid]
-        if a >= 0:
-            connected[a].append(lid)
-        if b >= 0:
-            connected[b].append(lid)
+    connected_node_label = np.full((link.num_cc, 2), -1, dtype=np.int64)
+    num_node_per_link = np.zeros(link.num_cc, dtype=np.int64)
 
+    # Traverse each node voxel
+    for local_idx, node_voxel_id in enumerate(node.pos_ind):
+        node_voxel_id = int(node_voxel_id)
+        node_label = int(node.label[local_idx])
+
+        neighbor_link_labels = []
+
+        for nb in adj[node_voxel_id]:
+            link_label = int(link.map_voxel_to_label[nb])
+            if link_label >= 0:
+                neighbor_link_labels.append(link_label)
+
+        if len(neighbor_link_labels) == 0:
+            continue
+
+        # MATLAB stores all hits on the node side, then unique() afterwards
+        node.connected_link_label[node_label].extend(neighbor_link_labels)
+
+        # MATLAB does NOT unique on the link side before filling the two slots.
+        for link_label in neighbor_link_labels:
+            num_node_per_link[link_label] += 1
+            if num_node_per_link[link_label] > 2:
+                raise AssertionError("The link connects to more than 2 node voxels")
+            connected_node_label[link_label, num_node_per_link[link_label] - 1] = node_label
+
+    # Unique only on node side, exactly like MATLAB
     node.connected_link_label = [
         np.unique(np.asarray(lst, dtype=np.int64)) if len(lst) > 0 else np.array([], dtype=np.int64)
-        for lst in connected
+        for lst in node.connected_link_label
     ]
-    node.num_link = np.array([len(x) for x in node.connected_link_label], dtype=np.int64)
-    return node
+    node.num_links_per_node = np.array([len(x) for x in node.connected_link_label], dtype=np.int64)
+
+    link.connected_node_label = connected_node_label
+    link.num_node_per_link = num_node_per_link
+
+    return node, link
 
 
-# ============================================================
-# Graph builder
-# ============================================================
-def build_graph(node: NodeStruct, endpoint: EndpointStruct, link: LinkStruct) -> nx.Graph:
+def fill_link_endpoint_connectivity(link: LinkStruct, endpoint: EndpointStruct) -> LinkStruct:
     """
-    Build final graph.
+    Fill link.connected_endpoint_label and link.num_endpoint_per_link
+    from endpoint.link_label.
 
-    Node naming:
-    - nodes are named "node_{id}"
-    - endpoints are named "endpoint_{id}"
-
-    This avoids fake placeholder nodes like -1.
+    This is not required by MATLAB to build endpoint.link_label, but it is a
+    consistent derived representation.
     """
-    G = nx.Graph()
+    if link.num_cc == 0 or endpoint.num_voxel == 0:
+        return link
 
-    # Add node connected components
-    for nid in range(node.num_cc):
-        G.add_node(
-            f"node_{nid}",
-            kind="node",
-            label=nid,
-            voxel_ids=node.cc_ind[nid],
-            centroid=node.centroid[nid] if nid < len(node.centroid) else None,
-        )
+    connected_endpoint_label = np.full((link.num_cc, 2), -1, dtype=np.int64)
+    num_endpoint_per_link = np.zeros(link.num_cc, dtype=np.int64)
 
-    # Add endpoints
-    for eid, vox in enumerate(endpoint.pos_ind):
-        G.add_node(
-            f"endpoint_{eid}",
-            kind="endpoint",
-            label=eid,
-            voxel_id=int(vox),
-        )
-
-    # Add edges (links)
-    for lid in range(link.num_cc):
-        endk0, endk1 = link.end_kind[lid]
-
-        # Build endpoint identifiers for graph edge ends
-        def endpoint_name(kind: str, local_idx: int, side: int) -> Optional[str]:
-            if kind == "node":
-                nid = int(link.connected_node_label[local_idx, side])
-                return f"node_{nid}" if nid >= 0 else None
-            if kind == "endpoint":
-                eid = int(link.connected_endpoint_label[local_idx, side])
-                return f"endpoint_{eid}" if eid >= 0 else None
-            return None
-
-        u = endpoint_name(endk0, lid, 0)
-        v = endpoint_name(endk1, lid, 1)
-
-        # Loop links can be stored as self-loops only if attached to a node.
-        # Isolated loops remain out of the networkx graph connectivity and are
-        # still recorded in graph_str["isoloop"] and graph_str["link"].
-        if u is None and v is None:
-            continue
-        if u is None or v is None:
+    for ep_label, link_label in enumerate(endpoint.link_label):
+        link_label = int(link_label)
+        if link_label < 0:
             continue
 
-        G.add_edge(
-            u,
-            v,
-            kind="link",
-            label=lid,
-            voxel_ids=link.cc_ind[lid],
-            length_voxel=int(link.num_voxels_in_link[lid]),
-            length_euclidean=float(link.link_length_euclidean[lid]),
-            is_loop=bool(link.is_isoloop[lid]),
-        )
+        num_endpoint_per_link[link_label] += 1
+        if num_endpoint_per_link[link_label] > 2:
+            raise AssertionError("A link is connected to more than 2 endpoints")
 
-    return G
+        slot = num_endpoint_per_link[link_label] - 1
+        connected_endpoint_label[link_label, slot] = ep_label
 
+    link.connected_endpoint_label = connected_endpoint_label
+    link.num_endpoint_per_link = num_endpoint_per_link
+    return link
 
 # ============================================================
-# Main function
+# Main MATLAB-like function
 # ============================================================
 def fun_skeleton_to_graph(skel: np.ndarray) -> dict:
     """
-    Python implementation that follows the logic of the MATLAB
-    fun_skeleton_to_graph pipeline.
+    MATLAB-like graph construction.
 
-    Input
-    -----
-    skel : np.ndarray
-        3D binary skeleton array
+    This version returns a structured graph_str-like dictionary
 
-    Output
-    ------
-    graph_str : dict
-        Dictionary with fields:
-        - num
-        - node
-        - link
-        - endpoint
-        - isopoint
-        - isoloop
-        - graph
-        - coords
-        - degree
+    Steps:
+    - classify voxels (node, link, endpoint, isopoint)
+    - trace links from endpoints and node neighbors
+    - trace isolated loops from remaining link voxels
+    - build link, node, endpoint, isopoint, isoloop structures
+    - connect nodes with links voxelwise (26-neighborhood)
     """
     # --------------------------------------------------------
     # Initialization
@@ -1112,72 +931,87 @@ def fun_skeleton_to_graph(skel: np.ndarray) -> dict:
     )
 
     # --------------------------------------------------------
-    # Endpoint / isopoint structures
+    # Trace normal links
     # --------------------------------------------------------
-    endpoint = build_endpoint_struct(topo["endpoint"], len(data.coords))
+    node_set = set(map(int, topo["node"]))
+    endpoint_set = set(map(int, topo["endpoint"]))
+    link_set = set(map(int, topo["link"]))
+
+    link_start_ids = get_link_start_voxels(
+        node_voxels=topo["node"],
+        endpoint_voxels=topo["endpoint"],
+        adj=adj,
+        node_set=node_set,
+    )
+
+    voxel_unvisited = initialize_voxel_unvisited(
+        n_total_voxels=len(data.coords),
+        node_voxels=topo["node"],
+        isopoint_voxels=topo["isopoint"],
+    )
+
+    link_chains, _, voxel_unvisited = build_link_cc(
+        adj=adj,
+        link_set=link_set,
+        node_set=node_set,
+        endpoint_set=endpoint_set,
+        link_start_ids=link_start_ids,
+        voxel_unvisited=voxel_unvisited,
+    )
+    
+    # --------------------------------------------------------
+    # Construct graph_str.link
+    # --------------------------------------------------------
+    link = build_link_struct(
+        chains=link_chains,
+        coords=data.coords,
+        n_total_voxels=len(data.coords),
+    )
+
+    # --------------------------------------------------------
+    # Construct graph_str.endpoint
+    # MATLAB endpoint.link_label = link.map_voxel_to_label(endpoint.pos_ind)
+    # --------------------------------------------------------
+    endpoint = build_endpoint_struct(topo["endpoint"], len(data.coords), link)
+
+    link = fill_link_endpoint_connectivity(link, endpoint)
+    # --------------------------------------------------------
+    # Construct graph_str.isopoint
+    # --------------------------------------------------------
     isopoint = build_isopoint_struct(topo["isopoint"], len(data.coords))
 
     # --------------------------------------------------------
-    # Node connected components
+    # Construct graph_str.isoloop
+    # MATLAB stores only cc_ind, num_cc, pos_ind
     # --------------------------------------------------------
-    node = build_node_cc(topo["node"], adj, data.coords)
-    # --------------------------------------------------------
-    # Link tracing + isolated loops
-    # --------------------------------------------------------
-    link, isoloop_base = trace_links(
+    isoloop_chains, voxel_unvisited = trace_isoloop_cc(
         adj=adj,
-        node_voxels=topo["node"],
-        endpoint_voxels=topo["endpoint"],
-        link_voxels=topo["link"],
-        node_map_voxel_to_label=node.map_voxel_to_label,
-        endpoint_map_voxel_to_label=endpoint.map_voxel_to_label,
-        coords=data.coords,
+        voxel_unvisited=voxel_unvisited,
+        link_set=link_set,
     )
+    isoloop = build_isoloop_struct(isoloop_chains)
 
     # --------------------------------------------------------
-    # Endpoint -> link label
+    # Construct graph_str.node
     # --------------------------------------------------------
-    endpoint.link_label = np.full(endpoint.num_voxel, -1, dtype=np.int64)
-    for lid in range(link.num_cc):
-        for side in (0, 1):
-            eid = link.connected_endpoint_label[lid, side] if link.connected_endpoint_label.size > 0 else -1
-            if eid >= 0:
-                endpoint.link_label[eid] = lid
+    node = build_node_struct(topo["node"], adj, data.coords)
 
     # --------------------------------------------------------
-    # Node -> link connectivity
+    # Connect nodes with links voxel by voxel
+    # MATLAB-like block: "Connect nodes with links"
     # --------------------------------------------------------
-    node = fill_node_link_connectivity(node, link)
-
-    # --------------------------------------------------------
-    # Isolated loop structure
-    # --------------------------------------------------------
-    isoloop = ComponentStruct(
-        num_cc=isoloop_base.num_cc,
-        cc_ind=isoloop_base.cc_ind,
-        pos_ind=isoloop_base.pos_ind,
-        num_voxel_all_components=isoloop_base.num_voxel_all_components,
-        num_voxel_per_cc=isoloop_base.num_voxel_per_cc,
-        label=isoloop_base.label,
-        map_voxel_to_label=isoloop_base.map_voxel_to_label,
-    )
-
-    # --------------------------------------------------------
-    # Final graph
-    # --------------------------------------------------------
-    G = build_graph(node, endpoint, link)
+    node, link = connect_nodes_with_links_voxelwise(node, link, adj)
 
     # --------------------------------------------------------
     # Assemble MATLAB-like output
     # --------------------------------------------------------
     graph_str = {
         "num": num,
-        "node": node,
         "link": link,
         "endpoint": endpoint,
         "isopoint": isopoint,
         "isoloop": isoloop,
-        "graph": G,
+        "node": node,
         "coords": data.coords,
         "coord_to_id": data.coord_to_id,
         "degree": topo["degree"],
@@ -1187,32 +1021,207 @@ def fun_skeleton_to_graph(skel: np.ndarray) -> dict:
     return graph_str
 
 
+
+
 # ============================================================
-# Quick test
+# Skeleton sintético de test
 # ============================================================
-if __name__ == "__main__":
-    skel = np.zeros((20, 20, 20), dtype=np.uint8)
+def make_test_skeleton() -> np.ndarray:
+    skel = np.zeros((12, 12, 12), dtype=bool)
 
-    # Main trunk
-    for z in range(5, 15):
-        skel[10, 10, z] = 1
+    # --------------------------------------------------------
+    # 1) Link simple entre 2 endpoints
+    # (1,1,1) -- (2,1,1) -- (3,1,1)
+    # --------------------------------------------------------
+    skel[1, 1, 1] = True
+    skel[2, 1, 1] = True
+    skel[3, 1, 1] = True
 
-    # Two branches
-    for i in range(5):
-        skel[10 - i, 10, 15 + i] = 1
-        skel[10 + i, 10, 15 + i] = 1
+    # --------------------------------------------------------
+    # 2) Nodo con 3 ramas, ahora sí contiguas
+    #
+    #             (6,3,6) endpoint
+    #                  |
+    #             (6,4,6) link
+    #                  |
+    #             (6,5,6) link
+    #                  |
+    # (3,6,6)e-(4,6,6)l-(5,6,6)l-(6,6,6)node-(7,6,6)l-(8,6,6)e
+    # --------------------------------------------------------
+    skel[6, 6, 6] = True   # node central
 
-    # Another branch
-    for i in range(4):
-        skel[10, 10 + i, 10 - i] = 1
+    skel[5, 6, 6] = True   # link izquierda
+    skel[4, 6, 6] = True   # link izquierda
+    skel[3, 6, 6] = True   # endpoint izquierda
 
+    skel[7, 6, 6] = True   # link derecha
+    skel[8, 6, 6] = True   # endpoint derecha
+
+    skel[6, 5, 6] = True   # link arriba
+    skel[6, 4, 6] = True   # link arriba
+    skel[6, 3, 6] = True   # endpoint arriba
+
+    # --------------------------------------------------------
+    # 3) Isopoint
+    # --------------------------------------------------------
+    skel[1, 10, 1] = True
+
+    # --------------------------------------------------------
+    # 4) Isoloop aislado
+    # --------------------------------------------------------
+    loop_pts = [
+        (8, 3, 9),
+        (9, 2, 10),
+        (10, 1, 9),
+        (9, 2, 8),
+    ]
+    for p in loop_pts:
+        skel[p] = True
+
+    return skel
+# ============================================================
+# Helpers de inspección
+# ============================================================
+
+def voxel_ids_to_coords(ids: np.ndarray, coords: np.ndarray):
+    return [tuple(coords[int(i)]) for i in ids]
+
+def print_graph_summary(graph_str: dict):
+    coords = graph_str["coords"]
+
+    print("\n" + "="*60)
+    print("RESUMEN GENERAL")
+    print("="*60)
+    print("mask_size          :", graph_str["num"].mask_size)
+    print("skeleton_voxel     :", graph_str["num"].skeleton_voxel)
+    print("block_voxel        :", graph_str["num"].block_voxel)
+    print("neighborhood       :", graph_str["num"].neighborhood)
+
+    print("\n" + "-"*60)
+    print("CLASIFICACIÓN GLOBAL")
+    print("-"*60)
+    deg = graph_str["degree"]
+    print("n degree==0 (isopoint):", np.sum(deg == 0))
+    print("n degree==1 (endpoint):", np.sum(deg == 1))
+    print("n degree==2 (link)    :", np.sum(deg == 2))
+    print("n degree>2 (node)     :", np.sum(deg > 2))
+
+    node = graph_str["node"]
+    link = graph_str["link"]
+    endpoint = graph_str["endpoint"]
+    isopoint = graph_str["isopoint"]
+    isoloop = graph_str["isoloop"]
+
+    print("\n" + "-"*60)
+    print("NODE")
+    print("-"*60)
+    print("num_cc:", node.num_cc)
+    for i, comp in enumerate(node.cc_ind):
+        print(f"  node_cc[{i}] voxels ids   :", comp.tolist())
+        print(f"  node_cc[{i}] voxels coords:", voxel_ids_to_coords(comp, coords))
+        print(f"  node_cc[{i}] centroid     :", node.centroid[i])
+        print(f"  node_cc[{i}] connected links:", node.connected_link_label[i].tolist())
+
+    print("\n" + "-"*60)
+    print("LINK")
+    print("-"*60)
+    print("num_cc:", link.num_cc)
+    for i, comp in enumerate(link.cc_ind):
+        print(f"  link_cc[{i}] voxels ids   :", comp.tolist())
+        print(f"  link_cc[{i}] voxels coords:", voxel_ids_to_coords(comp, coords))
+        print(f"  link_cc[{i}] connected_node_label     :", link.connected_node_label[i].tolist())
+        print(f"  link_cc[{i}] connected_endpoint_label :", link.connected_endpoint_label[i].tolist())
+        print(f"  link_cc[{i}] num_node_per_link        :", int(link.num_node_per_link[i]))
+        print(f"  link_cc[{i}] num_endpoint_per_link    :", int(link.num_endpoint_per_link[i]))
+        print(f"  link_cc[{i}] euclidean_length         :", float(link.link_length_euclidean[i]))
+
+    print("\n" + "-"*60)
+    print("ENDPOINT")
+    print("-"*60)
+    print("num_voxel:", endpoint.num_voxel)
+    for i, vid in enumerate(endpoint.pos_ind):
+        print(f"  endpoint[{i}] id={int(vid)} coord={tuple(coords[int(vid)])} link_label={int(endpoint.link_label[i])}")
+
+    print("\n" + "-"*60)
+    print("ISOPOINT")
+    print("-"*60)
+    print("num_voxel:", isopoint.num_voxel)
+    for i, vid in enumerate(isopoint.pos_ind):
+        print(f"  isopoint[{i}] id={int(vid)} coord={tuple(coords[int(vid)])}")
+
+    print("\n" + "-"*60)
+    print("ISOLOOP")
+    print("-"*60)
+    print("num_cc:", isoloop.num_cc)
+    for i, comp in enumerate(isoloop.cc_ind):
+        print(f"  isoloop_cc[{i}] ids   :", comp.tolist())
+        print(f"  isoloop_cc[{i}] coords:", voxel_ids_to_coords(comp, coords))
+
+
+# ============================================================
+# Checks automáticos
+# ============================================================
+
+def run_synthetic_check():
+    skel = make_test_skeleton()
     graph_str = fun_skeleton_to_graph(skel)
 
-    print("num.skeleton_voxel:", graph_str["num"].skeleton_voxel)
-    print("node.num_cc:", graph_str["node"].num_cc)
-    print("link.num_cc:", graph_str["link"].num_cc)
-    print("endpoint.num_voxel:", graph_str["endpoint"].num_voxel)
-    print("isopoint.num_voxel:", graph_str["isopoint"].num_voxel)
-    print("isoloop.num_cc:", graph_str["isoloop"].num_cc)
-    print("graph nodes:", graph_str["graph"].number_of_nodes())
-    print("graph edges:", graph_str["graph"].number_of_edges())
+    print_graph_summary(graph_str)
+
+    node = graph_str["node"]
+    link = graph_str["link"]
+    endpoint = graph_str["endpoint"]
+    isopoint = graph_str["isopoint"]
+    isoloop = graph_str["isoloop"]
+
+    print("\n" + "="*60)
+    print("ASSERTS")
+    print("="*60)
+
+    # Esperados globales
+    assert graph_str["num"].skeleton_voxel == int(np.count_nonzero(skel))
+
+    # 1 isopoint
+    assert isopoint.num_voxel == 1, f"Esperaba 1 isopoint, obtuve {isopoint.num_voxel}"
+
+    # 1 node_cc (el voxel central)
+    assert node.num_cc == 1, f"Esperaba 1 node_cc, obtuve {node.num_cc}"
+    assert int(node.num_links_per_node[0]) == 3, (
+        f"Esperaba 3 links conectados al nodo, obtuve {node.num_links_per_node[0]}"
+    )
+    # 5 endpoints:
+    # 2 del link lineal + 3 del nodo ramificado
+    assert endpoint.num_voxel == 5, f"Esperaba 5 endpoints, obtuve {endpoint.num_voxel}"
+
+    # 4 links normales:
+    # 1 lineal + 3 ramas del nodo
+    assert link.num_cc == 4, f"Esperaba 4 link_cc, obtuve {link.num_cc}"
+
+    # 1 isoloop
+    assert isoloop.num_cc == 1, f"Esperaba 1 isoloop_cc, obtuve {isoloop.num_cc}"
+    assert len(isoloop.cc_ind[0]) == 4, f"Esperaba loop de 4 voxels, obtuve {len(isoloop.cc_ind[0])}"
+
+    # El nodo central debe tener 3 links conectados
+    assert int(node.num_links_per_node[0]) == 3, (
+        f"Esperaba 3 links conectados al nodo, obtuve {node.num_links_per_node[0]}"
+    )
+
+    # Distribuciones topológicas de los links:
+    # - 1 link con 0 nodos y 2 endpoints   (el lineal)
+    # - 3 links con 1 nodo y 1 endpoint    (las ramas)
+    assert sorted(link.num_node_per_link.tolist()) == [0, 1, 1, 1], (
+        f"num_node_per_link inesperado: {link.num_node_per_link.tolist()}"
+    )
+    assert sorted(link.num_endpoint_per_link.tolist()) == [1, 1, 1, 2], (
+        f"num_endpoint_per_link inesperado: {link.num_endpoint_per_link.tolist()}"
+    )
+
+    print("Todos los checks han pasado correctamente.")
+    return graph_str
+
+
+# ============================================================
+# Ejecutar test
+# ============================================================
+
+graph_test = run_synthetic_check()
