@@ -36,6 +36,10 @@
 *.gz
 *.7z
 *.rar
+*.pptx
+*.docx
+*.xlsx
+*.mat
 
 # PYthon 
 __pycache__/
@@ -48,3 +52,5 @@ __pycache__/
 .venv/
 venv/
 env/
+
+
