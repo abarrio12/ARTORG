@@ -1,5 +1,7 @@
 # FROM MAT TO PKL 
 
+# important: explain that the radii is per voxel and all voxels have their own radii 
+
 
 import scipy.io
 import numpy as np
@@ -117,6 +119,39 @@ def segment_lengths(points: np.ndarray) -> np.ndarray:
     # inside each 3D vector (a, b, c)
     return np.linalg.norm(diffs, axis=1)
 
+def are_26_neighbors(a: np.ndarray, b: np.ndarray) -> bool:
+    '''Check if two voxels are 26-connected neighbors in 3D.
+    If I want to know if two voxels are neighbors, I can check if the absolute difference in their coordinates is 
+    at most 1 in each dimension, and that they are not the same voxel.'''
+    
+    a = np.asarray(a, dtype=int)
+    b = np.asarray(b, dtype=int)
+    d = np.abs(a - b)
+    return np.all(d <= 1) and np.any(d > 0) # with any we exclude the case where a = b 
+
+
+def find_touching_node_voxel_link_voxel(node_points: np.ndarray, link_point: np.ndarray) -> np.ndarray:
+    '''This function finds a voxel from the node_points (remember a node or node_cc can be a collection of >1 node voxels) that is a 26-connected neighbor of the link_point.
+    This is useful for the special case of edges (link_cc) that have only one voxel. When computing lengths2, 
+    the array is empty, as there is no other voxel to create the semgent. 
+    For that we find the node voxel that touches the link voxel, and calculate the lengths2 as the distance between them. 
+    This if preferred to calculating from the centroid of the node, as the node may be large and the centroid may be far from the starting link point.
+'''    
+    node_points = np.asarray(node_points, dtype=int)
+    link_point = np.asarray(link_point, dtype=int)
+
+    candidates = [
+        p for p in node_points
+        if are_26_neighbors(p, link_point)
+    ]
+
+    if len(candidates) == 1:
+        return np.asarray(candidates[0], dtype=float)
+    
+    # if several node voxels touch the link voxel, choose the closest one
+    dists = [np.linalg.norm(np.asarray(p, dtype=float) - link_point.astype(float)) for p in candidates]
+    return np.asarray(candidates[int(np.argmin(dists))], dtype=float)
+
 
 def sparse_vector_to_dict(sparse_vec) -> Dict[int, float]:
     """
@@ -160,6 +195,8 @@ def build_nodes_from_mat(mat: dict) -> List[dict]:
     """
     mask_size = mat["num"].mask_size
     node_cc = np.asarray(mat["node"].cc_ind).squeeze()
+    
+    radius_map = sparse_vector_to_dict(mat["radius"])
 
     nodes = []
 
@@ -169,6 +206,10 @@ def build_nodes_from_mat(mat: dict) -> List[dict]:
         points = yxz_to_xyz(points_yxz)  # convert to (X, Y, Z) order for consistency
         centroid = points.mean(axis=0) # no need to divide cases if n_voxels = 1 OR > 1, since the mean of a single point is the point itself
         
+        radii_node = np.array([radius_map.get(int(v), np.nan) for v in voxel_indices], dtype=float)
+        radius_node = np.nanmedian(radii_node) if np.any(~np.isnan(radii_node)) else np.nan
+        diameter_node = 2.0 * radius_node if not np.isnan(radius_node) else np.nan
+        
         node_rec = {
             "id": matlab_label - 1,              # Python/igraph vertex id
             "matlab_label": matlab_label,        # original Ji label
@@ -176,6 +217,8 @@ def build_nodes_from_mat(mat: dict) -> List[dict]:
             "node_points": points,               # all node voxel coords
             "coords": centroid,                  # representative position
             "n_voxels": len(voxel_indices),
+            "radius": radius_node,
+            "diameter": diameter_node,
         }
         nodes.append(node_rec)
 
@@ -186,7 +229,7 @@ def build_nodes_from_mat(mat: dict) -> List[dict]:
 # Edge extraction
 # ============================================================
 
-def build_edges_from_mat(mat: dict) -> List[dict]:
+def build_edges_from_mat(mat: dict, nodes: List[dict] ) -> List[dict]:
     """
     Build intermediate edge records from Ji's MATLAB graph.
 
@@ -204,10 +247,15 @@ def build_edges_from_mat(mat: dict) -> List[dict]:
 
     radius_map = sparse_vector_to_dict(mat["radius"])
     label_map = sparse_vector_to_dict(mat["label"]) if "label" in mat else {}
+    nodes_by_label = {n["matlab_label"]: n for n in nodes} # label of the nodes needed to find node-link correspondance
 
+    
     edges = []
+    count_single_voxel_links = 0
+    count_single_voxel_links_diam_link_equals_node = 0
 
     for matlab_label, cc in enumerate(link_cc, start=1):
+        # Normal case: more than 1 voxel link
         voxel_indices = np.asarray(cc).astype(np.int64).ravel()
 
         # Geometry
@@ -215,7 +263,7 @@ def build_edges_from_mat(mat: dict) -> List[dict]:
         points = yxz_to_xyz(points_yxz)
         lengths2 = segment_lengths(points)
         length = float(lengths2.sum())
-
+    
         # Per-point diameters from radius
         radii = np.array(
             [radius_map.get(int(v), np.nan) for v in voxel_indices],
@@ -240,7 +288,54 @@ def build_edges_from_mat(mat: dict) -> List[dict]:
         n1, n2 = connected[matlab_label - 1]
         source = int(n1 - 1) if n1 > 0 else None
         target = int(n2 - 1) if n2 > 0 else None
+        
+        
+        # Special case: only 1 voxel link
+        if len(points) == 1 and n1 > 0 and n2 > 0:
+                count_single_voxel_links += 1
+                link_point = points[0]
+                node1_rec = nodes_by_label[int(n1)]
+                node2_rec = nodes_by_label[int(n2)]
+                if node1_rec is None or node2_rec is None:
+                    raise KeyError(
+                        f"Missing node record for connected node labels: n1={n1}, n2={n2}"
+                    )
+    
+                touch1 = find_touching_node_voxel_link_voxel(node1_rec["node_points"], link_point)
+                touch2 = find_touching_node_voxel_link_voxel(node2_rec["node_points"], link_point)
+    
+                points = np.vstack([touch1, link_point, touch2])
 
+                # to keep consistency with diameter calculation in the Paris graph, we keep the diameter of the nodes (as diam of node_cc) and of the voxel link
+                
+                diam_link = 2.0 * radii[0] if not np.isnan(radii[0]) else np.nan
+                diam1 = node1_rec["diameter"]
+                diam2 = node2_rec["diameter"]
+                diameters = np.array([diam1, diam_link, diam2], dtype=float)
+
+                if np.isclose(diam_link, diam1) or np.isclose(diam_link, diam2):
+                    count_single_voxel_links_diam_link_equals_node += 1
+    
+                lengths2 = segment_lengths(points)
+                length = float(lengths2.sum())            
+                print(
+                "1-voxel link",
+                "edge", matlab_label,
+                "n1", n1, "n2", n2,
+                "link_point", link_point.tolist(),
+                "touch1", touch1.tolist(),
+                "touch2", touch2.tolist(),
+                "points", points.tolist(),
+                "radii", radii.tolist(),
+                "diameters", diameters.tolist(),
+                "node1_diam", diam1,
+                "node2_diam", diam2,
+                "lengths2", lengths2.tolist(),
+                "length", length,
+            )
+    
+   
+        
         edge_rec = {
             "id": matlab_label - 1,
             "matlab_label": matlab_label,
@@ -260,7 +355,11 @@ def build_edges_from_mat(mat: dict) -> List[dict]:
             "radius": radius,
         }
         edges.append(edge_rec)
-
+    print("Count edges with 1 voxel link:", count_single_voxel_links)
+    print(
+        "Count 1-voxel links where link diameter equals one endpoint node diameter:",
+        count_single_voxel_links_diam_link_equals_node,
+    )
     return edges
 
 
@@ -292,8 +391,13 @@ def build_igraph_mvn1_style(nodes: List[dict], edges: List[dict]) -> ig.Graph:
     G.vs["node_points"] = [n["node_points"].tolist() for n in nodes]
     G.vs["voxel_indices"] = [n["voxel_indices"].tolist() for n in nodes]
     G.vs["n_voxels"] = [n["n_voxels"] for n in nodes]
+    G.vs["radius"] = [n["radius"] for n in nodes]
+    G.vs["diameter"] = [n["diameter"] for n in nodes]
+    G.vs["index"] = [n["id"] for n in nodes]
+    
 
-    # TODO: FALTA INDEX, ANNOTATION, DIAMETER, 
+    # TODO: ANNOTATION MISSING (in Ji they do it in a second step)
+    
     # -------------------------
     # Edge attributes
     # -------------------------
@@ -312,7 +416,10 @@ def build_igraph_mvn1_style(nodes: List[dict], edges: List[dict]) -> ig.Graph:
         e["connected_node_labels_matlab"] for e in valid_edges
     ]
     G.es["radius"] = [e["radius"] for e in valid_edges] # TODO: SHOULD I KEEP IT? IT'S REDUNDANT WITH DIAMETER, BUT MAYBE IT'S GOOD TO HAVE IT SEPARATE FOR EASE OF USE
-    # TODO: FALTA CONNECTIVITY, GEOM START Y END Y LENGTH STEPS? 
+    # connectivity simple: endpoints in igraph indexing
+    G.es["connectivity"] = [(e["source"], e["target"]) for e in valid_edges]
+    
+    # TODO: FALTA , GEOM START Y END Y LENGTH STEPS? 
 
     # -------------------------
     # Graph-level metadata
@@ -336,7 +443,7 @@ def convert_ji_mat_to_mvn1_graph(mat_path: str) -> Tuple[ig.Graph, List[dict], L
     """
     mat = load_ji_mat(mat_path)
     nodes = build_nodes_from_mat(mat)
-    edges = build_edges_from_mat(mat)
+    edges = build_edges_from_mat(mat, nodes)
     G = build_igraph_mvn1_style(nodes, edges)
 
     # optional graph-level metadata
@@ -377,6 +484,35 @@ def print_summary(G: ig.Graph) -> None:
         print("  n_diameters:", len(e["diameters"]))
 
 
+def graph_attributes_MVN(
+    G: ig.Graph,
+    keep_v: set,
+    keep_e: set,
+    keep_g: Optional[set] = None,
+) -> ig.Graph:
+    """
+    Return a copy of G keeping only the selected vertex, edge,
+    and optionally graph-level attributes.
+    """
+    H = G.copy()
+
+    # Vertex attributes
+    for attr in list(H.vs.attributes()):
+        if attr not in keep_v:
+            del H.vs[attr]
+
+    # Edge attributes
+    for attr in list(H.es.attributes()):
+        if attr not in keep_e:
+            del H.es[attr]
+
+    # Graph attributes
+    if keep_g is not None:
+        for attr in list(H.attributes()):
+            if attr not in keep_g:
+                del H[attr]
+
+    return H
 # ============================================================
 # Main
 # ============================================================
@@ -387,6 +523,16 @@ if __name__ == "__main__":
 
     G, nodes, edges, mat = convert_ji_mat_to_mvn1_graph(mat_path)
 
-    print_summary(G)
-    save_graph_pickle(G, out_path)
+    keep_v = {"coords", "index", "annotation", "diameter"}
+    keep_e = {
+        "connectivity", "nkind", "diameter", "diameters",
+        "length", "lengths2", "points"
+    }
+    keep_g = {"mask_size"}
+
+    G_pruned = graph_attributes_MVN(G, keep_v=keep_v, keep_e=keep_e, keep_g=keep_g)
+    #print_summary(G_pruned)
+    save_graph_pickle(G_pruned, out_path)
     print(f"\nSaved to: {out_path}")
+    
+

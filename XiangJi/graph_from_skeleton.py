@@ -157,8 +157,8 @@ class LinkStruct(ComponentStruct):
     #terminal_link_kinds:
     #    list of tuples describing the types of the link ends: ("node", "endpoint"), ("node", "node"), ("loop", "loop") etc.
     
-    link_length_euclidean :
-        Euclidean chain length computed from ordered voxel coordinates.
+    link_length_euclidean_points_seg: :
+        Euclidean chain length computed from ordered voxel coordinates (segments between consecutive voxels in the chain, tortuous "points").
         This is not used in the original MATLAB code, but seems useful to also store geometric length of link.
 
 
@@ -181,7 +181,7 @@ class LinkStruct(ComponentStruct):
     num_endpoint_per_link: np.ndarray = field(default_factory=lambda: np.array([], dtype=np.int64))  # how many endpoints does the link touch (0,1,2)
     #terminal_link_kinds: List[Tuple[str, str]] = field(default_factory=list) # stores topological type of link extrems (node, endpoint, isopoint). Nothing to do with nkind (A/V/C)
     #num_voxels_in_link: np.ndarray = field(default_factory=lambda: np.array([], dtype=np.int64)) # # Number of voxels in each link CC
-    link_length_euclidean: np.ndarray = field(default_factory=lambda: np.array([], dtype=float)) # Euclidean length of each link chain, computed from consecutive voxel coordinates.
+    link_length_euclidean_points_seg: np.ndarray = field(default_factory=lambda: np.array([], dtype=float)) # Euclidean length of each link chain, computed from consecutive voxel coordinates.
   
 
 @dataclass
@@ -805,7 +805,7 @@ def build_link_struct(chains: List[np.ndarray], coords: np.ndarray, n_total_voxe
         connected_endpoint_label=connected_endpoint_label,
         num_node_per_link=np.zeros(num_cc, dtype=np.int64),
         num_endpoint_per_link=num_endpoint_per_link,
-        link_length_euclidean=np.array([chain_euclidean_length(c, coords) for c in chains], dtype=float) if num_cc > 0 else np.array([], dtype=float),
+        link_length_euclidean_points_seg=np.array([chain_euclidean_length(c, coords) for c in chains], dtype=float) if num_cc > 0 else np.array([], dtype=float),
     )
 
 

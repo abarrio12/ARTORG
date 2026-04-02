@@ -38,7 +38,7 @@ def WriteOnFileVTP(filename, vertices_array, connectivity_array, point_data, cel
         if name == "pBC":
             data.text = " ".join(["{:10.15e}".format(p) if p is not None else "-1000" for p in data_array])
         else:
-            print(data_array)
+            #print(data_array)
             data.text = " ".join(["{:10.15e}".format(p) for p in data_array])
 
     # cell data
@@ -249,6 +249,16 @@ def write_vtp(graph, filename, tortuous=True, verbose=False):
                              (firstIndex + n_points - 3, node_1)]
 
             connectivity_array += new_cells
+            
+            if len(lengths2) != len(new_cells):
+                print("Mismatch!")
+                print("edge index:", edge_index)
+                print("len(ps):", len(ps))
+                print("len(new_cells):", len(new_cells))
+                print("len(lengths2):", len(lengths2))
+                print("len(diameters):", len(diameters) if diameters is not None else None)
+                
+                
             num_new_segs = len(new_cells)
             
             radius_array += [R, ] * num_new_segs
@@ -301,13 +311,13 @@ def write_vtp(graph, filename, tortuous=True, verbose=False):
             },
         )
 # Load a graph from a pickle file
-input_igraph_pkl_path = "/home/admin/Ana/MicroBrain/output/um_gaia/formatted/formatted2/graph_18_OutGeom_um_formatted_Scut1.pkl"
+input_igraph_pkl_path = r"C:\Users\Ana\OneDrive\Escritorio\ARTORG\XiangJi\ML20180815_240_c5o1_578_mvn1.pkl"
 
 graph = igraph.Graph.Read_Pickle(input_igraph_pkl_path)
 #print(graph.summary())
 
 
-output_path = "/home/admin/Ana/MicroBrain/output/vtp/formatted/"
+output_path = "C:\\Users\\Ana\\OneDrive\\Escritorio\\ARTORG\\XiangJi\\"
 
-write_vtp(graph, output_path+'graph_18_OutGeom_um_formatted_Scut1_tortuous.vtp', tortuous=True)
-write_vtp(graph, output_path+'graph_18_OutGeom_um_formatted_Scut1_straigth.vtp', tortuous=False)
+write_vtp(graph, output_path+'ML20180815_240_c5o1_578_mvn1_tortuous.vtp', tortuous=True)
+#write_vtp(graph, output_path+'ML20180815_240_c5o1_578_mvn1_straight.vtp', tortuous=False)
