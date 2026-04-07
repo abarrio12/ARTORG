@@ -311,7 +311,7 @@ def write_vtp(graph, filename, tortuous=True, verbose=False):
             },
         )
 # Load a graph from a pickle file
-input_igraph_pkl_path = r"C:\Users\Ana\OneDrive\Escritorio\ARTORG\XiangJi\ML20180815_240_c5o1_578_mvn1.pkl"
+input_igraph_pkl_path = r"C:\Users\Ana\OneDrive\Escritorio\ARTORG\XiangJi\ML20180815_240_c5o1_578_mvn1_1.pkl"
 
 graph = igraph.Graph.Read_Pickle(input_igraph_pkl_path)
 #print(graph.summary())
@@ -319,5 +319,5 @@ graph = igraph.Graph.Read_Pickle(input_igraph_pkl_path)
 
 output_path = "C:\\Users\\Ana\\OneDrive\\Escritorio\\ARTORG\\XiangJi\\"
 
-write_vtp(graph, output_path+'ML20180815_240_c5o1_578_mvn1_tortuous.vtp', tortuous=True)
-#write_vtp(graph, output_path+'ML20180815_240_c5o1_578_mvn1_straight.vtp', tortuous=False)
+#write_vtp(graph, output_path+'ML20180815_240_c5o1_578_mvn1_tortuous.vtp', tortuous=True)
+write_vtp(graph, output_path+'ML20180815_240_c5o1_578_mvn1_1_straight.vtp', tortuous=False)

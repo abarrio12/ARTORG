@@ -197,8 +197,7 @@ def build_nodes_from_mat(mat: dict) -> List[dict]:
     node_cc = np.asarray(mat["node"].cc_ind).squeeze()
     
     radius_map = sparse_vector_to_dict(mat["radius"])
-    label_map = sparse_vector_to_dict(mat["label"])
-    
+
     nodes = []
 
     for matlab_label, cc in enumerate(node_cc, start=1):
@@ -211,16 +210,6 @@ def build_nodes_from_mat(mat: dict) -> List[dict]:
         radius_node = np.nanmedian(radii_node) if np.any(~np.isnan(radii_node)) else np.nan
         diameter_node = 2.0 * radius_node if not np.isnan(radius_node) else np.nan
         
-    
-        # Vessel type aggregation
-        # Ji has the nkind stores per voxel in the same way as radius, so we can do majority vote among the voxels of the node to assign a single nkind per node.
-        voxel_types = np.array(
-            [label_map.get(int(v), np.nan) for v in voxel_indices],
-            dtype=float
-        )
-        nkind_ji = majority_vote(voxel_types.tolist()) if len(label_map) > 0 else None
-        nkind = JI_TO_MVN_NKIND.get(nkind_ji, None) if nkind_ji is not None else None
-        
         node_rec = {
             "id": matlab_label - 1,              # Python/igraph vertex id
             "matlab_label": matlab_label,        # original Ji label
@@ -230,7 +219,7 @@ def build_nodes_from_mat(mat: dict) -> List[dict]:
             "n_voxels": len(voxel_indices),
             "radius": radius_node,
             "diameter": diameter_node,
-            "nkind": nkind,
+            
         }
         nodes.append(node_rec)
 
@@ -406,7 +395,7 @@ def build_igraph_mvn1_style(nodes: List[dict], edges: List[dict]) -> ig.Graph:
     G.vs["radius"] = [n["radius"] for n in nodes]
     G.vs["diameter"] = [n["diameter"] for n in nodes]
     G.vs["index"] = [n["id"] for n in nodes]
-    G.vs["nkind"] = [n["nkind"] for n in nodes]
+    
     
 
     # TODO: ANNOTATION MISSING (in Ji they do it in a second step)
@@ -536,7 +525,7 @@ if __name__ == "__main__":
 
     G, nodes, edges, mat = convert_ji_mat_to_mvn1_graph(mat_path)
 
-    keep_v = {"coords", "index", "annotation", "diameter", "nkind"}
+    keep_v = {"coords", "index", "annotation", "diameter"}
     keep_e = {
         "connectivity", "nkind", "diameter", "diameters",
         "length", "lengths2", "points"
