@@ -1,7 +1,21 @@
-# FROM MAT TO PKL 
+# FROM .MAT TO .PKL 
 
-# important: explain that the radii is per voxel and all voxels have their own radii 
-
+# Notes on Ji graph coordinates and voxel scaling:
+# - The graph coordinates in the shared Ji/Kleinfeld vessel graphs are stored in VOXELS.
+# - The centerline position was recorded at 1 µm isotropic resolution before any scale correction.
+# - Therefore, in the sample graph 1 VOXEL is treated as 1 µm.
+# - Calibration measurements in the METHOD section of the paper indicate the brains shrank by 1/1.048 in each dimension after fixation.
+# - The third brain, ML20200201, shrank further by 1/1.0926 along each dimension due to extra delipidation.
+# - These shrinkages are not included in the shared vessel graphs; the graph remains in raw voxel units.
+#
+# Ji graph structure:
+# - Ji stores node and link connected components at the voxel level.
+# - A node is built from one or more node voxels grouped by a connected component.
+# - A link is built from one or more link voxels along a vessel segment.
+# - Connectivity is defined by voxel labels: node records know which links touch them and link records know which nodes they connect.
+# - 26-neighborhood connectivity in 3D is used to build these connected components.
+# - A node may contain many voxel elements, while a link may sometimes consist of a single voxel (special case).
+# - Radii are stored per voxel in a sparse vector, so every voxel has its own radius value.
 
 import scipy.io
 import numpy as np
@@ -188,10 +202,15 @@ def build_nodes_from_mat(mat: dict) -> List[dict]:
     """
     Build intermediate node records from Ji's MATLAB graph.
 
+    Ji nodes are formed from connected components of node voxels.
+    Each node CC may contain multiple voxel indices, and we store both the voxel-level
+    coordinates and a representative centroid position for the graph vertex.
+
     Returns
     -------
     nodes : list of dict
         One dict per node CC.
+        
     """
     mask_size = mat["num"].mask_size
     node_cc = np.asarray(mat["node"].cc_ind).squeeze()
@@ -234,6 +253,11 @@ def build_edges_from_mat(mat: dict, nodes: List[dict] ) -> List[dict]:
     """
     Build intermediate edge records from Ji's MATLAB graph.
 
+    Ji links are formed from connected components of link voxels.
+    Each link voxel has its own radius value in the sparse radius map, so the
+    per-point radii/diameters are preserved and then summarized for the edge.
+    Some link components can be a single voxel, which is handled as a special case.
+
     Edge style is adapted to MVN1 / Paris style:
     - points
     - lengths2
@@ -241,6 +265,11 @@ def build_edges_from_mat(mat: dict, nodes: List[dict] ) -> List[dict]:
     - diameters
     - diameter
     - nkind
+    
+    Returns
+    -------
+    edges: list of dict 
+        One dict per link CC
     """
     mask_size = mat["num"].mask_size
     link_cc = np.asarray(mat["link"].cc_ind).squeeze()
