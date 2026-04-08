@@ -2,6 +2,7 @@
 Code for visualizing annotated regions in Paraview (JSON version)
 Updated to use ABA_annotation_last.json instead of deprecated CSV
 Ana Barrio 2025
+Updated: 8 April 26
 """
 
 '''
@@ -19,6 +20,9 @@ Difference with previous CSV-based code:
 No need for parent_id, the node of the tree = given_name is already the parent. 
 - We get descendants directly from the JSON structure  --> runs only through the given node and its children recursively
 - We use the "id" field from JSON for annotation matching
+- Be aware of how deep you want to go in the hierarchy (degree of separation) --> we can set a degree limit to avoid including too many irrelevant regions
+- This code stores the extracted area in vtp format in the selected folder as "{given_name}_extracted.vtp"
+- This version mantains the attributes from the original data
 '''
 
 
@@ -113,7 +117,7 @@ def selecting_points_from_json(descendants, given_name, annotation_array, degree
 
 # ========================== RUN FOR ANY REGION =============================
 #given_name = "Hypothalamus"   # change this if needed
-given_name = "Somatomotor areas"   
+given_name = "Isocortex"   
 #given_name = "Hippocampal region"
 
 region_node = find_node_by_name(root, given_name)
@@ -133,18 +137,46 @@ data_np = servermanager.Fetch(data)
 annotation_array = data_np.GetPointData().GetArray("annotation")
 
 points_to_keep = selecting_points_from_json(
-    descendants, given_name, annotation_array, degree_level=2
+    descendants, given_name, annotation_array, degree_level=10
 )
 
 # Convert to ParaView ID selection format
 flat_selection_list = []
+
 for pid in points_to_keep:
     flat_selection_list.append(0)   # Process ID
     flat_selection_list.append(pid) # Actual point ID
 
-SelectIDs(IDs=flat_selection_list, FieldType='POINT', Source=data)
 
-extract_selection = ExtractSelection()
-Show(extract_selection)
-Render()
-ClearSelection()
+#SelectIDs(IDs=flat_selection_list, FieldType='POINT', Source=data) ---> uncomment if not interested in cellData
+
+# We also want to include the cells that contain these points, so we set ContainingCells=True
+SelectIDs(
+    IDs=flat_selection_list,
+    FieldType='POINT',
+    ContainingCells=True,
+    Source=data
+)
+
+
+# Saves as .vtk file (default of ExtractSelection) 
+
+#extract_selection = ExtractSelection()
+#Show(extract_selection)
+#Render()
+#ClearSelection()
+#output_path = f"/home/admin/Ana/MicroBrain/whole brain/Extract Area Annotated from graph Brain/{given_name}_extracted.vtp"
+#SaveData(output_path, proxy=extract_selection)
+#print("Saved:", output_path)GetDataInformation
+# ---------------------------------------------
+
+
+# This saves the extracted region as a .vtp file
+extract_selection = ExtractSelection(Input=data)
+extract_selection.UpdatePipeline()
+
+extract_surface = ExtractSurface(Input=extract_selection)
+extract_surface.UpdatePipeline()
+
+output_path = f"/home/admin/Ana/MicroBrain/whole brain/Extract Area Annotated from graph Brain/{given_name}_extracted.vtp"
+SaveData(output_path, proxy=extract_surface)
