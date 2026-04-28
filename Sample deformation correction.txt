@@ -1,0 +1,14 @@
+Sample deformation correction
+----------------------------------
+Sample deformation was quantified by comparing the vascular images in different steps of the sample preparation process with the
+in vivo images. In Brain2, part of the vasculatures in somatosensory cortex was imaged in vivo and right after perfusion before the
+brain wasextracted.Thevesselcenterlines inpost-perfusionimageswerealignedtothevesselcenterlinevoxelsintheinvivoimages
+bysimilarity transformation to quantify the scale changes duringperfusion.After wholebrainvasculature imagingandreconstruction,
+the final vessel centerlines were registered to the post-perfusion vessel skeleton by Affine transformation. Sample deformation in
+three-dimensions was quantify by QR decomposition of the Affine transformation matrix. A very uniform sample shrinkages was
+found in three orthogonal directions and therefore their geometric average (1.051) was applied to correct the length scales. (Fig
+ure S3). To further quantify the stability of the shrinkage, the same sample preparation procedures were applied to the brains
+used for vascular radius calibration experiments. For ten 180 mm3180 mm3400 mm volumes in one brain, a linear scaling factor of
+1.048 ± 0.007 was found. The extra sample deformation due to the delipidation process applied to Brain 3 was quantified by regis
+tering its whole brain image stack to the whole brain image of Brain 1 at 16 mm isotropic resolution using similarity transformation in
+MATLAB. The resulting linear scaling factor of 1.0926 was applied to correct the length scales.

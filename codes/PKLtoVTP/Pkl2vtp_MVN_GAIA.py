@@ -311,13 +311,13 @@ def write_vtp(graph, filename, tortuous=True, verbose=False):
             },
         )
 # Load a graph from a pickle file
-input_igraph_pkl_path = r"C:\Users\Ana\OneDrive\Escritorio\ARTORG\XiangJi\ML20180815_240_c5o1_578_mvn1_1.pkl"
+input_igraph_pkl_path = "/storage/homefs/ab25c720/MicroBrain/XiangJi/WholeBrain_ML_2018_08_15_whole_brain_graph_mvn1_correction.pkl"
 
 graph = igraph.Graph.Read_Pickle(input_igraph_pkl_path)
 #print(graph.summary())
 
 
-output_path = "C:\\Users\\Ana\\OneDrive\\Escritorio\\ARTORG\\XiangJi\\"
+output_path = "/storage/homefs/ab25c720/MicroBrain/XiangJi/WholeBrain_ML_2018_08_15_whole_brain_graph_mvn1_correction.vtp"
 
 #write_vtp(graph, output_path+'ML20180815_240_c5o1_578_mvn1_tortuous.vtp', tortuous=True)
-write_vtp(graph, output_path+'ML20180815_240_c5o1_578_mvn1_1_straight.vtp', tortuous=False)
+write_vtp(graph, output_path+'WholeBrain_ML_2018_08_15_whole_brain_graph_mvn1_correction.vtp', tortuous=False)

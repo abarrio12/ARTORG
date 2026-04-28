@@ -121,14 +121,14 @@ def print_edge_debug_formatted_with_indices(pkl_path, ei=0):
 
     print("\n--- Structural Alignment ---")
     if n_pts - 1 == n_seg:
-        print("✅ SUCCESS: Segment count (N-1) matches Point count (N).")
+        print("SUCCESS: Segment count (N-1) matches Point count (N).")
     else:
-        print(f"❌ ERROR: Mismatch! Points={n_pts}, Segments={n_seg}. Should be {n_pts-1}.")
+        print(f"ERROR: Mismatch! Points={n_pts}, Segments={n_seg}. Should be {n_pts-1}.")
 
     if n_pts == n_dia:
-        print("✅ SUCCESS: Diameter count matches Point count.")
+        print("SUCCESS: Diameter count matches Point count.")
     else:
-        print(f"❌ ERROR: Mismatch! Points={n_pts}, Diameters={n_dia}.")
+        print(f"ERROR: Mismatch! Points={n_pts}, Diameters={n_dia}.")
 
     print("\n--- Local Index Trace (First 3 steps) ---")
     # This shows how point i and point i+1 create segment i
