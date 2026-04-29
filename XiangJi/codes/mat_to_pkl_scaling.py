@@ -3,18 +3,19 @@
 # Notes on Ji graph coordinates and voxel scaling:
 # - The graph coordinates in the shared Ji/Kleinfeld vessel graphs are stored in VOXELS.
 # - The centerline position was recorded at 1 µm isotropic resolution before any scale correction.
-# - Therefore, in the sample graph 1 VOXEL is treated as 1 µm.
-# - Calibration measurements in the METHOD section of the paper indicate the brains shrank by 1/1.048 in each dimension after fixation.
-# - The third brain, ML20200201, shrank further by 1/1.0926 along each dimension due to extra delipidation.
-# - These shrinkages are not included in the shared vessel graphs; the graph remains in raw voxel units.
-#
+# - In the shared graph from Ji, coordinates are stored in raw voxel units.
+# - For ML20180815, 1 voxel corresponds to 1 µm in the recorded centerline grid,
+#   but in vivo lengths should be recovered by multiplying geometric quantities by 1.051
+#   because the fixed brain is isotropically shrunken by 1/1.051.
+# - Radii/diameters are kept unchanged if they have already been calibrated to in vivo values (radii >= 1.8 um).
+
 # Ji graph structure:
 # - Ji stores node and link connected components at the voxel level.
 # - A node is built from one or more node voxels grouped by a connected component.
 # - A link is built from one or more link voxels along a vessel segment.
 # - Connectivity is defined by voxel labels: node records know which links touch them and link records know which nodes they connect.
 # - 26-neighborhood connectivity in 3D is used to build these connected components.
-# - A node may contain many voxel elements, while a link may sometimes consist of a single voxel (special case).
+# - A node may contain many voxel elements, while a link may sometimes consist of a single voxel.
 # - Radii are stored per voxel in a sparse vector, so every voxel has its own radius value.
 
 import numpy as np
@@ -23,19 +24,16 @@ from collections import Counter
 from typing import Dict, List, Optional, Tuple
 
 import igraph as ig
+import scipy.io
 import scipy.sparse
 import mat73
 
-
-# ============================================================
-# Debug / inspection
-# ============================================================
 
 DEBUG_PRINT_MAT_INFO = True
 
 
 # In Ji 1 = capillary, 2 = artery, 3 = vein.
-# In MVN1 we have 1=cap, 2=art, 3=vein, so we remap.
+# In MVN1 we use 4=capillary, 2=artery, 3=vein.
 JI_TO_MVN_NKIND = {
     1: 4,  # capillary
     2: 2,  # artery
@@ -47,30 +45,83 @@ JI_TO_MVN_NKIND = {
 # IO
 # ============================================================
 
-def load_ji_mat(mat_path: str) -> dict:
+def load_ji_mat(mat_path: str) -> Tuple[dict, str]:
     """
-    Load Ji/Kleinfeld MATLAB spatial graph from MATLAB v7.3 file.
+    Load Ji/Kleinfeld MATLAB spatial graph, supporting both:
+    - pre-v7.3 MAT files via scipy.io.loadmat
+    - v7.3 MAT files via mat73
+
+    Returns
+    -------
+    mat : dict
+    loader : str
+        "scipy" or "mat73"
     """
-    mat = mat73.loadmat(mat_path)
+    try:
+        mat = scipy.io.loadmat(
+            mat_path,
+            struct_as_record=False,
+            squeeze_me=True,
+        )
+        loader = "scipy"
+    except NotImplementedError:
+        mat = mat73.loadmat(mat_path)
+        loader = "mat73"
+    except ValueError:
+        mat = mat73.loadmat(mat_path)
+        loader = "mat73"
 
     if DEBUG_PRINT_MAT_INFO:
+        print(f"Loaded with: {loader}")
         print(mat.keys())
 
-        for k in [
+        keys_to_check = [
             "num", "node", "link", "endpoint", "isopoint",
             "radius", "label", "info", "stat_data", "isoloop"
-        ]:
+        ]
+        for k in keys_to_check:
             if k in mat:
                 print(f"Type of mat['{k}']: {type(mat[k])}")
             else:
-                print(f"Key '{k}' no existe en mat")
+                print(f"Key '{k}' does not exist in mat")
 
-        if "node" in mat and isinstance(mat["node"], dict):
-            print("node keys:", mat["node"].keys())
-        if "link" in mat and isinstance(mat["link"], dict):
-            print("link keys:", mat["link"].keys())
+    return mat, loader
 
-    return mat
+
+# ============================================================
+# Access helpers for scipy vs mat73
+# ============================================================
+
+def get_mask_size(mat: dict, loader: str):
+    if loader == "scipy":
+        return mat["num"].mask_size
+    elif loader == "mat73":
+        return mat["num"]["mask_size"]
+    raise ValueError(f"Unknown loader: {loader}")
+
+
+def get_node_cc(mat: dict, loader: str):
+    if loader == "scipy":
+        return np.asarray(mat["node"].cc_ind).squeeze()
+    elif loader == "mat73":
+        return np.asarray(mat["node"]["cc_ind"], dtype=object).squeeze()
+    raise ValueError(f"Unknown loader: {loader}")
+
+
+def get_link_cc(mat: dict, loader: str):
+    if loader == "scipy":
+        return np.asarray(mat["link"].cc_ind).squeeze()
+    elif loader == "mat73":
+        return np.asarray(mat["link"]["cc_ind"], dtype=object).squeeze()
+    raise ValueError(f"Unknown loader: {loader}")
+
+
+def get_connected_node_labels(mat: dict, loader: str):
+    if loader == "scipy":
+        return np.asarray(mat["link"].connected_node_label).astype(int)
+    elif loader == "mat73":
+        return np.asarray(mat["link"]["connected_node_label"]).astype(int)
+    raise ValueError(f"Unknown loader: {loader}")
 
 
 # ============================================================
@@ -105,54 +156,26 @@ def lin_to_coordinates(idx, mask_size) -> np.ndarray:
     return coords
 
 
-
-def segment_lengths(points: np.ndarray) -> np.ndarray:
+def segment_lengths_and_length(points: np.ndarray, voxel_size: float = 1.0):
     """
-    Length of each consecutive segment along an ordered polyline.
-    "lengths2" MVN1 style: per-segment lengths.
+    Compute center-to-center segment lengths and connected-component length
+    following Ji/Guo convention:
+        cc_length = sum(segment lengths) + voxel_size
+
+    If there is only one point:
+        cc_length = voxel_size
     """
     points = np.asarray(points, dtype=float)
 
-    if len(points) < 2:
-        return np.array([], dtype=float)
+    if len(points) == 0:
+        return np.array([], dtype=float), 0.0
 
-    diffs = np.diff(points, axis=0)
-    return np.linalg.norm(diffs, axis=1)
+    if len(points) == 1:
+        return np.array([], dtype=float), float(voxel_size)
 
-
-def are_26_neighbors(a: np.ndarray, b: np.ndarray) -> bool:
-    """
-    Check if two voxels are 26-connected neighbors in 3D.
-    """
-    a = np.asarray(a, dtype=int)
-    b = np.asarray(b, dtype=int)
-    d = np.abs(a - b)
-    return np.all(d <= 1) and np.any(d > 0)
-
-
-def find_touching_node_voxel_link_voxel(node_points: np.ndarray, link_point: np.ndarray) -> np.ndarray:
-    """
-    Find a node voxel that is a 26-neighbor of the link voxel.
-    Useful for the special case where a link connected component has only one voxel.
-    """
-    node_points = np.asarray(node_points, dtype=int)
-    link_point = np.asarray(link_point, dtype=int)
-
-    candidates = [p for p in node_points if are_26_neighbors(p, link_point)]
-
-    if len(candidates) == 0:
-        raise ValueError(
-            f"No touching node voxel found for link_point={link_point.tolist()}"
-        )
-
-    if len(candidates) == 1:
-        return np.asarray(candidates[0], dtype=float)
-
-    dists = [
-        np.linalg.norm(np.asarray(p, dtype=float) - link_point.astype(float))
-        for p in candidates
-    ]
-    return np.asarray(candidates[int(np.argmin(dists))], dtype=float)
+    lengths2 = np.linalg.norm(np.diff(points, axis=0), axis=1)
+    length = float(lengths2.sum() + voxel_size)
+    return lengths2, length
 
 
 def sparse_vector_to_dict(sparse_vec) -> Dict[int, float]:
@@ -176,10 +199,12 @@ def sparse_vector_to_dict(sparse_vec) -> Dict[int, float]:
 
     if arr.ndim == 2 and 1 in arr.shape:
         arr = arr.ravel()
+
+    if arr.ndim == 1:
         return {
             int(i + 1): float(v)
             for i, v in enumerate(arr)
-            if not np.isnan(v) and v != 0
+            if np.isfinite(v) and v != 0
         }
 
     raise TypeError(
@@ -195,16 +220,22 @@ def majority_vote(values: List[int]) -> Optional[int]:
     return Counter(vals).most_common(1)[0][0]
 
 
+
+
 # ============================================================
 # Node extraction
 # ============================================================
 
-def build_nodes_from_mat(mat: dict) -> List[dict]:
+def build_nodes_from_mat(mat: dict, loader: str) -> List[dict]:
     """
     Build intermediate node records from Ji's MATLAB graph.
+
+    Ji nodes are formed from connected components of node voxels.
+    Each node CC may contain multiple voxel indices, and we store both the voxel-level
+    coordinates and a representative centroid position for the graph vertex.
     """
-    mask_size = mat["num"]["mask_size"]
-    node_cc = np.asarray(mat["node"]["cc_ind"], dtype=object).squeeze()
+    mask_size = get_mask_size(mat, loader)
+    node_cc = get_node_cc(mat, loader)
 
     radius_map = sparse_vector_to_dict(mat["radius"])
 
@@ -239,97 +270,72 @@ def build_nodes_from_mat(mat: dict) -> List[dict]:
 # Edge extraction
 # ============================================================
 
-def build_edges_from_mat(mat: dict, nodes: List[dict]) -> List[dict]:
+def build_edges_from_mat(mat: dict, nodes: List[dict], loader: str) -> List[dict]:
     """
     Build intermediate edge records from Ji's MATLAB graph.
+
+    Ji links are formed from connected components of link voxels.
+    Each link voxel has its own radius value in the sparse radius map, so the
+    per-point radii/diameters are preserved and then summarized for the edge.
+
+    Length follows Ji convention:
+    - 1-voxel CC -> length = voxel_size
+    - N-voxel CC -> length = sum(center-to-center distances) + voxel_size
     """
-    mask_size = mat["num"]["mask_size"]
-    link_cc = np.asarray(mat["link"]["cc_ind"], dtype=object).squeeze()
-    connected = np.asarray(mat["link"]["connected_node_label"]).astype(int)
+    mask_size = get_mask_size(mat, loader)
+    link_cc = get_link_cc(mat, loader)
+    connected = get_connected_node_labels(mat, loader)
 
     radius_map = sparse_vector_to_dict(mat["radius"])
     label_map = sparse_vector_to_dict(mat["label"]) if "label" in mat else {}
-    nodes_by_label = {n["matlab_label"]: n for n in nodes}
 
+    VOXEL_SIZE_LENGTH = 1.0
     edges = []
-    count_single_voxel_links = 0
-    count_single_voxel_links_diam_link_equals_node = 0
 
+    print("connected_node_label shape:", connected.shape)
+    
     for matlab_label, cc in enumerate(link_cc, start=1):
         voxel_indices = np.asarray(cc).astype(np.int64).ravel()
-
-        # Geometry
+    
+        # Geometry from link voxels only (Ji convention)
         points_yxz = lin_to_coordinates(voxel_indices, mask_size)
         points = yxz_to_xyz(points_yxz)
-        lengths2 = segment_lengths(points)
-        length = float(lengths2.sum())
 
-        # Radii / diameters
+        lengths2, length = segment_lengths_and_length(
+            points,
+            voxel_size=VOXEL_SIZE_LENGTH,
+        )
+        
+        # Per-point diameters from sparse radius map
         radii = np.array(
             [radius_map.get(int(v), np.nan) for v in voxel_indices],
             dtype=float
         )
         diameters = 2.0 * radii
-
+        
+        # Ji edge summary radius: median over edge voxels
         radius = np.nanmedian(radii) if np.any(~np.isnan(radii)) else np.nan
         diameter = 2.0 * radius if not np.isnan(radius) else np.nan
 
-        # Vessel types
+        # Vessel type aggregation from voxel labels
         voxel_types = np.array(
             [label_map.get(int(v), np.nan) for v in voxel_indices],
             dtype=float
         )
         nkind_ji = majority_vote(voxel_types.tolist()) if len(label_map) > 0 else None
         nkind = JI_TO_MVN_NKIND.get(nkind_ji, None) if nkind_ji is not None else None
-
+        
         # Topology
-        n1, n2 = connected[matlab_label - 1]
+        if connected.shape[1] == 2:
+            n1, n2 = connected[matlab_label - 1]
+        elif connected.shape[0] == 2:
+            n1, n2 = connected[:, matlab_label - 1]
+        else:
+            raise ValueError(f"Unexpected connected_node_label shape: {connected.shape}")
+
         source = int(n1 - 1) if n1 > 0 else None
         target = int(n2 - 1) if n2 > 0 else None
-
-        # Special case: only 1 voxel link
-        if len(points) == 1 and n1 > 0 and n2 > 0:
-            count_single_voxel_links += 1
-            link_point = points[0]
-
-            node1_rec = nodes_by_label.get(int(n1))
-            node2_rec = nodes_by_label.get(int(n2))
-            if node1_rec is None or node2_rec is None:
-                raise KeyError(
-                    f"Missing node record for connected node labels: n1={n1}, n2={n2}"
-                )
-
-            touch1 = find_touching_node_voxel_link_voxel(node1_rec["node_points"], link_point)
-            touch2 = find_touching_node_voxel_link_voxel(node2_rec["node_points"], link_point)
-
-            points = np.vstack([touch1, link_point, touch2])
-
-            diam_link = 2.0 * radii[0] if not np.isnan(radii[0]) else np.nan
-            diam1 = node1_rec["diameter"]
-            diam2 = node2_rec["diameter"]
-            diameters = np.array([diam1, diam_link, diam2], dtype=float)
-
-            if np.isclose(diam_link, diam1) or np.isclose(diam_link, diam2):
-                count_single_voxel_links_diam_link_equals_node += 1
-
-            lengths2 = segment_lengths(points)
-            length = float(lengths2.sum())
-
-            print(
-                "1-voxel link",
-                "edge", matlab_label,
-                "n1", n1, "n2", n2,
-                "link_point", link_point.tolist(),
-                "touch1", touch1.tolist(),
-                "touch2", touch2.tolist(),
-                "points", points.tolist(),
-                "radii", radii.tolist(),
-                "diameters", diameters.tolist(),
-                "node1_diam", diam1,
-                "node2_diam", diam2,
-                "lengths2", lengths2.tolist(),
-                "length", length,
-            )
+    
 
         edge_rec = {
             "id": matlab_label - 1,
@@ -351,11 +357,6 @@ def build_edges_from_mat(mat: dict, nodes: List[dict]) -> List[dict]:
         }
         edges.append(edge_rec)
 
-    print("Count edges with 1 voxel link:", count_single_voxel_links)
-    print(
-        "Count 1-voxel links where link diameter equals one endpoint node diameter:",
-        count_single_voxel_links_diam_link_equals_node,
-    )
     return edges
 
 
@@ -366,6 +367,11 @@ def build_edges_from_mat(mat: dict, nodes: List[dict]) -> List[dict]:
 def build_igraph_mvn1_style(nodes: List[dict], edges: List[dict]) -> ig.Graph:
     """
     Build igraph.Graph in MVN1 / Paris-like format.
+
+    Notes
+    -----
+    Only edges with two valid node endpoints are added to the graph.
+    Open links (with a 0 endpoint in MATLAB) are skipped for now.
     """
     valid_edges = [e for e in edges if e["source"] is not None and e["target"] is not None]
     dropped_edges = [e for e in edges if e["source"] is None or e["target"] is None]
@@ -383,7 +389,9 @@ def build_igraph_mvn1_style(nodes: List[dict], edges: List[dict]) -> ig.Graph:
     G.vs["radius"] = [n["radius"] for n in nodes]
     G.vs["diameter"] = [n["diameter"] for n in nodes]
     G.vs["index"] = [n["id"] for n in nodes]
-
+    
+    # TODO: ANNOTATION MISSING (in Ji they do it in a second step)
+    
     # Edge attributes
     G.es["matlab_label"] = [e["matlab_label"] for e in valid_edges]
     G.es["points"] = [e["points"].tolist() for e in valid_edges]
@@ -399,8 +407,8 @@ def build_igraph_mvn1_style(nodes: List[dict], edges: List[dict]) -> ig.Graph:
     G.es["connected_node_labels_matlab"] = [
         e["connected_node_labels_matlab"] for e in valid_edges
     ]
-    G.es["radius"] = [e["radius"] for e in valid_edges]
-    G.es["connectivity"] = [(e["source"], e["target"]) for e in valid_edges]
+    G.es["radius"] = [e["radius"] for e in valid_edges]  # TODO: SHOULD I KEEP IT? IT'S REDUNDANT WITH DIAMETER, BUT MAYBE IT'S GOOD TO HAVE IT SEPARATE FOR EASY OF USE
+    G.es["connectivity"] = [(e["source"], e["target"]) for e in valid_edges] # connectivity simple: endpoints in igraph indexing
 
     # Graph-level metadata
     G["n_total_edges_in_mat"] = len(edges)
@@ -419,12 +427,13 @@ def convert_ji_mat_to_mvn1_graph(mat_path: str) -> Tuple[ig.Graph, List[dict], L
     Full pipeline:
     Ji MAT -> intermediate nodes/edges -> igraph
     """
-    mat = load_ji_mat(mat_path)
-    nodes = build_nodes_from_mat(mat)
-    edges = build_edges_from_mat(mat, nodes)
+    mat, loader = load_ji_mat(mat_path)
+    nodes = build_nodes_from_mat(mat, loader)
+    edges = build_edges_from_mat(mat, nodes, loader)
     G = build_igraph_mvn1_style(nodes, edges)
 
-    G["mask_size"] = tuple(np.asarray(mat["num"]["mask_size"]).astype(int).ravel().tolist())
+    G["mask_size"] = tuple(np.asarray(get_mask_size(mat, loader)).astype(int).ravel().tolist())
+    G["mat_loader"] = loader
 
     return G, nodes, edges, mat
 
@@ -444,6 +453,8 @@ def print_summary(G: ig.Graph) -> None:
     print("=" * 60)
     print(G.summary())
     print("mask_size:", G["mask_size"])
+    if "mat_loader" in G.attributes():
+        print("mat_loader:", G["mat_loader"])
     print("n_total_edges_in_mat:", G["n_total_edges_in_mat"])
     print("n_valid_edges_added:", G["n_valid_edges_added"])
     print("n_dropped_open_links:", G["n_dropped_open_links"])
@@ -489,13 +500,128 @@ def graph_attributes_MVN(
     return H
 
 
+def rescale_graph_lengths_inplace(G: ig.Graph, scale: float) -> None:
+    if "coords" in G.vs.attributes():
+        G.vs["coords"] = [
+            (np.asarray(c, dtype=float) * scale).tolist()
+            for c in G.vs["coords"]
+        ]
+
+    if "node_points" in G.vs.attributes():
+        G.vs["node_points"] = [
+            (np.asarray(p, dtype=float) * scale).tolist()
+            for p in G.vs["node_points"]
+        ]
+
+    if "points" in G.es.attributes():
+        G.es["points"] = [
+            (np.asarray(p, dtype=float) * scale).tolist()
+            for p in G.es["points"]
+        ]
+
+    if "lengths2" in G.es.attributes():
+        G.es["lengths2"] = [
+            (np.asarray(l, dtype=float) * scale).tolist()
+            for l in G.es["lengths2"]
+        ]
+
+    if "length" in G.es.attributes():
+        G.es["length"] = [
+            float(l) * scale
+            for l in G.es["length"]
+        ]
+
+
+def sanity_check_rescaling(G_raw, G_scaled, scale=1.051, n_edges_check=10, n_nodes_check=10):
+    print("=== EDGE LENGTH RATIO CHECK ===")
+    raw_len = np.asarray(G_raw.es["length"], dtype=float)
+    sca_len = np.asarray(G_scaled.es["length"], dtype=float)
+    ratios = sca_len / raw_len
+    finite = np.isfinite(ratios) & (raw_len > 0)
+    print("mean length ratio:", ratios[finite].mean())
+    print("expected ratio   :", scale)
+    print("ok?", np.allclose(ratios[finite], scale, atol=1e-8, rtol=1e-6))
+
+    print("\n=== LENGTH = SUM(lengths2) + VOXEL_SIZE CHECK ===")
+    ok_sum = []
+    voxel_size_scaled = scale
+    for i in range(min(n_edges_check, G_scaled.ecount())):
+        l = float(G_scaled.es[i]["length"])
+        l2 = np.asarray(G_scaled.es[i]["lengths2"], dtype=float).sum()
+        npts = len(G_scaled.es[i]["points"])
+
+        if npts == 0:
+            ok_sum.append(np.isclose(l, 0.0))
+        elif npts == 1:
+            ok_sum.append(np.isclose(l, voxel_size_scaled))
+        else:
+            ok_sum.append(np.isclose(l, l2 + voxel_size_scaled))
+
+    print("all checked edges ok?", all(ok_sum))
+
+    print("\n=== POINTS -> LENGTHS2 CONSISTENCY CHECK ===")
+    ok_geom = []
+    for i in range(min(n_edges_check, G_scaled.ecount())):
+        p = np.asarray(G_scaled.es[i]["points"], dtype=float)
+        if len(p) < 2:
+            ok_geom.append(True)
+            continue
+        l2_re = np.linalg.norm(np.diff(p, axis=0), axis=1)
+        l2_st = np.asarray(G_scaled.es[i]["lengths2"], dtype=float)
+        ok_geom.append(np.allclose(l2_re, l2_st))
+    print("all checked edges ok?", all(ok_geom))
+
+    print("\n=== DIAMETER UNCHANGED CHECK ===")
+    raw_d = np.asarray(G_raw.es["diameter"], dtype=float)
+    sca_d = np.asarray(G_scaled.es["diameter"], dtype=float)
+    print("diameters unchanged?", np.allclose(raw_d, sca_d, equal_nan=True))
+
+    print("\n=== NODE COORD RATIO CHECK ===")
+    ratios_nodes = []
+    for i in range(min(n_nodes_check, G_raw.vcount())):
+        a = np.asarray(G_raw.vs[i]["coords"], dtype=float)
+        b = np.asarray(G_scaled.vs[i]["coords"], dtype=float)
+        mask = a != 0
+        if np.any(mask):
+            ratios_nodes.extend((b[mask] / a[mask]).tolist())
+    ratios_nodes = np.asarray(ratios_nodes, dtype=float)
+    print("mean node coord ratio:", ratios_nodes.mean())
+    print("expected ratio       :", scale)
+    print("ok?", np.allclose(ratios_nodes, scale, atol=1e-8, rtol=1e-6))
+
+
+def check_bad_edges(G, top=30):
+    import numpy as np
+
+    rows = []
+
+    for i, e in enumerate(G.es):
+        s, t = e.tuple
+        c0 = np.asarray(G.vs[s]["coords"], float)
+        c1 = np.asarray(G.vs[t]["coords"], float)
+        ps = np.asarray(e["points"], float)
+
+        direct = np.linalg.norm(c1 - c0)
+        length = float(e["length"])
+
+        d_s_link = min(np.linalg.norm(ps - c0, axis=1))
+        d_t_link = min(np.linalg.norm(ps - c1, axis=1))
+
+        rows.append((i, direct, length, direct / length, d_s_link, d_t_link, s, t))
+
+    rows = sorted(rows, key=lambda x: x[3], reverse=True)
+
+    print("edge | direct | length | direct/length | source-link | target-link | s | t")
+    for r in rows[:top]:
+        print(r)
+        
 # ============================================================
 # Main
 # ============================================================
 
 if __name__ == "__main__":
-    mat_path = "/home/ana/MicroBrain/MicroBrain/ARTORG/XiangJi/WholeBrain_ML_2018_08_15_whole_brain_graph.mat"
-    out_path = "/home/ana/MicroBrain/MicroBrain/ARTORG/XiangJi/WholeBrain_ML_2018_08_15_whole_brain_graph.pkl"
+    mat_path = r"C:\Users\Ana\Documents\ARTORG\XiangJi\files\ML20180815_240_c5o1_578.mat"
+    out_path = r"C:\Users\Ana\Documents\ARTORG\XiangJi\files\ML20180815_240_c5o1_578_mvn1_scaled.pkl"
 
     G, nodes, edges, mat = convert_ji_mat_to_mvn1_graph(mat_path)
 
@@ -504,9 +630,21 @@ if __name__ == "__main__":
         "connectivity", "nkind", "diameter", "diameters",
         "length", "lengths2", "points"
     }
-    keep_g = {"mask_size"}
+    keep_g = {"mask_size", "mat_loader"}
 
-    G_pruned = graph_attributes_MVN(G, keep_v=keep_v, keep_e=keep_e, keep_g=keep_g)
-    # print_summary(G_pruned)
-    save_graph_pickle(G_pruned, out_path)
+    # 1.051 is the correction factor to recover in vivo lengths from
+    # the fixed brain graph, which is in raw voxel units
+    G_raw_full = G.copy()
+    G_scaled_full = G_raw_full.copy()
+    rescale_graph_lengths_inplace(G_scaled_full, 1.051)
+    
+    
+    #check_bad_edges(G_raw_full)
+    
+    G_raw = graph_attributes_MVN(G_raw_full, keep_v=keep_v, keep_e=keep_e, keep_g=keep_g)
+    G_scaled = graph_attributes_MVN(G_scaled_full, keep_v=keep_v, keep_e=keep_e, keep_g=keep_g)
+
+    sanity_check_rescaling(G_raw, G_scaled, scale=1.051)
+    save_graph_pickle(G_scaled, out_path)
+
     print(f"\nSaved to: {out_path}")

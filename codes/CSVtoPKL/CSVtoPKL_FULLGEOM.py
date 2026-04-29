@@ -88,7 +88,7 @@ starts = geom_index_df[0].to_numpy(dtype=np.int64)
 ends = geom_index_df[1].to_numpy(dtype=np.int64)
 r_global = edge_geometry_radii_df[0].to_numpy(dtype=np.float32)
 
-coords_nodes = np.asarray(G.vs["coords"], dtype=np.float32)
+coords_nodes = np.asarray(G.vs["coords_image"], dtype=np.float32)
 
 points_list = []
 diameters_list = []
@@ -170,9 +170,10 @@ print("Geometry added")
 #   - points (e):        list of (x,y,z) tuples for tortuous geometry polyline
 #   - diameters (e):     list of diameters, one per point in the geometry
 #   - lengths2 (e):      list of segment lengths between consecutive points
-#   - lengths (e):       list of lengths per point (for interpolation)
+#   - lengths (e):       list of (segment) lengths per point (for interpolation)
 #   - length (e):        total edge length (sum of lengths2)
-#   - diameter (e):      average diameter of the edge (mean of diameters)
+#   - diameter (e):      maximum diameter of the edge (max of diameters in Paris data) -> 
+# https://github.com/ClearAnatomics/ClearMap/blob/71444a5c7456901f15e8d0ceb06fab72b74161df/ClearMap/Scripts/TubeMap.py#L433
 # ====================================================================
 
 print("Converting to Gaia format...")
@@ -181,7 +182,7 @@ print("Converting to Gaia format...")
 # Calculate degree
 G.vs["degree"] = G.degree()
 
-# Use coords_image as coords
+# Use coords_image as coords (mvn name format, do not confuse with coords of atlas)
 G.vs["coords"] = G.vs["coords_image"]
 
 # Convert radii to diameter
@@ -214,18 +215,21 @@ for i, (l2, l) in enumerate(zip(lengths2_list, length_arr)):
     else:
         G.es[i]["length"] = l
 
-# Add diameter (edge average)
+# Add diameter  (max diameter tortuous nodes)
 diam_edge = []
 for diams in diameters_list:
     if len(diams) > 0:
-        diam_edge.append(float(np.mean(diams)))
+        diam_edge.append(float(np.max(diams)))
     else:
         diam_edge.append(float("nan"))
 G.es["diameter"] = diam_edge
 
 # Metadata
-G["unit"] = "vox"  # coords/length unit
-G["diameter_unit"] = "vox"  # diameter unit
+G["unit"] = "vox" # coords/length unit
+G["coord_space"] = "image"
+G["diameter_unit"] = "vox"
+G["resolution_image_um_per_voxel"] = [1.625, 1.625, 2.5]
+G["resolution_atlas_um_per_voxel"] = [25.0, 25.0, 25.0]
 
 # ===== KEEP ONLY FINAL ATTRIBUTES =====
 keep_v = {"coords", "degree", 
@@ -266,3 +270,17 @@ os.makedirs(os.path.dirname(out_path), exist_ok=True)
 with open(out_path, "wb") as f:
     pickle.dump(G, f)
 print(f'Graph saved in {out_path}')
+
+
+DO_CONVERT_TO_UM = True
+
+if DO_CONVERT_TO_UM:
+    from vox_to_um import load_and_convert
+
+    out_path_um = out_path.replace(".pkl", "_um.pkl")
+
+    load_and_convert(
+        out_path,
+        out_pkl_path_um=out_path_um,
+        res_um_per_vox=(1.625, 1.625, 2.5)
+    )

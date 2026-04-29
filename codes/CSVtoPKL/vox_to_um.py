@@ -8,7 +8,8 @@ Key transformations:
 - Coordinates (vertices and points per edge): multiply by [res_x, res_y, res_z]
 - Edge lengths (length, lengths2): multiply by appropriate resolution factor
 - Diameters (vertex and per-point): multiply by (res_x + res_y) / 2 (transverse scale) !!
-- Edge scalar diameter: MAX of per-point diameters (not mean)
+- Edge scalar diameter: MAX of per-point diameters (not mean. This comes from how they reduced the graph in Paris)
+https://github.com/ClearAnatomics/ClearMap/blob/71444a5c7456901f15e8d0ceb06fab72b74161df/ClearMap/Scripts/TubeMap.py#L433
 - Tortuosity: recalculated if length/straight_distance method used
 
 Returns a new graph with UM coordinates and metadata set.
@@ -23,7 +24,7 @@ import igraph as ig
 
 def graph_to_um(G_vox, res_um_per_vox=(1.625, 1.625, 2.5)):
     """
-    Convert fullgeom igraph from VOX to UM.
+    Convert igraph object from VOX to UM.
     
     Parameters
     ----------
@@ -35,7 +36,7 @@ def graph_to_um(G_vox, res_um_per_vox=(1.625, 1.625, 2.5)):
     
     res_um_per_vox : tuple
         Resolution in µm/voxel: (sx, sy, sz).
-        Default: (1.625, 1.625, 2.5) = MicroBrain image resolution.
+        Default: (1.625, 1.625, 2.5) = Paris Graph image resolution.
     
     Returns
     -------
@@ -45,55 +46,54 @@ def graph_to_um(G_vox, res_um_per_vox=(1.625, 1.625, 2.5)):
     
     Notes
     -----
-    - Creates a deep copy; original graph is unmodified.
+    - Creates a deep copy; original graph (vox) is unmodified.
     - Edge diameter (scalar) = MAX of diameters_per_point (not mean).
-    - Diameters scaled by (res_x + res_y) / 2 (transverse scale).
-    - Lengths scaled by appropriate resolution factor (typically res_z for Z-dominant
-      edges, or average for isotropic scaling).
+    - Diameter scaled by (res_x + res_y) / 2 (transverse scale).
+    - lengths2 and length recalculated from points_um.
+    - lengths is recalculated as per-point segment length. It is not cumulative distance.
     """
     
-    # Copy the graph
     G_um = G_vox.copy()
     
     sx, sy, sz = map(float, res_um_per_vox)
     spacing = np.array([sx, sy, sz], dtype=np.float32)
-    
-    # Transverse scale for diameters (XY plane average)
     scale_diam = (sx + sy) / 2.0
-    
+
     # =========================================================================
     # VERTEX ATTRIBUTES
     # =========================================================================
-    
+
     # coords: VOX -> UM
     if "coords" in G_um.vs.attributes():
         coords_vox = np.asarray(G_um.vs["coords"], dtype=np.float32)
-        coords_um = (coords_vox * spacing[None, :]).astype(np.float32)
+        coords_um = coords_vox * spacing[None, :]
         G_um.vs["coords"] = [tuple(map(float, row)) for row in coords_um]
-    
+
     # diameter (vertex): VOX -> UM
     if "diameter" in G_um.vs.attributes():
         diam_vox = np.asarray(G_um.vs["diameter"], dtype=np.float32)
-        diam_um = (diam_vox * scale_diam).astype(np.float32)
-        G_um.vs["diameter"] = diam_um.tolist()
-    
+        G_um.vs["diameter"] = (diam_vox * scale_diam).tolist()
+
     # =========================================================================
     # EDGE ATTRIBUTES
     # =========================================================================
-    
-    # points: list of (x,y,z) tuples in VOX -> UM
+
+    # ----- points: VOX -> UM  -----
+    points_um_list = []
     if "points" in G_um.es.attributes():
-        points_um_list = []
         for pts_vox in G_um.es["points"]:
             if len(pts_vox) == 0:
                 points_um_list.append([])
             else:
                 pts_array = np.asarray(pts_vox, dtype=np.float32)
-                pts_um = (pts_array * spacing[None, :]).astype(np.float32)
+                pts_um = pts_array * spacing[None, :]
                 points_um_list.append([tuple(map(float, row)) for row in pts_um])
         G_um.es["points"] = points_um_list
-    
-    # diameters (per-point): VOX -> UM
+    else:
+        # If no points -> empty list 
+        points_um_list = [[] for _ in range(G_um.ecount())]
+
+    # ----- diameters (per-point): VOX -> UM -----
     if "diameters" in G_um.es.attributes():
         diams_um_list = []
         for diams_vox in G_um.es["diameters"]:
@@ -101,46 +101,51 @@ def graph_to_um(G_vox, res_um_per_vox=(1.625, 1.625, 2.5)):
                 diams_um_list.append([])
             else:
                 diams_array = np.asarray(diams_vox, dtype=np.float32)
-                diams_um = (diams_array * scale_diam).astype(np.float32)
-                diams_um_list.append(diams_um.tolist())
+                diams_um_list.append((diams_array * scale_diam).tolist())
         G_um.es["diameters"] = diams_um_list
-    
-    # lengths2 (segment lengths): scale by average (or Z if appropriate)
-    # Using average of all three dimensions for isotropic scaling
-    scale_length = np.mean([sx, sy, sz])
-    if "lengths2" in G_um.es.attributes():
-        lengths2_um_list = []
-        for l2_vox in G_um.es["lengths2"]:
-            if len(l2_vox) == 0:
-                lengths2_um_list.append([])
-            else:
-                l2_array = np.asarray(l2_vox, dtype=np.float32)
-                l2_um = (l2_array * scale_length).astype(np.float32)
-                lengths2_um_list.append(l2_um.tolist())
-        G_um.es["lengths2"] = lengths2_um_list
-    
-    # lengths (per-point cumulative): same scale as lengths2
-    if "lengths" in G_um.es.attributes():
-        lengths_um_list = []
-        for lens_vox in G_um.es["lengths"]:
-            if len(lens_vox) == 0:
-                lengths_um_list.append([])
-            else:
-                lens_array = np.asarray(lens_vox, dtype=np.float32)
-                lens_um = (lens_array * scale_length).astype(np.float32)
-                lengths_um_list.append(lens_um.tolist())
-        G_um.es["lengths"] = lengths_um_list
-    
-    # length (scalar edge): scale similarly
-    if "length" in G_um.es.attributes():
-        length_vox = np.asarray(G_um.es["length"], dtype=np.float32)
-        length_um = (length_vox * scale_length).astype(np.float32)
-        G_um.es["length"] = length_um.tolist()
-    
-    # diameter (edge scalar): MAX of per-point diameters (UM units)
-    # Recompute from diameters_um (which are already in UM)
+    else:
+        diams_um_list = [[] for _ in range(G_um.ecount())]
+
+    # ----- lengths2: recalculated from points_um -----
+    # multiplying by mean resolution is an approximation that can be inaccurate for long edges with large z component.
+    lengths2_um_list = []
+    for pts_um in points_um_list:
+        if len(pts_um) < 2:
+            lengths2_um_list.append([])
+        else:
+            pts_array = np.asarray(pts_um, dtype=np.float32)
+            diffs = np.diff(pts_array, axis=0)               # vectors between consecutive points
+            l2 = np.linalg.norm(diffs, axis=1).astype(np.float32)  # real euclidean distance
+            lengths2_um_list.append(l2.tolist())
+    G_um.es["lengths2"] = lengths2_um_list
+
+    # ----- lengths (per-point segment length) -----
+    # length assigned to each point, with the last point repeating the last segment length.
+    lengths_um_list = []
+    for l2_list in lengths2_um_list:
+        if len(l2_list) == 0:
+            lengths_um_list.append([])
+        else:
+            l2_array = np.asarray(l2_list, dtype=np.float32)
+            length_per_point = np.zeros(len(l2_array) + 1, dtype=np.float32)
+            length_per_point[:-1] = l2_array
+            length_per_point[-1] = l2_array[-1]  # last point repeats the last length
+            lengths_um_list.append(length_per_point.tolist())
+    G_um.es["lengths"] = lengths_um_list
+
+    # ----- length (scalar per edge): sum lengths2_um -----
+    # recompute it from lengths2_um, not scaled from vox
+    length_um_list = []
+    for l2_list in lengths2_um_list:
+        if len(l2_list) == 0:
+            length_um_list.append(0.0)
+        else:
+            length_um_list.append(float(np.sum(l2_list)))
+    G_um.es["length"] = length_um_list
+
+    # ----- diameter (scalar per edge): MAX of diameters_um -----
     diam_edge_um = []
-    for diams_um in G_um.es["diameters"]:
+    for diams_um in diams_um_list:
         if len(diams_um) == 0:
             diam_edge_um.append(float("nan"))
         else:
@@ -148,30 +153,29 @@ def graph_to_um(G_vox, res_um_per_vox=(1.625, 1.625, 2.5)):
             valid = arr[np.isfinite(arr)]
             diam_edge_um.append(float(valid.max()) if valid.size else float("nan"))
     G_um.es["diameter"] = diam_edge_um
-    
-    # Recalculate tortuosity if present and lengths2 available
-    if "tortuosity" in G_um.es.attributes() and "lengths2" in G_um.es.attributes():
+
+    # ----- tortuosity: recompute it from lengths2_um and points_um -----
+    if "tortuosity" in G_um.es.attributes():
         tortuosity_um = []
-        for eid, (l2_list, pts_um) in enumerate(zip(G_um.es["lengths2"], G_um.es["points"])):
+        for l2_list, pts_um in zip(lengths2_um_list, points_um_list):
             if len(pts_um) >= 2 and len(l2_list) > 0:
-                l2_array = np.asarray(l2_list, dtype=np.float32)
-                length_curved = float(np.sum(l2_array))
+                length_curved = float(np.sum(l2_list))
                 p_start = np.asarray(pts_um[0], dtype=np.float32)
                 p_end = np.asarray(pts_um[-1], dtype=np.float32)
                 straight_dist = float(np.linalg.norm(p_end - p_start))
-                tortu = length_curved / straight_dist if straight_dist > 0 else 1.0
-                tortuosity_um.append(float(tortu))
+                tortuosity_um.append(length_curved / straight_dist if straight_dist > 0 else 1.0)
             else:
                 tortuosity_um.append(1.0)
         G_um.es["tortuosity"] = tortuosity_um
-    
+
     # =========================================================================
     # METADATA
     # =========================================================================
     G_um["unit"] = "um"
     G_um["diameter_unit"] = "um"
-    G_um["resolution_um_per_voxel"] = list(map(float, res_um_per_vox))
-    
+    G_um["resolution_image_um_per_voxel"] = list(map(float, res_um_per_vox))
+    G_um["resolution_atlas_um_per_voxel"] = [25.0, 25.0, 25.0]
+    G_um["coord_space"] = "image"  # or "atlas", but we keep it as "image" since it's in image space coordinates
     return G_um
 
 
@@ -223,17 +227,13 @@ def load_and_convert(pkl_path_vox, out_pkl_path_um=None, res_um_per_vox=(1.625, 
     
     return G_um
 
-
+ 
 if __name__ == "__main__":
-    # Example usage:
-    # Load fullgeom VOX igraph and convert to UM
-    
     graph_number = 18
-    root_path = "/home/admin/Ana/MicroBrain/output"
-    
-    pkl_vox = f"{root_path}{graph_number}/{graph_number}_igraph.pkl"
-    pkl_um = f"{root_path}{graph_number}/{graph_number}_igraph_um.pkl"
-    
+
+    pkl_vox = f"/storage/homefs/ab25c720/MicroBrain/halfbrain_{graph_number}_igraph.pkl"
+    pkl_um = f"/storage/homefs/ab25c720/MicroBrain/halfbrain_{graph_number}_igraph_um.pkl"
+
     G_um = load_and_convert(
         pkl_vox,
         out_pkl_path_um=pkl_um,

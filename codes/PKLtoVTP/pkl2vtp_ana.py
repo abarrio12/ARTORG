@@ -50,112 +50,83 @@ def safe_list(values, default):
 
 #------------------------------------------------------------------------------
 def WriteOnFileVTP(filename, vertices_array, connectivity_array, point_data, cell_data):
-    """Write data to vtp file"""
+    """Write data to vtp file - streaming para grafos grandes"""
 
     numPoints = len(vertices_array)
     numLines = len(connectivity_array)
 
-    vtkTag = xml.Element("VTKFile", {
-        "type": "PolyData",
-        "version": "0.1",
-        "byte_order": "LittleEndian",
-    })
+    def fmt_f(v):
+        return "{:10.15e}".format(v)
 
-    polyDataTag = xml.SubElement(vtkTag, "PolyData")
+    # ▶ CAMBIO CLAVE: esta función escribe en trozos de 100.000 en vez de todo a la vez
+    def write_chunked(f, iterable, chunk=100_000):
+        buf = []
+        for val in iterable:
+            buf.append(val)
+            if len(buf) >= chunk:
+                f.write(" ".join(buf))
+                f.write(" ")
+                buf.clear()
+        if buf:
+            f.write(" ".join(buf))
 
-    piece = xml.SubElement(polyDataTag, "Piece", {
-        "NumberOfPoints": str(numPoints),
-        "NumberOfVerts": "0",
-        "NumberOfLines": str(numLines),
-        "NumberOfStrips": "0",
-        "NumberOfPolys": "0",
-    })
+    # ▶ CAMBIO: escribimos el XML a mano en vez de usar lxml
+    # lxml también guarda todo en RAM antes de escribir → mismo problema
+    with open(filename, "w", buffering=1 << 20) as f:
 
-    pointData = xml.SubElement(piece, "PointData")
-    cellData = xml.SubElement(piece, "CellData")
-    points = xml.SubElement(piece, "Points")
-    lines = xml.SubElement(piece, "Lines")
+        # Cabecera del archivo VTP
+        f.write('<?xml version="1.0"?>\n')
+        f.write('<VTKFile type="PolyData" version="0.1" byte_order="LittleEndian">\n')
+        f.write('  <PolyData>\n')
+        f.write(f'    <Piece NumberOfPoints="{numPoints}" NumberOfVerts="0" '
+                f'NumberOfLines="{numLines}" NumberOfStrips="0" NumberOfPolys="0">\n')
 
-    # point data
-    for name, data_array in point_data.items():
-        data = xml.SubElement(
-            pointData,
-            "DataArray",
-            {
-                "type": "Float64",
-                "Name": name,
-                "NumberOfComponents": "1",
-                "format": "ascii",
-            },
-        )
-        data.text = " ".join(["{:10.15e}".format(p) for p in data_array])
+        # ---- Datos de puntos (vértices) ----
+        f.write('      <PointData>\n')
+        for name, data_array in point_data.items():
+            f.write(f'        <DataArray type="Float64" Name="{name}" '
+                    f'NumberOfComponents="1" format="ascii">\n          ')
+            write_chunked(f, (fmt_f(p) for p in data_array))
+            f.write('\n        </DataArray>\n')
+        f.write('      </PointData>\n')
 
-    # cell data
-    for name, data_array in cell_data.items():
-        if name == "connectivity":
-            data = xml.SubElement(
-                cellData,
-                "DataArray",
-                {
-                    "type": "Float64",
-                    "Name": name,
-                    "NumberOfComponents": "2",
-                    "format": "ascii",
-                },
-            )
-            data.text = " ".join(["{:10.15e}".format(i) for c in connectivity_array for i in c])
-        else:
-            data = xml.SubElement(
-                cellData,
-                "DataArray",
-                {
-                    "type": "Float64",
-                    "Name": name,
-                    "NumberOfComponents": "1",
-                    "format": "ascii",
-                },
-            )
-            data.text = " ".join(["{:10.15e}".format(r) for r in data_array])
+        # ---- Datos de celdas (aristas) ----
+        f.write('      <CellData>\n')
+        for name, data_array in cell_data.items():
+            if name == "connectivity":
+                f.write(f'        <DataArray type="Float64" Name="{name}" '
+                        f'NumberOfComponents="2" format="ascii">\n          ')
+                write_chunked(f, (fmt_f(float(v)) for c in connectivity_array for v in c))
+                f.write('\n        </DataArray>\n')
+            else:
+                f.write(f'        <DataArray type="Float64" Name="{name}" '
+                        f'NumberOfComponents="1" format="ascii">\n          ')
+                write_chunked(f, (fmt_f(r) for r in data_array))
+                f.write('\n        </DataArray>\n')
+        f.write('      </CellData>\n')
 
-    # points
-    coords = xml.SubElement(
-        points,
-        "DataArray",
-        {
-            "type": "Float64",
-            "NumberOfComponents": "3",
-            "format": "ascii",
-        },
-    )
-    coords.text = " ".join(["{:10.15e}".format(i) for c in vertices_array for i in c])
+        # ---- Coordenadas de los puntos ----
+        f.write('      <Points>\n')
+        f.write('        <DataArray type="Float64" NumberOfComponents="3" format="ascii">\n          ')
+        write_chunked(f, (fmt_f(float(v)) for c in vertices_array for v in c))
+        f.write('\n        </DataArray>\n')
+        f.write('      </Points>\n')
 
-    # lines
-    connectivity = xml.SubElement(
-        lines,
-        "DataArray",
-        {
-            "type": "Int32",
-            "Name": "connectivity",
-            "format": "ascii",
-        },
-    )
+        # ---- Conectividad de las líneas ----
+        f.write('      <Lines>\n')
+        f.write('        <DataArray type="Int32" Name="connectivity" format="ascii">\n          ')
+        write_chunked(f, (str(int(i)) for c in connectivity_array for i in c))
+        f.write('\n        </DataArray>\n')
 
-    offsets = xml.SubElement(
-        lines,
-        "DataArray",
-        {
-            "type": "Int32",
-            "Name": "offsets",
-            "format": "ascii",
-        },
-    )
+        f.write('        <DataArray type="Int32" Name="offsets" format="ascii">\n          ')
+        write_chunked(f, (str((i + 1) * 2) for i in range(numLines)))
+        f.write('\n        </DataArray>\n')
+        f.write('      </Lines>\n')
 
-    connectivity.text = " ".join(["{}".format(i) for c in connectivity_array for i in c])
-    offsets.text = " ".join(["{}".format((i + 1) * 2) + " " for i in range(len(connectivity_array))])
-
-    with open(filename, "w") as vtkOutput:
-        vtkOutput.write(xml.tostring(vtkTag, pretty_print=True, encoding="unicode"))
-
+        # Pie del archivo
+        f.write('    </Piece>\n')
+        f.write('  </PolyData>\n')
+        f.write('</VTKFile>\n')
 #------------------------------------------------------------------------------
 def write_vtp(graph, filename, tortuous=True, verbose=False):
     """
@@ -514,7 +485,7 @@ def write_vtp(graph, filename, tortuous=True, verbose=False):
 
 #------------------------------------------------------------------------------
 # Load a graph from a pickle file
-input_igraph_pkl_path = "/storage/homefs/ab25c720/MicroBrain/ParisGraph/halfbrain_18_igraph.pkl"
+input_igraph_pkl_path = r"C:\Users\Ana\Documents\ARTORG\XiangJi\files\ML20180815_240_c5o1_578_mvn1_scaled_offset.pkl"
 
 # If .pkl contains directly an igraph.Graph:
 graph = igraph.Graph.Read_Pickle(input_igraph_pkl_path)
@@ -528,10 +499,12 @@ graph = igraph.Graph.Read_Pickle(input_igraph_pkl_path)
 
 # print(graph.summary())
 
-output_path = "/storage/homefs/ab25c720/MicroBrain/ParisGraph/halfbrain_18_igraph.vtp"
+output_path = r"C:\Users\Ana\Documents\ARTORG\XiangJi\files\ML20180815_240_c5o1_578_mvn1_scaled_offset_straighttt.vtp"
 
 write_vtp(
     graph,
     output_path,
-    tortuous=True,
+    tortuous=False,
 )
+
+print("saved graph to vtp:", output_path)
