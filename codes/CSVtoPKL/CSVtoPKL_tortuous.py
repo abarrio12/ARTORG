@@ -271,7 +271,22 @@ with open(out_path, "wb") as f:
     pickle.dump(G, f)
 print(f'Graph saved in {out_path}')
 
+# optional: Save igraph as dictionaries (now is in voxels)
+DO_SAVE_DICT_FORMAT = False
 
+if DO_SAVE_DICT_FORMAT:
+    from save_dict_format import save_mvn_dicts_from_igraph
+    dict_out_dir = "/storage/homefs/ab25c720/MicroBrain/ParisGraph/dictOut"
+    base_name = os.path.splitext(os.path.basename(out_path))[0]
+
+    save_mvn_dicts_from_igraph(
+        G,
+        out_dir=dict_out_dir,
+        base_name=base_name,
+        verbose=True,
+    )
+
+# optional: convert graph to um 
 DO_CONVERT_TO_UM = True
 
 if DO_CONVERT_TO_UM:
@@ -284,3 +299,4 @@ if DO_CONVERT_TO_UM:
         out_pkl_path_um=out_path_um,
         res_um_per_vox=(1.625, 1.625, 2.5)
     )
+    

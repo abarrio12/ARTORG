@@ -1,7 +1,7 @@
 """
-Convert fullgeom igraph from VOX to UM coordinates and diameters.
+Convert igraph from VOX to UM coordinates and diameters.
 
-This utility converts a Gaia-format igraph (as output by CSVtoPKL_FULLGEOM.py)
+This utility converts a MVN-format igraph (as output by CSVtoPKL_tortuous.py)
 from voxel units (VOX) to micrometers (UM).
 
 Key transformations:
@@ -14,8 +14,6 @@ https://github.com/ClearAnatomics/ClearMap/blob/71444a5c7456901f15e8d0ceb06fab72
 
 Returns a new graph with UM coordinates and metadata set.
 
-Author: Ana
-Updated: 24 Apr 2026
 """
 
 import numpy as np
@@ -29,7 +27,7 @@ def graph_to_um(G_vox, res_um_per_vox=(1.625, 1.625, 2.5)):
     Parameters
     ----------
     G_vox : igraph.Graph
-        Gaia-format igraph with fullgeom attributes in VOX (voxel) coordinates.
+        MVN-format igraph with fullgeom attributes in VOX (voxel) coordinates.
         Expected vertex attributes: coords, degree, index, diameter, annotation
         Expected edge attributes: connectivity, nkind, points, diameters, lengths2,
                                    length, diameter (edge scalar), etc.

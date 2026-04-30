@@ -1,0 +1,156 @@
+def build_edges_from_mat(mat: dict, nodes: List[dict] ) -> List[dict]:
+    """
+    Build intermediate edge records from Ji's MATLAB graph.
+
+    Ji links are formed from connected components of link voxels.
+    Each link voxel has its own radius value in the sparse radius map, so the
+    per-point radii/diameters are preserved and then summarized for the edge.
+    Some link components can be a single voxel, which is handled as a special case.
+
+    Edge style is adapted to MVN1 / Paris style:
+    - points
+    - lengths2
+    - length
+    - diameters
+    - diameter
+    - nkind
+    
+    Returns
+    -------
+    edges: list of dict 
+        One dict per link CC
+    """
+    mask_size = mat["num"].mask_size
+    link_cc = np.asarray(mat["link"].cc_ind).squeeze()
+    connected = np.asarray(mat["link"].connected_node_label).astype(int)
+
+    radius_map = sparse_vector_to_dict(mat["radius"])
+    label_map = sparse_vector_to_dict(mat["label"]) if "label" in mat else {}
+    nodes_by_label = {n["matlab_label"]: n for n in nodes} # label of the nodes needed to find node-link correspondance
+
+    
+    edges = []
+    count_single_voxel_links = 0
+    count_single_voxel_links_diam_link_equals_node = 0
+
+    for matlab_label, cc in enumerate(link_cc, start=1):
+        # Normal case: more than 1 voxel link
+        voxel_indices = np.asarray(cc).astype(np.int64).ravel()
+
+        # Geometry
+        points_yxz = lin_to_coordinates(voxel_indices, mask_size)
+        points = yxz_to_xyz(points_yxz)
+        #lengths2 = segment_lengths(points)
+        #length = float(lengths2.sum())
+        lengths2, length = segment_lengths_and_length(points, voxel_size=1.0)
+        
+        # Per-point diameters from radius
+        radii = np.array(
+            [radius_map.get(int(v), np.nan) for v in voxel_indices],
+            dtype=float
+        )
+        diameters = 2.0 * radii
+        
+        # notice in Ji they use median radius for edge radius (in Paris was the max(radii_points))
+        radius = np.nanmedian(radii) if np.any(~np.isnan(radii)) else np.nan
+        diameter = 2.0 * radius if not np.isnan(radius) else np.nan
+        
+        # Vessel type aggregation
+        # Ji has the nkind stores per voxel in the same way as radius, so we can do majority vote among the voxels of the edge to assign a single nkind per edge.
+        voxel_types = np.array(
+            [label_map.get(int(v), np.nan) for v in voxel_indices],
+            dtype=float
+        )
+        nkind_ji = majority_vote(voxel_types.tolist()) if len(label_map) > 0 else None
+        nkind = JI_TO_MVN_NKIND.get(nkind_ji, None) if nkind_ji is not None else None
+        
+        # Topology
+        n1, n2 = connected[matlab_label - 1]
+        source = int(n1 - 1) if n1 > 0 else None
+        target = int(n2 - 1) if n2 > 0 else None
+        
+        
+        # Special case: only 1 voxel link
+        if len(points) == 1 and n1 > 0 and n2 > 0:
+                count_single_voxel_links += 1
+                link_point = points[0]
+                node1_rec = nodes_by_label[int(n1)]
+                node2_rec = nodes_by_label[int(n2)]
+                if node1_rec is None or node2_rec is None:
+                    raise KeyError(
+                        f"Missing node record for connected node labels: n1={n1}, n2={n2}"
+                    )
+    
+                touch1 = find_touching_node_voxel_link_voxel(node1_rec["node_points"], link_point)
+                touch2 = find_touching_node_voxel_link_voxel(node2_rec["node_points"], link_point)
+    
+                points = np.vstack([touch1, link_point, touch2])
+
+                # to keep consistency with diameter calculation in the Paris graph, we keep the diameter of the nodes (as diam of node_cc) and of the voxel link
+                
+                diam_link = 2.0 * radii[0] if not np.isnan(radii[0]) else np.nan
+                diam1 = node1_rec["diameter"]
+                diam2 = node2_rec["diameter"]
+                diameters = np.array([diam1, diam_link, diam2], dtype=float)
+
+                if np.isclose(diam_link, diam1) or np.isclose(diam_link, diam2):
+                    count_single_voxel_links_diam_link_equals_node += 1
+    
+                lengths2 = segment_lengths(points)
+                length = float(lengths2.sum())  
+                '''        
+                print(
+                "1-voxel link",
+                "edge", matlab_label,
+                "n1", n1, "n2", n2,
+                "link_point", link_point.tolist(),
+                "touch1", touch1.tolist(),
+                "touch2", touch2.tolist(),
+                "points", points.tolist(),
+                "radii", radii.tolist(),
+                "diameters", diameters.tolist(),
+                "node1_diam", diam1,
+                "node2_diam", diam2,
+                "lengths2", lengths2.tolist(),
+                "length", length,
+                )
+                '''
+    
+   
+        
+        edge_rec = {
+            "id": matlab_label - 1,
+            "matlab_label": matlab_label,
+            "source": source,
+            "target": target,
+            "connected_node_labels_matlab": (int(n1), int(n2)),
+            "voxel_indices": voxel_indices,
+            "points": points,               # per-point coords
+            "lengths2": lengths2,           # per-segment lengths
+            "length": length,               # full edge length
+            "radii": radii,
+            "diameters": diameters,         # per-point diameters
+            "diameter": diameter,           # edge summary diameter
+            "voxel_types": voxel_types,
+            "nkind": nkind,
+            "n_voxels": len(voxel_indices),
+            "radius": radius,
+        }
+        edges.append(edge_rec)
+    #print("Count edges with 1 voxel link:", count_single_voxel_links)
+    print(
+        "Count 1-voxel links where link diameter equals one endpoint node diameter:",
+        count_single_voxel_links_diam_link_equals_node,
+    )
+    return edges
+
+
+
+
+print("\n=== LENGTH = SUM(lengths2) CHECK ===")
+ok_sum = []
+for i in range(min(n_edges_check, G_scaled.ecount())):
+        l = float(G_scaled.es[i]["length"])
+        l2 = np.asarray(G_scaled.es[i]["lengths2"], dtype=float).sum()
+        ok_sum.append(np.isclose(l, l2))
+print("all checked edges ok?", all(ok_sum))
