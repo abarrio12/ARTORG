@@ -1,4 +1,5 @@
-# ParisGraph CSV → MVN igraph → µm conversion / dict export
+# ParisGraph 
+## CSV → MVN igraph → µm conversion / dict export
 
 This folder contains the scripts used to convert the Paris/Renier CSV graph files into an `igraph` object with MVN/Gaia-style attributes, optionally convert the graph from voxel coordinates to physical units (µm), and optionally save the graph attributes as separate dictionaries.
 
