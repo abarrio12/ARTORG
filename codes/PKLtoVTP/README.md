@@ -9,7 +9,7 @@ This module converts **pickle graph data** (.pkl) into **VTP (VTK PolyData)** fo
 ```
 PKLtoVTP/
 ├── pkl2vtp.py # Basic converter: MVN format → tortuous / non-tortuous VTP
-├── pkl2vtp_ana.py # Extended converter: handles MVN + outgeom and checks attribute existence
+├── pkl2vtp_ana.py # Same but extended functions (handles MVN + outgeom and checks attribute existence)
 └── README.md
 ```
 
@@ -28,14 +28,14 @@ VTP is an XML-based **VTK PolyData** format containing:
 
 **PointData** (properties at each point):
 - `annotation` - Vessel type/region label
-- `radii_p_atlas` - Radius at this point (atlas-scaled)
-- `diameter_p_atlas` - Diameter at this point (2 × radius)
+- `radii_p` - Radius at this point 
+- `diameter_p` - Diameter at this point (2 × radius)
 - `lengths2` - Distance to next point along geometry
 
 **CellData** (properties per edge/vessel segment):
 - `nkind` - Vessel type code
-- `radius_atlas` - Edge radius (max of all points in segment)
-- `diameter_atlas` - Edge diameter (2 × radius)
+- `radius` - Edge radius (max of all points in segment)
+- `diameter` - Edge diameter (2 × radius)
 - `length` - Total arc length along edge
 - `tortuosity` - Straightness ratio (actual/Euclidean distance)
 
@@ -49,7 +49,7 @@ node ───────── node
 
 
 Uses:
-- `G.vs["coords"]`
+- `G.vs["coords"]` (remember this is coords_image from CSV)
 - graph topology (`source`, `target`)
 
 Does **not** use edge geometry.
@@ -99,10 +99,4 @@ Check units:
 print(G["unit"])
 ```
 
-
-
-## Authors
-
-- **Sofia** - pkl2vtp.py
-- **Ana** - pkl2vtp_ana - Feb 2026
 
