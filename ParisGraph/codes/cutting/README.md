@@ -1,4 +1,4 @@
-# Cutting: Extract Vessels from a 3D Box
+# Cutting 3D boxes
 
 This code cuts a vessel graph using a rectangular 3D box.
 

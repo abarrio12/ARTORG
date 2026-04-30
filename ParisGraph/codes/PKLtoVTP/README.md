@@ -1,4 +1,4 @@
-# PKLtoVTP: Pickle to VTP Visualization Format
+# Pickle to VTP Visualization Format
 
 ## Overview
 This module converts **pickle graph data** (.pkl) into **VTP (VTK PolyData)** format, enabling 3D visualization in **ParaView** for visualization.
