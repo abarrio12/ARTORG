@@ -4,15 +4,6 @@
 This module converts **pickle graph data** (.pkl) into **VTP (VTK PolyData)** format, enabling 3D visualization in **ParaView** for visualization.
 
 
-## Folder Structure
-
-```
-PKLtoVTP/
-├── pkl2vtp.py # Basic converter: MVN format → tortuous / non-tortuous VTP
-├── pkl2vtp_ana.py # Same but extended functions (handles MVN + outgeom and checks attribute existence)
-└── README.md
-```
-
 ## Core Concepts
 
 ### VTP File Format
